@@ -1,8 +1,10 @@
 package smooth.lift.client;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
@@ -34,6 +36,18 @@ public class SmoothLiftClient implements ClientModInitializer {
             }
             Minecraft.getInstance().setScreen(new EscalatorSpeedScreen(pos));
             return InteractionResult.FAIL;
+        });
+
+        // 客户端完全进世界后主动向服务端请求速度数据。
+        // 服务端侧的 ServerPlayConnectionEvents.JOIN 推送发生在玩家连接建立过程中
+        // （早于频道握手完成），此时发的包可能被客户端丢弃，导致进游戏后速度显示为默认。
+        ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
+            ClientPlayNetworking.send(SmoothLift.REQUEST_SYNC_CHANNEL, PacketByteBufs.empty());
+        });
+
+        // 断开连接时清空客户端镜像，避免残留上一个世界的速度数据
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            EscalatorSpeedManager.clearClientData();
         });
 
         // 接收服务端同步的全部速度数据

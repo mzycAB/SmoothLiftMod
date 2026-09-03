@@ -23,6 +23,8 @@ public class SmoothLift implements ModInitializer {
     public static final ResourceLocation SET_SPEED_CHANNEL = new ResourceLocation("smoothlift", "set_speed");
     /** 服务端 -> 客户端：同步全部速度数据。 */
     public static final ResourceLocation SYNC_CHANNEL = new ResourceLocation("smoothlift", "sync");
+    /** 客户端 -> 服务端：客户端进世界后主动请求同步（JOIN 时序下服务端推送不可靠）。 */
+    public static final ResourceLocation REQUEST_SYNC_CHANNEL = new ResourceLocation("smoothlift", "request_sync");
 
     @Override
     public void onInitialize() {
@@ -80,9 +82,14 @@ public class SmoothLift implements ModInitializer {
             });
         });
 
-        // 玩家进入游戏时同步全部数据
+        // 玩家进入游戏时同步全部数据（服务端侧兜底，客户端还会主动请求一次）
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
             EscalatorSpeedManager.syncToAll(server);
+        });
+
+        // 客户端进世界后主动请求同步：此时双方频道均已就绪，可靠送达
+        ServerPlayNetworking.registerGlobalReceiver(REQUEST_SYNC_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            server.execute(() -> EscalatorSpeedManager.syncToAll(server));
         });
 
         // 扶梯方块被破坏时清除对应记录
