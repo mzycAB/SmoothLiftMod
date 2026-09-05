@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "smooth_lift",
+  "version": "${version}",
+  "name": "SmoothLift",
+  "description": "Makes MTR escalators smooth instead of bumpy.",
+  "authors": [
+    "mzycAB"
+  ],
+  "icon": "assets/smoothlift/icon.png",
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "smooth.lift.SmoothLift"
+    ],
+    "client": [
+      "smooth.lift.client.SmoothLiftClient"
+    ]
+  },
+  "mixins": [
+    "smooth_escalator.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.15.10",
+    "minecraft": "=1.21.1",
+    "java": ">=21"
+  },
+  "suggests": {
+    "mtr": "*"
+  }
+}
