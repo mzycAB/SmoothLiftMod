@@ -71,6 +71,11 @@ public final class EscalatorSpeedManager {
         CLIENT_DATA.put(dimension, data);
     }
 
+    /** 断开连接时清空客户端镜像，避免换世界后残留旧数据。 */
+    public static void clearClientData() {
+        CLIENT_DATA.clear();
+    }
+
     public static EscalatorSpeedData getServerData(ServerLevel level) {
         return level.getDataStorage().computeIfAbsent(EscalatorSpeedData.FACTORY, EscalatorSpeedData.DATA_NAME);
     }
