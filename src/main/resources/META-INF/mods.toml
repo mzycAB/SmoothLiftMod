@@ -1,0 +1,39 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+
+[[mods]]
+modId="smooth_lift"
+version="${file.jarVersion}"
+displayName="SmoothLift"
+logoFile="assets/smoothlift/icon.png"
+credits="mzycAB"
+authors="mzycAB"
+description='''
+Makes MTR escalators smooth instead of bumpy.
+- Smooth surface-following movement on escalator slopes
+- Right-click an escalator with a stone axe to set its speed
+- Speeds persist across world reloads
+- /futispeed <speed> to set the default speed of the current dimension
+'''
+
+[[dependencies.smooth_lift]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.smooth_lift]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.smooth_lift]]
+    modId="mtr"
+    mandatory=false
+    versionRange="[4,)"
+    ordering="NONE"
+    side="BOTH"
