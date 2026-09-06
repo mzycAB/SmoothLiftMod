@@ -1,0 +1,120 @@
+﻿Starting a Gradle Daemon, 2 stopped Daemons could not be reused, use --status for details
+
+> Configure project :
+MixinGradle is skipping eclipse integration, extension not found
+
+> Task :downloadMcpConfig
+> Task :extractSrg UP-TO-DATE
+> Task :createMcpToSrg UP-TO-DATE
+
+> Task :compileJava
+Setting up MCP environment
+Initializing steps
+Executing steps
+ > Running 'downloadManifest'
+ > Running 'downloadJson'
+ > Running 'downloadClient'
+ > Running 'downloadServer'
+ > Running 'extractServer'
+ > Running 'downloadClientMappings'
+ > Running 'mergeMappings'
+ > Running 'stripClient'
+ > Running 'stripServer'
+ > Running 'merge'
+ > Running 'listLibraries'
+ > Running 'rename'
+Stopping at requested step: C:\Users\user\.gradle\caches\forge_gradle\mcp_repo\de\oceanlabs\mcp\mcp_config\1.20.4-20231207.112700\joined\rename\output.jar
+.\gradlew.bat : [09:12:46] [main/INFO]: Writing debug log file accesstransform.log
+At line:15 char:1689
++ ... ct -Last 2; .\gradlew.bat build --console=plain *> build_full.log; "E ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([09:12:46] [mai...sstransform.log:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[09:12:46] [main/INFO]: Access Transformer processor running version 8.2.14
+[09:12:46] [main/INFO]: Command line arguments [--inJar, C:\Users\user\.gradle\caches\forge_gradle\minecraft_user_repo\
+net\minecraftforge\forge\1.20.4-49.1.0\forge-1.20.4-49.1.0-injected.jar, --outJar, C:\Users\user\.gradle\caches\forge_g
+radle\minecraft_user_repo\net\minecraftforge\forge\1.20.4-49.1.0_mapped_official_1.20.4\forge-1.20.4-49.1.0_mapped_offi
+cial_1.20.4.jar, --logFile, accesstransform.log, --atFile, C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\_at
+Jar_4\parent_at.cfg]
+[09:12:46] [main/INFO]: Reading from C:\Users\user\.gradle\caches\forge_gradle\minecraft_user_repo\net\minecraftforge\f
+orge\1.20.4-49.1.0\forge-1.20.4-49.1.0-injected.jar
+[09:12:46] [main/INFO]: Writing to C:\Users\user\.gradle\caches\forge_gradle\minecraft_user_repo\net\minecraftforge\for
+ge\1.20.4-49.1.0_mapped_official_1.20.4\forge-1.20.4-49.1.0_mapped_official_1.20.4.jar
+[09:12:46] [main/INFO]: Transformer file C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\_atJar_4\parent_at.cf
+g
+[09:12:46] [main/WARN]: Found existing output jar C:\Users\user\.gradle\caches\forge_gradle\minecraft_user_repo\net\min
+ecraftforge\forge\1.20.4-49.1.0_mapped_official_1.20.4\forge-1.20.4-49.1.0_mapped_official_1.20.4.jar, overwriting
+[09:12:49] [main/INFO]: JAR transformation complete C:\Users\user\.gradle\caches\forge_gradle\minecraft_user_repo\net\m
+inecraftforge\forge\1.20.4-49.1.0_mapped_official_1.20.4\forge-1.20.4-49.1.0_mapped_official_1.20.4.jar
+Creating SRG -> MCP TSRG
+注: SpongePowered MIXIN Annotation Processor Version=0.8.5 (MixinGradle Version=0.7.38)
+注: Supported obfuscation types: ObfuscationServiceMCP supports [notch] ObfuscationServiceFG3 supports [searge]
+注: Loading searge mappings from C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\createMcpToSrg\output.tsrg
+注: Writing refmap to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing refmap to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing searge composite mappings to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compil
+eJava-mappings.tsrg
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\Packets.java:6: 错误: 程序包net.minecra
+ftforge.network.simple不存在
+import net.minecraftforge.network.simple.SimpleChannel;
+                                        ^
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\Packets.java:11: 错误: 找不到符号
+    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
+                        ^
+  符号:   类 SimpleChannel
+  位置: 类 Packets
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\RequestSyncPacket.java:6: 错误: 找不到符
+号
+import net.minecraftforge.network.NetworkEvent;
+                                 ^
+  符号:   类 NetworkEvent
+  位置: 程序包 net.minecraftforge.network
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\RequestSyncPacket.java:23: 错误: 程序包
+NetworkEvent不存在
+    public static void handle(RequestSyncPacket pkt, Supplier<NetworkEvent.Context> ctx) {
+                                                                          ^
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\SetSpeedPacket.java:8: 错误: 找不到符号
+import net.minecraftforge.network.NetworkEvent;
+                                 ^
+  符号:   类 NetworkEvent
+  位置: 程序包 net.minecraftforge.network
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\SetSpeedPacket.java:34: 错误: 程序包Net
+workEvent不存在
+    public static void handle(SetSpeedPacket pkt, Supplier<NetworkEvent.Context> ctx) {
+                                                                       ^
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\SyncPacket.java:6: 错误: 找不到符号
+import net.minecraftforge.network.NetworkEvent;
+                                 ^
+  符号:   类 NetworkEvent
+  位置: 程序包 net.minecraftforge.network
+C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\src\main\java\smooth\lift\network\SyncPacket.java:55: 错误: 程序包Network
+Event不存在
+    public static void handle(SyncPacket pkt, Supplier<NetworkEvent.Context> ctx) {
+                                                                   ^
+注: Writing refmap to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing refmap to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing searge composite mappings to C:\Users\user\Desktop\1\SmoothLiftMod-Forge-1.20.4\build\tmp\compileJava\compil
+eJava-mappings.tsrg
+8 个错误
+
+> Task :compileJava FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 1m 49s
+4 actionable tasks: 2 executed, 2 up-to-date

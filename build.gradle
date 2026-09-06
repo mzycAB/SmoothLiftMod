@@ -1,0 +1,55 @@
+plugins {
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7.38'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+minecraft {
+    mappings channel: 'official', version: project.minecraft_version
+}
+
+mixin {
+    add sourceSets.main, 'smooth_escalator.refmap.json'
+    config 'smooth_escalator.mixins.json'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${project.forge_version}"
+    compileOnly "org.spongepowered:mixin:${project.mixin_version}"
+    annotationProcessor "org.spongepowered:mixin:${project.mixin_version}:processor"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 17
+    options.compilerArgs += [
+            '-AoutRefMapFile=' + project.layout.buildDirectory.file('resources/main/smooth_escalator.refmap.json').get().asFile.absolutePath,
+            '-AdefaultObfuscationEnv=searge'
+    ]
+}
+
+jar {
+    manifest {
+        attributes([
+            'Specification-Title'   : 'smooth-lift',
+            'Specification-Vendor'  : 'mzycAB',
+            'Specification-Version' : '1',
+            'Implementation-Title'  : 'SmoothLift',
+            'Implementation-Version': project.version,
+            'Implementation-Vendor' : 'mzycAB',
+            'MixinConfigs'          : 'smooth_escalator.mixins.json'
+        ])
+    }
+}
