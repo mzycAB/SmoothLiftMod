@@ -1,7 +1,8 @@
 package smooth.lift.client;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiComponent;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -57,22 +58,17 @@ public class EscalatorSpeedScreen extends Screen {
         addRenderableWidget(stepInput);
         setInitialFocus(input);
 
-        addRenderableWidget(Button.builder(Component.literal("确定"), button -> confirm())
-                .bounds(this.width / 2 - 100, 92, 95, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), button -> onClose())
-                .bounds(this.width / 2 + 5, 92, 95, 20)
-                .build());
+        addRenderableWidget(new Button(this.width / 2 - 100, 92, 95, 20,
+                Component.literal("确定"), button -> confirm()));
+        addRenderableWidget(new Button(this.width / 2 + 5, 92, 95, 20,
+                Component.literal("取消"), button -> onClose()));
 
-        addRenderableWidget(Button.builder(Component.literal("应用"), button -> applyStep())
-                .bounds(this.width / 2 - 100, 172, 62, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("对齐"), button -> alignStep())
-                .bounds(this.width / 2 - 33, 172, 62, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("恢复默认"), button -> restoreStep())
-                .bounds(this.width / 2 + 34, 172, 66, 20)
-                .build());
+        addRenderableWidget(new Button(this.width / 2 - 100, 172, 62, 20,
+                Component.literal("应用"), button -> applyStep()));
+        addRenderableWidget(new Button(this.width / 2 - 33, 172, 62, 20,
+                Component.literal("对齐"), button -> alignStep()));
+        addRenderableWidget(new Button(this.width / 2 + 34, 172, 66, 20,
+                Component.literal("恢复默认"), button -> restoreStep()));
     }
 
     private void confirm() {
@@ -139,19 +135,19 @@ public class EscalatorSpeedScreen extends Screen {
     }
 
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
-        this.renderBackground(guiGraphics);
-        super.render(guiGraphics, mouseX, mouseY, partialTick);
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 32, 0xFFFFFF);
-        guiGraphics.drawCenteredString(this.font, Component.literal("运行速度（格/秒）"),
+    public void render(PoseStack poseStack, int mouseX, int mouseY, float partialTick) {
+        this.renderBackground(poseStack);
+        super.render(poseStack, mouseX, mouseY, partialTick);
+        GuiComponent.drawCenteredString(poseStack, this.font, this.title, this.width / 2, 32, 0xFFFFFF);
+        GuiComponent.drawCenteredString(poseStack, this.font, Component.literal("运行速度（格/秒）"),
                 this.width / 2, 50, 0xA0A0A0);
-        guiGraphics.drawCenteredString(this.font, Component.literal("阶梯动画速度（格/秒）"),
+        GuiComponent.drawCenteredString(poseStack, this.font, Component.literal("阶梯动画速度（格/秒）"),
                 this.width / 2, 130, 0xA0A0A0);
-        guiGraphics.drawCenteredString(this.font,
+        GuiComponent.drawCenteredString(poseStack, this.font,
                 Component.literal("扶梯位置: " + pos.toShortString()),
                 this.width / 2, 205, 0x707070);
         if (!status.getString().isEmpty()) {
-            guiGraphics.drawCenteredString(this.font, status, this.width / 2, this.height - 20, 0xFF5555);
+            GuiComponent.drawCenteredString(poseStack, this.font, status, this.width / 2, this.height - 20, 0xFF5555);
         }
     }
 

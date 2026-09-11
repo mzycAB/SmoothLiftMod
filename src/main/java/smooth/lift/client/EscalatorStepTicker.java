@@ -1,7 +1,7 @@
 package smooth.lift.client;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.SpriteTicker;
+import net.minecraft.client.renderer.texture.Tickable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
@@ -14,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 扶梯阶梯贴图专用 SpriteTicker：包裹原版 ticker，把 "每游戏帧推进 1 帧"
+ * 扶梯阶梯贴图专用 Tickable：包裹原版 ticker，把 "每游戏帧推进 1 帧"
  * 改为 "每游戏帧推进 speed 帧"。
  *
  * 阶梯动画跟随「玩家脚下那条扶梯」的阶梯动画速度推进：
@@ -23,20 +23,20 @@ import java.util.List;
  * - 玩家不在扶梯上时回退到维度默认速度。
  * 因为阶梯贴图在整条扶梯间共享，这里解析的是当前正在观看的扶梯。
  */
-public final class EscalatorStepTicker implements SpriteTicker {
+public final class EscalatorStepTicker implements Tickable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("smoothlift");
     private static double lastLoggedFactor = -1.0;
 
-    private final SpriteTicker delegate;
+    private final Tickable delegate;
     private double accumulator;
 
-    public EscalatorStepTicker(SpriteTicker delegate) {
+    public EscalatorStepTicker(Tickable delegate) {
         this.delegate = delegate;
     }
 
     @Override
-    public void tickAndUpload(int x, int y) {
+    public void tick() {
         double speed = resolveStepAnimationSpeed();
         if (Double.isNaN(speed) || Double.isInfinite(speed)) {
             speed = EscalatorSpeedData.DEFAULT_SPEED;
@@ -50,13 +50,8 @@ public final class EscalatorStepTicker implements SpriteTicker {
         int rounds = (int) accumulator;
         accumulator -= rounds;
         while (rounds-- > 0) {
-            delegate.tickAndUpload(x, y);
+            delegate.tick();
         }
-    }
-
-    @Override
-    public void close() {
-        delegate.close();
     }
 
     private static double resolveStepAnimationSpeed() {

@@ -38,7 +38,7 @@ public class RestoreStepPacket {
             if (player == null) {
                 return;
             }
-            ServerLevel level = player.serverLevel();
+            ServerLevel level = player.getLevel();
             if (!EscalatorUtil.isEscalator(level.getBlockState(pkt.pos))) {
                 return;
             }
@@ -49,7 +49,7 @@ public class RestoreStepPacket {
                                 "已把这条扶梯（" + count + " 格）的阶梯动画恢复为 MTR 原版默认（运行速度不变）"),
                         true
                 );
-                EscalatorSpeedManager.syncToAll(player.server);
+                EscalatorSpeedManager.syncToAll(player.getServer());
             }
         });
         context.setPacketHandled(true);

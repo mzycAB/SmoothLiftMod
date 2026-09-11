@@ -42,7 +42,7 @@ public class SetSpeedPacket {
             if (player == null) {
                 return;
             }
-            ServerLevel level = player.serverLevel();
+            ServerLevel level = player.getLevel();
             if (!EscalatorUtil.isEscalator(level.getBlockState(pkt.pos))) {
                 return;
             }
@@ -54,7 +54,7 @@ public class SetSpeedPacket {
                                 "已设置 " + count + " 个扶梯方块的速度为 " + EscalatorSpeedData.format(applied) + " 格/秒"),
                         true
                 );
-                EscalatorSpeedManager.syncToAll(player.server);
+                EscalatorSpeedManager.syncToAll(player.getServer());
             }
         });
         context.setPacketHandled(true);

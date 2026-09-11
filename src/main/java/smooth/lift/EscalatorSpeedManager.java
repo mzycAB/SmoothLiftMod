@@ -1,7 +1,7 @@
 package smooth.lift;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.Registries;
+import net.minecraft.core.Registry;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -327,6 +327,6 @@ public final class EscalatorSpeedManager {
     }
 
     public static ResourceKey<Level> parseDimensionKey(String id) {
-        return ResourceKey.create(Registries.DIMENSION, new ResourceLocation(id));
+        return ResourceKey.create(Registry.DIMENSION_REGISTRY, new ResourceLocation(id));
     }
 }

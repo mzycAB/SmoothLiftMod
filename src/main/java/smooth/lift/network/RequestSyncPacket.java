@@ -31,7 +31,7 @@ public class RequestSyncPacket {
             if (player == null) {
                 return;
             }
-            EscalatorSpeedManager.syncToAll(player.server);
+            EscalatorSpeedManager.syncToAll(player.getServer());
         });
         context.setPacketHandled(true);
     }

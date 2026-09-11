@@ -45,7 +45,7 @@ public class SmoothLift {
                             EscalatorSpeedManager.setDefault(level, speed);
                             EscalatorSpeedManager.syncToAll(context.getSource().getServer());
                             context.getSource().sendSuccess(
-                                    () -> Component.literal("本维度扶梯默认速度已设置为 "
+                                    Component.literal("本维度扶梯默认速度已设置为 "
                                             + EscalatorSpeedData.format(speed) + " 格/秒"),
                                     false
                             );
@@ -61,7 +61,7 @@ public class SmoothLift {
                                     int count = EscalatorSpeedManager.forceAllRunningSpeed(level, speed);
                                     EscalatorSpeedManager.syncToAll(context.getSource().getServer());
                                     context.getSource().sendSuccess(
-                                            () -> Component.literal("已强制把所有 " + count + " 个扶梯方块的运行速度设为 "
+                                            Component.literal("已强制把所有 " + count + " 个扶梯方块的运行速度设为 "
                                                     + EscalatorSpeedData.format(speed) + " 格/秒"),
                                             false
                                     );
@@ -98,7 +98,7 @@ public class SmoothLift {
         int forced = includeAdjusted ? EscalatorSpeedManager.jietiCommand(level, true, true) : 0;
         EscalatorSpeedManager.syncToAll(source.getServer());
         source.sendSuccess(
-                () -> Component.literal("已开启阶梯动画调节，速度 = " + EscalatorSpeedData.format(speed)
+                Component.literal("已开启阶梯动画调节，速度 = " + EscalatorSpeedData.format(speed)
                         + " 格/秒" + (includeAdjusted ? "（含石斧自定义，强制覆盖 " + forced + " 格）" : "（石斧自定义的不动）")),
                 false
         );
@@ -114,7 +114,7 @@ public class SmoothLift {
                 ? "已开启阶梯动画调节" + (includeAdjusted ? "（含石斧自定义）" : "（石斧自定义的不动）")
                 : "已关闭阶梯动画调节，阶梯动画恢复 MTR 原版" + (includeAdjusted ? "（含石斧自定义）" : "（石斧自定义的不动）");
         String extra = forced > 0 ? "，强制覆盖 " + forced + " 格石斧自定义扶梯" : "";
-        source.sendSuccess(() -> Component.literal(state + extra), false);
+        source.sendSuccess(Component.literal(state + extra), false);
         return 1;
     }
 
@@ -135,7 +135,7 @@ public class SmoothLift {
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            EscalatorSpeedManager.syncToAll(player.server);
+            EscalatorSpeedManager.syncToAll(player.getServer());
         }
     }
 

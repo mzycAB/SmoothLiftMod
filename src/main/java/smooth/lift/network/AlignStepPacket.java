@@ -38,7 +38,7 @@ public class AlignStepPacket {
             if (player == null) {
                 return;
             }
-            ServerLevel level = player.serverLevel();
+            ServerLevel level = player.getLevel();
             if (!EscalatorUtil.isEscalator(level.getBlockState(pkt.pos))) {
                 return;
             }
@@ -49,7 +49,7 @@ public class AlignStepPacket {
                                 "已把这条扶梯（" + count + " 格）的阶梯动画对齐到运行速度"),
                         true
                 );
-                EscalatorSpeedManager.syncToAll(player.server);
+                EscalatorSpeedManager.syncToAll(player.getServer());
             }
         });
         context.setPacketHandled(true);

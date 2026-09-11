@@ -53,14 +53,14 @@ public abstract class LivingEntityMixin {
         // 上升半段，下落到 Surface 那一刻会被重新接管吸回表面一路拖到末端。
         if (self.isPassenger() || self.isFallFlying() || self.isShiftKeyDown()
                 || movementInput.lengthSqr() > 0.01
-                || !self.onGround()
+                || !self.isOnGround()
                 || self.getDeltaMovement().y > 0.01) {
             PLAYER_DIRECTION.remove(self.getUUID());
             setPhysicsExempt(self, false);
             return;
         }
 
-        Level level = self.level();
+        Level level = self.getLevel();
 
         Long releaseTime = PLAYER_RELEASE_TIME.get(self.getUUID());
         if (releaseTime != null) {
@@ -200,7 +200,7 @@ public abstract class LivingEntityMixin {
      * 接管期间不调用 move()，无碰撞副作用。
      */
     private static void setPhysicsExempt(LivingEntity self, boolean exempt) {
-        if (!self.level().isClientSide()) {
+        if (!self.getLevel().isClientSide()) {
             self.noPhysics = exempt;
         }
     }

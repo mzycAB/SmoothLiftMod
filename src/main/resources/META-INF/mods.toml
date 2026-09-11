@@ -1,5 +1,5 @@
 modLoader="javafml"
-loaderVersion="[47,)"
+loaderVersion="[43,)"
 license="MIT"
 
 [[mods]]
@@ -20,20 +20,15 @@ Makes MTR escalators smooth instead of bumpy.
 [[dependencies.smooth_lift]]
     modId="forge"
     mandatory=true
-    versionRange="[47,)"
+    versionRange="[43,)"
     ordering="NONE"
     side="BOTH"
 
 [[dependencies.smooth_lift]]
     modId="minecraft"
     mandatory=true
-    versionRange="[1.20.1,1.21)"
+    versionRange="[1.19.2,1.20)"
     ordering="NONE"
     side="BOTH"
 
-[[dependencies.smooth_lift]]
-    modId="mtr"
-    mandatory=false
-    versionRange="[4,)"
-    ordering="NONE"
-    side="BOTH"
+
