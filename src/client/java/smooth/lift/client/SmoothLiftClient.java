@@ -50,29 +50,42 @@ public class SmoothLiftClient implements ClientModInitializer {
             EscalatorSpeedManager.clearClientData();
         });
 
-        // 接收服务端同步的全部速度数据
+        // 接收服务端同步的全部速度+阶梯动画数据
         ClientPlayNetworking.registerGlobalReceiver(SmoothLift.SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
             int dimCount = buf.readVarInt();
-            final Map<ResourceKey<Level>, Map.Entry<Double, Map<BlockPos, Double>>> parsed = new HashMap<>();
+            final Map<ResourceKey<Level>, SyncEntry> parsed = new HashMap<>();
             for (int i = 0; i < dimCount; i++) {
                 String dimId = buf.readUtf(256);
                 double defaultSpeed = buf.readDouble();
-                int entryCount = buf.readVarInt();
+                boolean stepEnabled = buf.readBoolean();
+                double stepValue = buf.readDouble();
+                int speedCount = buf.readVarInt();
                 Map<BlockPos, Double> speeds = new HashMap<>();
-                for (int j = 0; j < entryCount; j++) {
+                for (int j = 0; j < speedCount; j++) {
                     speeds.put(buf.readBlockPos(), buf.readDouble());
                 }
+                int stepCount = buf.readVarInt();
+                Map<BlockPos, Double> stepSpeeds = new HashMap<>();
+                for (int j = 0; j < stepCount; j++) {
+                    stepSpeeds.put(buf.readBlockPos(), buf.readDouble());
+                }
                 try {
-                    parsed.put(EscalatorSpeedManager.parseDimensionKey(dimId), Map.entry(defaultSpeed, speeds));
+                    parsed.put(EscalatorSpeedManager.parseDimensionKey(dimId),
+                            new SyncEntry(defaultSpeed, speeds, stepSpeeds, stepEnabled, stepValue));
                 } catch (Exception ignored) {
                 }
             }
             client.execute(() -> {
-                for (Map.Entry<ResourceKey<Level>, Map.Entry<Double, Map<BlockPos, Double>>> entry : parsed.entrySet()) {
+                for (Map.Entry<ResourceKey<Level>, SyncEntry> entry : parsed.entrySet()) {
                     EscalatorSpeedManager.applyClientData(entry.getKey(),
-                            entry.getValue().getKey(), entry.getValue().getValue());
+                            entry.getValue().defaultSpeed, entry.getValue().speeds, entry.getValue().stepSpeeds,
+                            entry.getValue().stepEnabled, entry.getValue().stepValue);
                 }
             });
         });
+    }
+
+    private record SyncEntry(double defaultSpeed, Map<BlockPos, Double> speeds, Map<BlockPos, Double> stepSpeeds,
+                             boolean stepEnabled, double stepValue) {
     }
 }
