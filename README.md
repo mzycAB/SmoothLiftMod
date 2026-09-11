@@ -1,65 +1,15 @@
-# SmoothLift（MTR 扶梯平滑模组）
+# SmoothLift
 
-让 Minecraft Transit Railway（MTR）模组的扶梯变成真正的平滑移动，替代原版的阶梯式颠簸乘坐体验。
+## 介绍
+这个模组可以让MTR里的扶梯变得更加平滑 使用 /futispeed X 改变扶梯运行速度（单位：格/秒）,使用石斧点击扶梯下端可以更改扶梯速度。支持MTR4和MTR3。最新版本1.5.x可以更改扶梯阶梯动画速度，但是不能单独更改扶梯阶梯速度。
 
-本分支为 **Minecraft 1.20.1 (Fabric)** 移植版，与 1.20.4 版本功能完全一致。
+## Introduction
+This mod makes the escalators in MTR run more smoothly. Use /futispeed X to change the escalator speed (in blocks per second). Use a stone axe to right‑click the left and right ends at the very bottom of an escalator to adjust its speed individually.
 
-## 效果
+## Setup
 
-- 原版 MTR 扶梯靠碰撞箱逐级抬升玩家，上行像爬楼梯、下行靠重力坠落，速度调快后明显颠簸抽搐
-- 本模组接管玩家在扶梯上的移动，沿扶梯视觉表面（45° 细密齿斜面）连续滑行，全程零跳变
-- 提高扶梯速度后依然保持平滑，不出现卡顿、抖动或被弹回
+For setup instructions, please see the [Fabric Documentation page](https://docs.fabricmc.net/develop/getting-started/creating-a-project#setting-up) related to the IDE that you are using.
 
-## 环境要求
+## License
 
-| 依赖 | 版本 |
-|---|---|
-| Minecraft | 1.20.1 |
-| Fabric Loader | ≥ 0.15.0 |
-| Fabric API | 0.92.2+1.20.1 |
-| MTR（建议安装） | 4.0.x |
-
-## 使用方法
-
-### 单个扶梯调速（图形界面）
-
-手持**石斧**右键扶梯，弹出速度输入界面：
-
-- 输入速度（单位：格/秒，范围 0 ~ 50）
-- 设置会应用到**整条扶梯链**（自动识别相连的同一条扶梯）
-- 重启游戏后速度依然保留（数据保存在世界存档中）
-
-### 全局默认速度（命令）
-
-```
-/futispeed <速度>
-```
-
-设置当前维度的扶梯默认速度，未单独调速的扶梯都会使用该值（默认 1 格/秒）。
-
-### 其他说明
-
-- 多人联机可用：速度数据由服务端统一管理并同步到所有客户端，移动预测两端一致无拉扯
-- 破坏扶梯方块会自动清除对应的速度记录
-- 在扶梯上主动走动（WASD）、跳跃、潜行会立即交还原版操控
-
-## 原理简述
-
-MTR 扶梯的视觉模型是 32 级/格的细密齿 45° 斜面，而碰撞箱是两级粗阶梯（比视觉面高约半格）。原版移动撞台阶产生颠簸。本模组在 `LivingEntity.travel` 中注入移动接管逻辑：
-
-- 按 MTR 扶梯朝向属性计算视觉表面的连续高度线（斜线段：`方块底 + 块内上坡进度`；平台段：`方块顶`）
-- 玩家每 tick 直接贴合该表面线移动，入口/出口与平台零跳变
-- 服务端通过 `noPhysics` 豁免跳过 `handleMovePlayer` 对嵌入碰撞箱位置的拉回校验，保证贴面位置不被弹回
-- 速度数据每维度一份 `SavedData`，随世界自动保存/加载，客户端进世界后主动请求同步
-
-## 从源码构建
-
-```bash
-./gradlew build
-```
-
-构建产物在 `build/libs/smooth-escalator-<版本>.jar`。需要 JDK 17。
-
-## 许可证
-
-[MIT](LICENSE)
+This template is available under the CC0 license. Feel free to learn from it and incorporate it in your own projects.

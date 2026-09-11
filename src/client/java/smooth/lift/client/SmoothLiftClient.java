@@ -50,22 +50,28 @@ public class SmoothLiftClient implements ClientModInitializer {
             EscalatorSpeedManager.clearClientData();
         });
 
-        // 接收服务端同步的全部速度数据
+        // 接收服务端同步的全部速度+阶梯动画数据
         ClientPlayNetworking.registerGlobalReceiver(SyncPayload.TYPE, (payload, context) -> {
-            final Map<ResourceKey<Level>, Map.Entry<Double, Map<BlockPos, Double>>> parsed = new HashMap<>();
+            final Map<ResourceKey<Level>, SyncEntry> parsed = new HashMap<>();
             for (SyncPayload.DimensionEntry entry : payload.dimensions()) {
                 try {
                     parsed.put(EscalatorSpeedManager.parseDimensionKey(entry.dimensionId()),
-                            Map.entry(entry.defaultSpeed(), entry.speeds()));
+                            new SyncEntry(entry.defaultSpeed(), entry.speeds(), entry.stepSpeeds(),
+                                    entry.stepEnabled(), entry.stepValue()));
                 } catch (Exception ignored) {
                 }
             }
             context.client().execute(() -> {
-                for (Map.Entry<ResourceKey<Level>, Map.Entry<Double, Map<BlockPos, Double>>> entry : parsed.entrySet()) {
+                for (Map.Entry<ResourceKey<Level>, SyncEntry> entry : parsed.entrySet()) {
                     EscalatorSpeedManager.applyClientData(entry.getKey(),
-                            entry.getValue().getKey(), entry.getValue().getValue());
+                            entry.getValue().defaultSpeed, entry.getValue().speeds, entry.getValue().stepSpeeds,
+                            entry.getValue().stepEnabled, entry.getValue().stepValue);
                 }
             });
         });
+    }
+
+    private record SyncEntry(double defaultSpeed, Map<BlockPos, Double> speeds, Map<BlockPos, Double> stepSpeeds,
+                             boolean stepEnabled, double stepValue) {
     }
 }
