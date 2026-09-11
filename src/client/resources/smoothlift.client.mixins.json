@@ -1,0 +1,15 @@
+{
+	"required": true,
+	"package": "smooth.lift.client.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"client": [
+		"ExampleClientMixin",
+		"EscalatorSpriteTickerMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	},
+	"overwrites": {
+		"requireAnnotations": true
+	}
+}
