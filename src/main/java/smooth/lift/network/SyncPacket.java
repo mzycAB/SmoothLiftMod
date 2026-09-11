@@ -11,9 +11,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/** 服务端 -> 客户端：全量同步所有维度的扶梯速度数据。 */
+/** 服务端 -> 客户端：全量同步所有维度的扶梯速度与阶梯动画数据。 */
 public class SyncPacket {
-    public record LevelSpeedData(String dimension, double defaultSpeed, Map<BlockPos, Double> speeds) {
+    public record LevelSpeedData(String dimension, double defaultSpeed,
+                                 boolean stepEnabled, double stepValue,
+                                 Map<BlockPos, Double> speeds, Map<BlockPos, Double> stepSpeeds) {
     }
 
     private final List<LevelSpeedData> entries;
@@ -27,8 +29,15 @@ public class SyncPacket {
         for (LevelSpeedData entry : pkt.entries) {
             buf.writeUtf(entry.dimension(), 256);
             buf.writeDouble(entry.defaultSpeed());
+            buf.writeBoolean(entry.stepEnabled());
+            buf.writeDouble(entry.stepValue());
             buf.writeVarInt(entry.speeds().size());
             for (Map.Entry<BlockPos, Double> e : entry.speeds().entrySet()) {
+                buf.writeBlockPos(e.getKey());
+                buf.writeDouble(e.getValue());
+            }
+            buf.writeVarInt(entry.stepSpeeds().size());
+            for (Map.Entry<BlockPos, Double> e : entry.stepSpeeds().entrySet()) {
                 buf.writeBlockPos(e.getKey());
                 buf.writeDouble(e.getValue());
             }
@@ -41,12 +50,19 @@ public class SyncPacket {
         for (int i = 0; i < dimCount; i++) {
             String dimension = buf.readUtf(256);
             double defaultSpeed = buf.readDouble();
+            boolean stepEnabled = buf.readBoolean();
+            double stepValue = buf.readDouble();
             int entryCount = buf.readVarInt();
             Map<BlockPos, Double> speeds = new HashMap<>();
             for (int j = 0; j < entryCount; j++) {
                 speeds.put(buf.readBlockPos(), buf.readDouble());
             }
-            entries.add(new LevelSpeedData(dimension, defaultSpeed, speeds));
+            int stepCount = buf.readVarInt();
+            Map<BlockPos, Double> stepSpeeds = new HashMap<>();
+            for (int j = 0; j < stepCount; j++) {
+                stepSpeeds.put(buf.readBlockPos(), buf.readDouble());
+            }
+            entries.add(new LevelSpeedData(dimension, defaultSpeed, stepEnabled, stepValue, speeds, stepSpeeds));
         }
         return new SyncPacket(entries);
     }
@@ -62,7 +78,10 @@ public class SyncPacket {
                     EscalatorSpeedManager.applyClientData(
                             EscalatorSpeedManager.parseDimensionKey(entry.dimension()),
                             entry.defaultSpeed(),
-                            entry.speeds()
+                            entry.speeds(),
+                            entry.stepSpeeds(),
+                            entry.stepEnabled(),
+                            entry.stepValue()
                     );
                 } catch (Exception ignored) {
                 }

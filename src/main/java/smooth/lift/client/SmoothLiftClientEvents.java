@@ -10,7 +10,6 @@ import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.network.PacketDistributor;
 import smooth.lift.EscalatorSpeedManager;
 import smooth.lift.EscalatorUtil;
 import smooth.lift.SmoothLift;
@@ -41,7 +40,7 @@ public class SmoothLiftClientEvents {
     /** 客户端完全进世界后主动向服务端请求速度数据。 */
     @SubscribeEvent
     public static void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
-        Packets.CHANNEL.send(new RequestSyncPacket(), PacketDistributor.SERVER.noArg());
+        Packets.sendToServer(new RequestSyncPacket());
     }
 
     /** 断开连接时清空客户端镜像，避免残留上一个世界的速度数据。 */

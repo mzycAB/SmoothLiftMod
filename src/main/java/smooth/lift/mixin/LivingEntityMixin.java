@@ -48,8 +48,12 @@ public abstract class LivingEntityMixin {
         LivingEntity self = (LivingEntity) (Object) this;
 
         if (!(self instanceof Player)) return;
+        // 只要玩家不站在地面上（跳跃上升、最高点、下落的全程）就放手，
+        // 让整段跳跃交给原版物理；否则 getDeltaMovement().y > 0.01 只覆盖
+        // 上升半段，下落到 Surface 那一刻会被重新接管吸回表面一路拖到末端。
         if (self.isPassenger() || self.isFallFlying() || self.isShiftKeyDown()
                 || movementInput.lengthSqr() > 0.01
+                || !self.onGround()
                 || self.getDeltaMovement().y > 0.01) {
             PLAYER_DIRECTION.remove(self.getUUID());
             setPhysicsExempt(self, false);
