@@ -36,5 +36,20 @@ public final class Packets {
                 .decoder(SyncPacket::decode)
                 .consumerMainThread(SyncPacket::handle)
                 .add();
+        CHANNEL.messageBuilder(SetStepSpeedPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetStepSpeedPacket::encode)
+                .decoder(SetStepSpeedPacket::decode)
+                .consumerMainThread(SetStepSpeedPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(AlignStepPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(AlignStepPacket::encode)
+                .decoder(AlignStepPacket::decode)
+                .consumerMainThread(AlignStepPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(RestoreStepPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(RestoreStepPacket::encode)
+                .decoder(RestoreStepPacket::decode)
+                .consumerMainThread(RestoreStepPacket::handle)
+                .add();
     }
 }
