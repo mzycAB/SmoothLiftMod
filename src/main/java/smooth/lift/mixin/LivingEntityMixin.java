@@ -26,12 +26,21 @@ import java.util.UUID;
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityMixin {
 
-    private static final double ARRIVE_DISTANCE = 0.75;
+    /**
+     * 到站判定距离。必须小于 0.5（方块中心到边缘的距离），保证交还原版物理时
+     * 玩家中心已经落在端部平台方块内 —— 此时站立面就是平台块顶，脚部不会
+     * 压在上一块台阶的碰撞箱上（否则会被顶回或侧推，甚至掉下去）。
+     */
+    private static final double ARRIVE_DISTANCE = 0.45;
     private static final double SLOWDOWN_DISTANCE = 1.5;
     private static final int RELEASE_COOLDOWN_TICKS = 40;
     private static final int MAX_WALK_LENGTH = 512;
 
-    /** 脚底相对视觉表面的悬浮量：1/2 格 + 防贴面渲染抖动余量。 */
+    /**
+     * 坡段专用悬浮量：MTR 台阶碰撞箱比视觉斜面高约半格，坡段贴面时用半格余量
+     * 避免脚部穿进碰撞箱。平台段（LANDING / FLAT / TRANSITION_BOTTOM）可见顶面
+     * 就是块顶，站立面必须等于块顶，不能套用该余量。
+     */
     private static final double HOVER = 0.50;
     /** 平直传送带/水平站台只需贴碰撞箱顶，仅加微小余量避免贴面抖动。 */
     private static final double FLAT_EPSILON = 0.001;
@@ -43,11 +52,34 @@ public abstract class LivingEntityMixin {
     private static final Map<UUID, Boolean> PLAYER_DIRECTION = new HashMap<>();
     private static final Map<UUID, Long> PLAYER_RELEASE_TIME = new HashMap<>();
 
+    /**
+     * 只记录「由本模组亲自开启过 noPhysics 豁免」的玩家。
+     * 关闭豁免时仅回滚这些玩家，绝不去写原版自己设置的 noPhysics —— 旁观模式的
+     * 穿墙能力正是原版每 tick 写入的 noPhysics=true（Player#tick 中
+     * noPhysics = isSpectator()），服务端 ServerPlayNetworkHandler 也以
+     * !noPhysics 作为「移动校验 / 拉回」的开关。
+     */
+    private static final Set<UUID> MOD_EXEMPT = new HashSet<>();
+
     @Inject(method = "travel", at = @At("HEAD"), cancellable = true)
     private void smoothEscalator(Vec3 movementInput, CallbackInfo ci) {
         LivingEntity self = (LivingEntity) (Object) this;
 
         if (!(self instanceof Player)) return;
+
+        // 旁观模式直接放手：旁观者靠原版每 tick 的 noPhysics=true 穿墙，
+        // 而本模组的接管逻辑会改写 noPhysics（含各条提前返回分支里的"关闭豁免"），
+        // 一旦被写成 false，服务端的移动校验就会生效，旁观玩家穿墙时会被判定
+        // "moved wrongly" 并拉回 —— 表现就是无法穿墙。旁观者也不参与乘坐，
+        // 这里连状态一并清掉，且完全不碰 noPhysics。
+        if (((Player) self).isSpectator()) {
+            UUID spectatorId = self.getUUID();
+            PLAYER_DIRECTION.remove(spectatorId);
+            PLAYER_RELEASE_TIME.remove(spectatorId);
+            MOD_EXEMPT.remove(spectatorId);
+            return;
+        }
+
         // 只要玩家不站在地面上（跳跃上升、最高点、下落的全程）就放手，
         // 让整段跳跃交给原版物理；否则 getDeltaMovement().y > 0.01 只覆盖
         // 上升半段，下落到 Surface 那一刻会被重新接管吸回表面一路拖到末端。
@@ -166,6 +198,13 @@ public abstract class LivingEntityMixin {
         if (horizontalDist < ARRIVE_DISTANCE) {
             PLAYER_DIRECTION.remove(uuid);
             PLAYER_RELEASE_TIME.put(uuid, level.getGameTime());
+            // 交还原版物理前，把脚底补到目标平台的真实站立面(块顶)之上。
+            // 只上抬、且限幅在自动上台阶高度内，确保不会低于台阶碰撞箱顶面：
+            // 脚部一旦陷进碰撞箱，原版会把玩家顶回(被推一下)甚至直接穿下去。
+            double standY = targetPos.getY() + 1.0 + FLAT_EPSILON;
+            if (self.getY() < standY) {
+                self.setPos(self.getX(), Math.min(standY, self.getY() + ENTRY_RISE), self.getZ());
+            }
             Vec3 exit = horizontal != null
                     ? new Vec3(horizontal.getStepX(), 0, horizontal.getStepZ()).scale(speed)
                     : flatten(fallbackDir).scale(speed);
@@ -198,20 +237,30 @@ public abstract class LivingEntityMixin {
      * noPhysics=true 让服务端跳过该校验并让 move() 无碰撞执行（位移与
      * 申报一致，bl3 偏差归零），从而既贴面又不被拉回。客户端无需豁免：
      * 接管期间不调用 move()，无碰撞副作用。
+     *
+     * <p>关闭豁免时只回滚本模组自己开过的玩家（MOD_EXEMPT 记账），
+     * 不会把原版设置的 noPhysics 写成 false —— 旁观模式的穿墙依赖它。
      */
     private static void setPhysicsExempt(LivingEntity self, boolean exempt) {
         if (!self.level().isClientSide()) {
-            self.noPhysics = exempt;
+            UUID uuid = self.getUUID();
+            if (exempt) {
+                MOD_EXEMPT.add(uuid);
+                self.noPhysics = true;
+            } else if (MOD_EXEMPT.remove(uuid)) {
+                self.noPhysics = false;
+            }
         }
     }
 
     /**
-     * 贴视觉表面移动。MTR 扶梯视觉模型是 32 级/格的细密齿 45° 斜面
-     * （escalator_step_slope 模型 + 移动纹理），等效表面高度：
-     * - 平台段（LANDING / FLAT / TRANSITION_BOTTOM）：方块顶 +1；
-     * - 坡段（SLOPE / TRANSITION_TOP）：方块底 + 块内上坡进度 t。
-     * 入口处 SLOPE 底 = 下方平台底 +1，t=0 时与平台顶无缝衔接，
-     * 全程零跳变。台阶碰撞箱比该面高约半格，由服务端 noPhysics 豁免。
+     * 贴视觉表面移动。MTR 扶梯模型（escalator_step_slope + 移动纹理）等效表面高度：
+     * - 平台段（FLAT / LANDING_TOP / LANDING_BOTTOM）：块顶 +1，玩家正好站在可见面上；
+     * - 坡段（SLOPE）：块内上坡进度 t 的 45° 斜面，加 HOVER 让脚部避开高约半格的碰撞箱；
+     * - 过渡块（TRANSITION_BOTTOM / TRANSITION_TOP）：用半格坡度把平台站立高度与坡段端点
+     *   平滑连起来，于是整条链：底部平台(+1) → 过渡(+1~+1.5) → 坡段(+0.5 递增) →
+     *   顶部过渡(+0.5~+1) → 顶部平台(+1)，处处连续，且两端都收在真实站立高度，
+     *   玩家到达顶端不会被半格抬升后再落下。
      */
     private static void rideOnSurface(LivingEntity self, Level level, Direction horizontal, double speed) {
         double stepX = horizontal.getStepX() * speed;
@@ -262,20 +311,32 @@ public abstract class LivingEntityMixin {
 
     /**
      * MTR 扶梯视觉表面高度（MTR 4.0.5 模型实测）：
-     * - FLAT（平直传送带）：梯级带顶 16/16，碰撞箱与视觉面齐平，不能加 HOVER；
-     * - LANDING / TRANSITION_BOTTOM：作为斜坡出入口平台，仍用 HOVER 与坡段衔接；
-     * - SLOPE / TRANSITION_TOP：45° 细密齿斜面，碰撞箱比视觉面高约半格，用 HOVER。
+     * - FLAT（平直传送带）与 LANDING（上下端平台）：可见顶面 = 块顶 16/16，站立面 = 块顶 +1，
+     *   与碰撞箱齐平，不能加 HOVER；
+     * - SLOPE（45° 细密齿斜面）：碰撞箱比视觉面高约半格，用 HOVER 防穿模；
+     * - TRANSITION_BOTTOM / TRANSITION_TOP（坡段两端的过渡块）：可见顶面同样是块顶，
+     *   但必须与相邻坡段的高度对齐，否则平台与坡段交界处会出现半格跳变。
+     *   两段都用「坡段同款半格悬浮」的斜率与坡段对齐，并保证脚底始终不低于
+     *   台阶碰撞箱顶面，同时收在平台的真实站立高度上。
      */
     private static double surfaceLineOfBlock(BlockState state, BlockPos pos, double x, double z) {
         String orientation = getOrientation(state).toUpperCase();
+        double t = progressAlongFacing(state, pos, x, z);
         switch (orientation) {
             case "SLOPE":
+                return pos.getY() + t + HOVER;
+            case "TRANSITION_BOTTOM":
+                // 上坡方向：下坡端接底部平台(块顶 +1)，上坡端接坡段起点(+1.5)
+                return pos.getY() + 1.0 + HOVER * t;
             case "TRANSITION_TOP":
-                return pos.getY() + progressAlongFacing(state, pos, x, z) + HOVER;
-            case "FLAT":
-                return pos.getY() + 1.0 + FLAT_EPSILON;
+                // 上坡方向：与坡段末端(+0.5)对齐，之后升到顶部平台真实站立高度(块顶 +1)。
+                // 必须以块顶 +1 为上限截断：台阶碰撞箱在该块上坡半边顶到约 +0.9375，
+                // 若照「平台高度」线性降到 +1 会在 t∈(0.5,1) 落进碰撞箱里，
+                // 玩家脱离扶梯交还原版物理时会被顶回(被推一下)或直接穿下去。
+                return pos.getY() + Math.min(t + HOVER, 1.0);
             default:
-                return pos.getY() + 1.0 + HOVER;
+                // FLAT / LANDING_TOP / LANDING_BOTTOM：站立面即块顶
+                return pos.getY() + 1.0 + FLAT_EPSILON;
         }
     }
 
