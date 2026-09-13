@@ -37,6 +37,11 @@ public class EscalatorSpeedData extends SavedData {
     /** 全局阶梯动画速度值（最后一次 /jietispeed X 设定的值）。 */
     public double stepValue = DEFAULT_SPEED;
 
+    /** 维度默认阶梯动画速度：未开启时跟随全局运行速度（MTR 原版阶梯动画）。 */
+    public double defaultStepSpeed() {
+        return stepEnabled ? stepValue : VANILLA_STEP;
+    }
+
     public static EscalatorSpeedData fromTag(CompoundTag tag) {
         EscalatorSpeedData data = new EscalatorSpeedData();
         if (tag.contains("default")) {

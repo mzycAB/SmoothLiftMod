@@ -9,7 +9,6 @@
     "ChunkMapAccessor"
   ],
   "client": [
-    "EscalatorSpriteTickerMixin"
   ],
   "injectors": {
     "defaultRequire": 1
