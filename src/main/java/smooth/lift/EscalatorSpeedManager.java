@@ -1,7 +1,7 @@
 package smooth.lift;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
@@ -202,9 +202,8 @@ public final class EscalatorSpeedManager {
     }
 
     public static EscalatorSpeedData getServerData(ServerLevel level) {
-        // 1.19.2: computeIfAbsent 使用 (Function, Supplier, String) 三参形式
-        return level.getDataStorage().computeIfAbsent(EscalatorSpeedData::fromTag, EscalatorSpeedData::new,
-                EscalatorSpeedData.DATA_NAME);
+        return level.getDataStorage().computeIfAbsent(
+                EscalatorSpeedData::fromTag, EscalatorSpeedData::new, EscalatorSpeedData.DATA_NAME);
     }
 
     /** 对 seed 所在的整条扶梯链设置运行速度，返回实际设置到几个方块。 */
@@ -660,6 +659,6 @@ public final class EscalatorSpeedManager {
     }
 
     public static ResourceKey<Level> parseDimensionKey(String id) {
-        return ResourceKey.create(Registry.DIMENSION_REGISTRY, new ResourceLocation(id));
+        return ResourceKey.create(Registries.DIMENSION, new ResourceLocation(id));
     }
 }

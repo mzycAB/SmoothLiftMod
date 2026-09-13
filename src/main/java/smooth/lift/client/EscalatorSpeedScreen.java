@@ -74,8 +74,9 @@ public class EscalatorSpeedScreen extends Screen {
         stepInput.setResponder(this::onStepEdited);
         addRenderableWidget(stepInput);
 
-        addRenderableWidget(new Button(this.width / 2 - 100, 144, 200, 20,
-                Component.literal("阶梯速度对齐扶梯速度"), button -> alignStepToRun()));
+        addRenderableWidget(Button.builder(Component.literal("阶梯速度对齐扶梯速度"), button -> alignStepToRun())
+                .bounds(this.width / 2 - 100, 144, 200, 20)
+                .build());
 
         setInitialFocus(runInput);
     }

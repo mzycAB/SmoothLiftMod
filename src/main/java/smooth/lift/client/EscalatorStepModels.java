@@ -146,7 +146,7 @@ public final class EscalatorStepModels {
                     if (sprite == null) {
                         continue;
                     }
-                    ResourceLocation id = sprite.getName();
+                    ResourceLocation id = sprite.atlasLocation();
                     boolean markerUp = MARKER_UP.equals(id);
                     boolean markerDown = MARKER_DOWN.equals(id);
                     boolean markerFlatUp = MARKER_FLAT_UP.equals(id);

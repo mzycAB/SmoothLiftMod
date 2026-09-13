@@ -31,7 +31,7 @@ public abstract class EscalatorSpriteTickerMixin {
             return;
         }
         TextureAtlasSprite self = (TextureAtlasSprite) (Object) this;
-        String name = self.getName().toString();
+        String name = self.atlasLocation().toString();
         if (LOGGED_NAMES.add(name)) {
             LOGGER.info("[SmoothLift] getAnimationTicker called: name={}", name);
         }

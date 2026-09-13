@@ -2,7 +2,7 @@ package smooth.lift;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.Registry;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -70,7 +70,7 @@ public final class EscalatorUtil {
         Set<Block> cached = escalatorStepBlocks;
         if (cached == null) {
             Set<Block> found = new HashSet<>();
-            for (Block block : Registry.BLOCK) {
+            for (Block block : BuiltInRegistries.BLOCK) {
                 if (block.getClass().getName().toLowerCase(Locale.ROOT).contains("escalatorstep")) {
                     found.add(block);
                 }

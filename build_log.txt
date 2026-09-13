@@ -1,0 +1,109 @@
+﻿Starting a Gradle Daemon, 2 incompatible and 1 stopped Daemons could not be reused, use --status for details
+
+> Configure project :
+MixinGradle is skipping eclipse integration, extension not found
+
+> Task :downloadMcpConfig
+> Task :extractSrg
+> Task :createMcpToSrg
+
+> Task :compileJava
+.\gradlew.bat : [21:58:45] [main/INFO]: Writing debug log file accesstransform.log
+At line:15 char:2988
++ ... vscode\ripgrep\bin'; .\gradlew.bat build --console=plain 2>&1 | Tee-O ...
++                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([21:58:45] [mai...sstransform.log:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[21:58:45] [main/INFO]: Access Transformer processor running version 8.2.14
+[21:58:45] [main/INFO]: Command line arguments [--inJar, C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\fg_ca
+che\net\minecraftforge\forge\1.19.4-45.2.0\forge-1.19.4-45.2.0-injected.jar, --outJar, C:\Users\user\Desktop\2\SmoothLi
+ftMod-Forge-1.19.4\build\fg_cache\net\minecraftforge\forge\1.19.4-45.2.0_mapped_official_1.19.4\forge-1.19.4-45.2.0_map
+ped_official_1.19.4.jar, --logFile, accesstransform.log, --atFile, C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\s
+rc\main\resources\META-INF\accesstransformer.cfg, --atFile, C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\_a
+tJar_4\parent_at.cfg]
+[21:58:45] [main/INFO]: Reading from C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\fg_cache\net\minecraftfor
+ge\forge\1.19.4-45.2.0\forge-1.19.4-45.2.0-injected.jar
+[21:58:45] [main/INFO]: Writing to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\fg_cache\net\minecraftforge
+\forge\1.19.4-45.2.0_mapped_official_1.19.4\forge-1.19.4-45.2.0_mapped_official_1.19.4.jar
+[21:58:45] [main/INFO]: Transformer file C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\resources\META-INF
+\accesstransformer.cfg
+[21:58:45] [main/INFO]: Transformer file C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\_atJar_4\parent_at.cf
+g
+[21:58:45] [main/WARN]: Found existing output jar C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\fg_cache\net
+\minecraftforge\forge\1.19.4-45.2.0_mapped_official_1.19.4\forge-1.19.4-45.2.0_mapped_official_1.19.4.jar, overwriting
+[21:58:50] [main/INFO]: JAR transformation complete C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\fg_cache\n
+et\minecraftforge\forge\1.19.4-45.2.0_mapped_official_1.19.4\forge-1.19.4-45.2.0_mapped_official_1.19.4.jar
+Creating SRG -> MCP TSRG
+注: SpongePowered MIXIN Annotation Processor Version=0.8.5 (MixinGradle Version=0.7.38)
+注: Supported obfuscation types: ObfuscationServiceMCP supports [notch] ObfuscationServiceFG3 supports [searge]
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\mixin\EscalatorSpriteTickerMixin.java:27: 
+警告: Unable to determine descriptor for @Inject target method
+    @Inject(method = "getAnimationTicker", at = @At("RETURN"), cancellable = true)
+    ^
+注: Loading searge mappings from C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\createMcpToSrg\output.tsrg
+注: Writing refmap to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing refmap to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing searge composite mappings to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compil
+eJava-mappings.tsrg
+注: Writing refmap to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing refmap to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compileJava-refmap.json
+注: Writing searge composite mappings to C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\build\tmp\compileJava\compil
+eJava-mappings.tsrg
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\client\EscalatorStepModels.java:149: 错误: 找
+不到符号
+                    ResourceLocation id = sprite.getName();
+                                                ^
+  符号:   方法 getName()
+  位置: 类型为TextureAtlasSprite的变量 sprite
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\EscalatorSpeedData.java:20: 错误: EscalatorS
+peedData不是抽象的, 并且未覆盖SavedData中的抽象方法save(CompoundTag)
+public class EscalatorSpeedData extends SavedData {
+       ^
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\EscalatorSpeedData.java:78: 错误: 方法不会覆盖或实现超
+类型的方法
+    @Override
+    ^
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\EscalatorSpeedManager.java:208: 错误: 找不到符号
+                SavedData.Factory.create(EscalatorSpeedData::fromTag, EscalatorSpeedData::new),
+                         ^
+  符号:   变量 Factory
+  位置: 类 SavedData
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\EscalatorSpeedManager.java:207: 错误: 不兼容的类型
+: 无法推断类型变量 T
+        return level.getDataStorage().computeIfAbsent(
+                                                     ^
+    (参数不匹配; String无法转换为Supplier<T>)
+  其中, T是类型变量:
+    T扩展已在方法 <T>computeIfAbsent(Function<CompoundTag,T>,Supplier<T>,String)中声明的SavedData
+C:\Users\user\Desktop\2\SmoothLiftMod-Forge-1.19.4\src\main\java\smooth\lift\mixin\EscalatorSpriteTickerMixin.java:34: 
+错误: 找不到符号
+        String name = self.getName().toString();
+                          ^
+  符号:   方法 getName()
+  位置: 类型为TextureAtlasSprite的变量 self
+注: 某些输入文件使用或覆盖了已过时的 API。
+注: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+6 个错误
+1 个警告
+
+> Task :compileJava FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --info option to get more log output.
+> Run with --scan to get full insights.
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.10.2/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD FAILED in 1m 44s
+4 actionable tasks: 4 executed
