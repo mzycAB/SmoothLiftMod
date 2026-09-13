@@ -8,9 +8,7 @@
     "LivingEntityMixin",
     "ChunkMapAccessor"
   ],
-  "client": [
-    "EscalatorSpriteTickerMixin"
-  ],
+  "client": [],
   "injectors": {
     "defaultRequire": 1
   }

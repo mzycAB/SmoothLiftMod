@@ -94,6 +94,11 @@ public class EscalatorSpeedData extends SavedData {
         return compound;
     }
 
+    /** 维度默认阶梯动画速度：/jietispeed 开着用 stepValue，关着用 MTR 原版（0.625）。 */
+    public double defaultStepSpeed() {
+        return stepEnabled ? stepValue : VANILLA_STEP;
+    }
+
     public static double clamp(double speed) {
         return Math.max(0.0, Math.min(MAX_SPEED, speed));
     }

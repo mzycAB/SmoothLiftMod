@@ -49,6 +49,11 @@ public final class Packets {
                 .decoder(RestoreStepPacket::decode)
                 .consumerMainThread(RestoreStepPacket::handle)
                 .add();
+        CHANNEL.messageBuilder(ApplyChainPacket.class)
+                .encoder(ApplyChainPacket::encode)
+                .decoder(ApplyChainPacket::decode)
+                .consumerMainThread(ApplyChainPacket::handle)
+                .add();
     }
 
     /** 客户端 -> 服务端：1.20.4 起 SimpleChannel 不再自带 sendToServer，需通过当前客户端连接发送。 */

@@ -35,5 +35,5 @@ Makes MTR escalators smooth instead of bumpy.
     modId="mtr"
     mandatory=false
     versionRange="[4,)"
-    ordering="NONE"
+    ordering="AFTER"
     side="BOTH"

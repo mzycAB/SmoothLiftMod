@@ -39,11 +39,11 @@ public class RestoreStepPacket {
             if (!EscalatorUtil.isEscalator(level.getBlockState(pkt.pos))) {
                 return;
             }
-            int count = EscalatorSpeedManager.restoreStepDefault(level, pkt.pos);
+            int count = EscalatorSpeedManager.clearStepSpeed(level, pkt.pos);
             if (count > 0) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.literal(
-                                "已把这条扶梯（" + count + " 格）的阶梯动画恢复为 MTR 原版默认（运行速度不变）"),
+                                "已清除这条扶梯（" + count + " 格）的单独阶梯动画设置，改为跟随维度默认（运行速度不变）"),
                         true
                 );
                 EscalatorSpeedManager.syncToAll(player.server);
