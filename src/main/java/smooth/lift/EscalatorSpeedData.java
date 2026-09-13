@@ -39,6 +39,16 @@ public class EscalatorSpeedData extends SavedData {
     /** 全局阶梯动画速度值（最后一次 /jietispeed X 设定的值）。 */
     public double stepValue = DEFAULT_SPEED;
 
+    /** 维度默认阶梯动画速度：未单独设置阶梯动画的扶梯使用它。 */
+    public double defaultStepSpeed() {
+        return stepEnabled ? stepValue : VANILLA_STEP;
+    }
+
+    /** 该方块所在的扶梯是否被单独设置了阶梯动画速度。 */
+    public boolean hasIndividualStep(BlockPos pos) {
+        return stepSpeeds.containsKey(pos);
+    }
+
     public static final SavedData.Factory<EscalatorSpeedData> FACTORY =
             new SavedData.Factory<>(EscalatorSpeedData::new, EscalatorSpeedData::fromTag, DataFixTypes.SAVED_DATA_MAP_DATA);
 
