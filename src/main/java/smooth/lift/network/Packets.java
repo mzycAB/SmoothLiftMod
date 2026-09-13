@@ -26,6 +26,11 @@ public final class Packets {
                 .decoder(SetSpeedPacket::decode)
                 .consumerMainThread(SetSpeedPacket::handle)
                 .add();
+        CHANNEL.messageBuilder(ApplyChainPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ApplyChainPacket::encode)
+                .decoder(ApplyChainPacket::decode)
+                .consumerMainThread(ApplyChainPacket::handle)
+                .add();
         CHANNEL.messageBuilder(RequestSyncPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
                 .encoder(RequestSyncPacket::encode)
                 .decoder(RequestSyncPacket::decode)

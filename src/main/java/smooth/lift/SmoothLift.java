@@ -1,6 +1,7 @@
 package smooth.lift;
 
 import com.mojang.brigadier.arguments.FloatArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -34,88 +35,37 @@ public class SmoothLift {
         event.enqueueWork(Packets::register);
     }
 
-    /** /futispeed：设置玩家所在维度的默认速度（未单独调速的扶梯使用）。 */
+    /**
+     * 命令注册：
+     *   /futispeed   X           -> 全局扶梯运行速度 = X（阶梯速度一起跟随）
+     *   /futispeed   X to Y      -> 只有当前全局运行速度正好是 X 时才改成 Y
+     *   /futispeed   -f X        -> 强制游戏内所有扶梯运行速度 = X（不管有没有被改过）
+     *   /futispeed   -f X to Y   -> 把所有运行速度为 X 的扶梯（含被改过的）改成 Y
+     *
+     *   /jietispeed  X           -> 全局扶梯阶梯速度 = X（永远不动运行速度）
+     *   /jietispeed  X to Y      -> 只有当前全局阶梯速度正好是 X 时才改成 Y
+     *   /jietispeed  -f X        -> 强制所有扶梯阶梯速度 = X
+     *   /jietispeed  -f X to Y   -> 把所有阶梯速度为 X 的扶梯改成 Y
+     */
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         event.getDispatcher().register(Commands.literal("futispeed")
                 .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
-                        .executes(context -> {
-                            float speed = FloatArgumentType.getFloat(context, "speed");
-                            ServerLevel level = context.getSource().getLevel();
-                            EscalatorSpeedManager.setDefault(level, speed);
-                            EscalatorSpeedManager.syncToAll(context.getSource().getServer());
-                            context.getSource().sendSuccess(
-                                    () -> Component.literal("本维度扶梯默认速度已设置为 "
-                                            + EscalatorSpeedData.format(speed) + " 格/秒"),
-                                    false
-                            );
-                            return 1;
-                        })
-                )
-                // /futispeed f X：强制所有扶梯运行速度 = X（包括石斧自定义过的）
-                .then(Commands.literal("f")
-                        .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
-                                .executes(context -> {
-                                    float speed = FloatArgumentType.getFloat(context, "speed");
-                                    ServerLevel level = context.getSource().getLevel();
-                                    int count = EscalatorSpeedManager.forceAllRunningSpeed(level, speed);
-                                    EscalatorSpeedManager.syncToAll(context.getSource().getServer());
-                                    context.getSource().sendSuccess(
-                                            () -> Component.literal("已强制把所有 " + count + " 个扶梯方块的运行速度设为 "
-                                                    + EscalatorSpeedData.format(speed) + " 格/秒"),
-                                            false
-                                    );
-                                    return 1;
-                                })
-                        )
-                )
+                        .executes(SmoothLift::futiGlobal)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", FloatArgumentType.floatArg(0.0f))
+                                        .executes(SmoothLift::futiFromTo))))
+                .then(futiForce("-f"))
         );
 
-        // /jietispeed：阶梯动画速度全局调节
-        //   X        -> 开启调节，阶梯动画速度 = X
-        //   on       -> 开启调节，恢复上次 /jietispeed X 的值
-        //   off      -> 关闭调节，阶梯动画恢复 MTR 原版
-        // 三种都默认忽略石斧自定义过的扶梯；带 f（f X / f on / f off）则强制包含
         event.getDispatcher().register(Commands.literal("jietispeed")
-                .then(Commands.literal("on").executes(context -> jietiOnOff(context, true, false)))
-                .then(Commands.literal("off").executes(context -> jietiOnOff(context, false, false)))
-                .then(Commands.literal("f")
-                        .then(Commands.literal("on").executes(context -> jietiOnOff(context, true, true)))
-                        .then(Commands.literal("off").executes(context -> jietiOnOff(context, false, true)))
-                        .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
-                                .executes(context -> jietiValue(context, true)))
-                )
                 .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
-                        .executes(context -> jietiValue(context, false)))
+                        .executes(SmoothLift::jietiGlobal)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", FloatArgumentType.floatArg(0.0f))
+                                        .executes(SmoothLift::jietiFromTo))))
+                .then(jietiForce("-f"))
         );
-    }
-
-    private static int jietiValue(CommandContext<CommandSourceStack> context, boolean includeAdjusted) {
-        float speed = FloatArgumentType.getFloat(context, "speed");
-        CommandSourceStack source = context.getSource();
-        ServerLevel level = source.getLevel();
-        EscalatorSpeedManager.setJietiValue(level, speed);
-        int forced = includeAdjusted ? EscalatorSpeedManager.jietiCommand(level, true, true) : 0;
-        EscalatorSpeedManager.syncToAll(source.getServer());
-        source.sendSuccess(
-                () -> Component.literal("已开启阶梯动画调节，速度 = " + EscalatorSpeedData.format(speed)
-                        + " 格/秒" + (includeAdjusted ? "（含石斧自定义，强制覆盖 " + forced + " 格）" : "（石斧自定义的不动）")),
-                false
-        );
-        return 1;
-    }
-
-    private static int jietiOnOff(CommandContext<CommandSourceStack> context, boolean enabled, boolean includeAdjusted) {
-        CommandSourceStack source = context.getSource();
-        ServerLevel level = source.getLevel();
-        int forced = EscalatorSpeedManager.jietiCommand(level, enabled, includeAdjusted);
-        EscalatorSpeedManager.syncToAll(source.getServer());
-        String state = enabled
-                ? "已开启阶梯动画调节" + (includeAdjusted ? "（含石斧自定义）" : "（石斧自定义的不动）")
-                : "已关闭阶梯动画调节，阶梯动画恢复 MTR 原版" + (includeAdjusted ? "（含石斧自定义）" : "（石斧自定义的不动）");
-        String extra = forced > 0 ? "，强制覆盖 " + forced + " 格石斧自定义扶梯" : "";
-        source.sendSuccess(() -> Component.literal(state + extra), false);
-        return 1;
     }
 
     /** 服务端兜底：拿着石斧右键扶梯时取消原版交互（正常情况下客户端已拦截，不会发包）。 */
@@ -135,7 +85,7 @@ public class SmoothLift {
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
         if (event.getEntity() instanceof ServerPlayer player) {
-            EscalatorSpeedManager.syncToAll(player.server);
+            EscalatorSpeedManager.syncToAll(player.getServer());
         }
     }
 
@@ -150,5 +100,176 @@ public class SmoothLift {
         }
         EscalatorSpeedManager.removeSpeed(level, event.getPos());
         EscalatorSpeedManager.syncToAll(level.getServer());
+    }
+
+    // ------------------------------------------------------------------
+    // /futispeed
+    // ------------------------------------------------------------------
+
+    /** 注册 `-f` 分支：`-f X` 与 `-f X to Y`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> futiForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
+                        .executes(SmoothLift::futiForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", FloatArgumentType.floatArg(0.0f))
+                                        .executes(SmoothLift::futiForceFromTo))));
+    }
+
+    /** /futispeed X —— 只改全局扶梯的运行速度（阶梯速度一起跟随）。 */
+    private static int futiGlobal(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setGlobalRunSpeed(level, speed);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("全局扶梯速度改为" + EscalatorSpeedData.format(speed)),
+                false);
+        return 1;
+    }
+
+    /** /futispeed X to Y —— 只有当前全局运行速度正好是 X 时才改成 Y。 */
+    private static int futiFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        double current = EscalatorSpeedManager.getGlobalRunSpeed(level);
+        if (!EscalatorSpeedManager.same(current, from)) {
+            source.sendSuccess(
+                    () -> Component.literal("全局扶梯速度没有" + EscalatorSpeedData.format(from)
+                            + "，未做修改（当前为 " + EscalatorSpeedData.format(current) + "）"),
+                    false);
+            return 0;
+        }
+        EscalatorSpeedManager.setGlobalRunSpeed(level, to);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("全局扶梯速度从" + EscalatorSpeedData.format(from)
+                        + "改为" + EscalatorSpeedData.format(to)),
+                false);
+        return 1;
+    }
+
+    /** /futispeed -f X —— 强制游戏内所有扶梯运行速度 = X。 */
+    private static int futiForceAll(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.forceGlobalRunSpeed(level, speed);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("所有扶梯速度改为" + EscalatorSpeedData.format(speed)),
+                false);
+        return 1;
+    }
+
+    /** /futispeed -f X to Y —— 把所有运行速度为 X 的扶梯改成 Y。 */
+    private static int futiForceFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        boolean globalMatched = EscalatorSpeedManager.same(EscalatorSpeedManager.getGlobalRunSpeed(level), from);
+        int changed = EscalatorSpeedManager.forceRunFromTo(level, from, to);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        if (!globalMatched && changed == 0) {
+            source.sendSuccess(
+                    () -> Component.literal("没有速度为" + EscalatorSpeedData.format(from) + "的扶梯，未做修改"),
+                    false);
+            return 0;
+        }
+        source.sendSuccess(
+                () -> Component.literal("所有扶梯速度从" + EscalatorSpeedData.format(from)
+                        + "改为" + EscalatorSpeedData.format(to)),
+                false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // /jietispeed （只动阶梯速度，绝不动运行速度）
+    // ------------------------------------------------------------------
+
+    /** 注册 `-f` 分支：`-f X` 与 `-f X to Y`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> jietiForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
+                        .executes(SmoothLift::jietiForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", FloatArgumentType.floatArg(0.0f))
+                                        .executes(SmoothLift::jietiForceFromTo))));
+    }
+
+    /** /jietispeed X —— 只改全局扶梯的阶梯速度。 */
+    private static int jietiGlobal(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setGlobalStepSpeed(level, speed);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("全局扶梯阶梯速度改为" + EscalatorSpeedData.format(speed)),
+                false);
+        return 1;
+    }
+
+    /** /jietispeed X to Y —— 只有当前全局阶梯速度正好是 X 时才改成 Y。 */
+    private static int jietiFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        double current = EscalatorSpeedManager.getGlobalStepSpeed(level);
+        if (!EscalatorSpeedManager.same(current, from)) {
+            source.sendSuccess(
+                    () -> Component.literal("全局扶梯阶梯速度没有" + EscalatorSpeedData.format(from)
+                            + "，未做修改（当前为 " + EscalatorSpeedData.format(current) + "）"),
+                    false);
+            return 0;
+        }
+        EscalatorSpeedManager.setGlobalStepSpeed(level, to);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("全局扶梯阶梯速度从" + EscalatorSpeedData.format(from)
+                        + "改为" + EscalatorSpeedData.format(to)),
+                false);
+        return 1;
+    }
+
+    /** /jietispeed -f X —— 强制所有扶梯阶梯速度 = X。 */
+    private static int jietiForceAll(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.forceGlobalStepSpeed(level, speed);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        source.sendSuccess(
+                () -> Component.literal("所有扶梯阶梯速度改为" + EscalatorSpeedData.format(speed)),
+                false);
+        return 1;
+    }
+
+    /** /jietispeed -f X to Y —— 把所有阶梯速度为 X 的扶梯改成 Y。 */
+    private static int jietiForceFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        boolean globalMatched = EscalatorSpeedManager.isStepEnabled(level)
+                && EscalatorSpeedManager.same(EscalatorSpeedManager.getStepValue(level), from);
+        int changed = EscalatorSpeedManager.forceStepFromTo(level, from, to);
+        EscalatorSpeedManager.syncToAll(source.getServer());
+        if (!globalMatched && changed == 0) {
+            source.sendSuccess(
+                    () -> Component.literal("没有阶梯速度为" + EscalatorSpeedData.format(from) + "的扶梯，未做修改"),
+                    false);
+            return 0;
+        }
+        source.sendSuccess(
+                () -> Component.literal("所有扶梯阶梯速度从" + EscalatorSpeedData.format(from)
+                        + "改为" + EscalatorSpeedData.format(to)),
+                false);
+        return 1;
     }
 }

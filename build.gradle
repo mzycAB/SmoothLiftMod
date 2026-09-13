@@ -9,6 +9,7 @@ group = project.maven_group
 
 minecraft {
     mappings channel: 'official', version: project.minecraft_version
+    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
 }
 
 mixin {
