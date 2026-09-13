@@ -1,0 +1,16 @@
+accessWidener	v2	named
+
+# ---------------------------------------------------------------------------
+# 逐条扶梯独立的阶梯动画需要「方块顶点格式 + 自定义贴图」的渲染类型：SmoothLift 把 MTR 的
+# 16 帧阶梯贴图作为一张普通贴图（320x5120）加载，然后按每条扶梯自己的速度选择帧号。
+# 但 1.20.4 里 RenderType.CompositeState 和 RenderStateShard 的各种状态片段是 protected，
+# 外部无法构造，所以这里放开可见性。
+# ---------------------------------------------------------------------------
+accessible	class	net/minecraft/client/renderer/RenderType$CompositeState
+accessible	class	net/minecraft/client/renderer/RenderStateShard$EmptyTextureStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$TextureStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$ShaderStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$TransparencyStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$CullStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$LightmapStateShard
+accessible	class	net/minecraft/client/renderer/RenderStateShard$OverlayStateShard

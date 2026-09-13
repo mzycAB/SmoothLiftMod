@@ -10,12 +10,17 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 每个维度一份，随世界存档自动保存/加载（存在 <世界>/<维度>/data/smoothlift_speeds.dat）。
+ * 每个维度一份，随世界存档自动加载/保存（存在 <世界>/<维度>/data/smoothlift_speeds.dat）。
  *
  * defaultSpeed：本维度未单独调速的扶梯使用的默认运行速度。
  * speeds：每个扶梯方块的运行速度（石斧设置）。
- * stepSpeeds：每个扶梯方块的阶梯「动画速度」。缺失时阶梯动画跟随该扶梯的运行速度。
- * axeModified：石斧修改过（设置运行速度或阶梯动画）的扶梯方块集合，/jietispeed 指令不改它们。
+ *
+ * 【1.6 起】阶梯动画速度以「每条扶梯单独设置」为主：
+ * stepSpeeds：每条扶梯（链上每个方块）单独设置的阶梯动画速度（石斧设置）。
+ *             没有单独设置的扶梯回退到「维度默认阶梯动画速度」。
+ * axeModified：石斧设置过阶梯动画的扶梯方块集合（用于同步与 /jietispeed 的 f 覆盖）。
+ * stepEnabled / stepValue：维度默认阶梯动画速度（未单独设置的扶梯使用）；
+ *             stepEnabled=false 表示用 MTR 原版动画（{@link #VANILLA_STEP}）。
  */
 public class EscalatorSpeedData extends SavedData {
     public static final String DATA_NAME = "smoothlift_speeds";
@@ -30,12 +35,22 @@ public class EscalatorSpeedData extends SavedData {
 
     /** 石斧自定义过阶梯动画的扶梯方块集合（/jietispeed on|off 默认忽略它们）。 */
     public final Set<BlockPos> axeModified = new HashSet<>();
-    /** 石斧给这些扶梯设置的阶梯动画速度（仅 axeModified 里的方块有效）。 */
+    /** 石斧给这些扶梯单独设置的阶梯动画速度（仅 stepSpeeds 里的方块有效）。 */
     public final Map<BlockPos, Double> stepSpeeds = new HashMap<>();
-    /** 阶梯动画调整功能开关：false = MTR 原版动画；true = 使用 stepValue。 */
+    /** 维度默认阶梯动画速度开关：false = MTR 原版动画；true = 使用 stepValue。 */
     public boolean stepEnabled = false;
-    /** 全局阶梯动画速度值（最后一次 /jietispeed X 设定的值）。 */
+    /** 维度默认阶梯动画速度值（最后一次 /jietispeed X 设定的值）。 */
     public double stepValue = DEFAULT_SPEED;
+
+    /** 维度默认阶梯动画速度：未单独设置阶梯动画的扶梯使用它。 */
+    public double defaultStepSpeed() {
+        return stepEnabled ? stepValue : VANILLA_STEP;
+    }
+
+    /** 该方块所在的扶梯是否被单独设置了阶梯动画速度。 */
+    public boolean hasIndividualStep(BlockPos pos) {
+        return stepSpeeds.containsKey(pos);
+    }
 
     public static EscalatorSpeedData fromTag(CompoundTag tag) {
         EscalatorSpeedData data = new EscalatorSpeedData();

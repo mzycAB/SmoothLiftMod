@@ -17,16 +17,37 @@ import smooth.lift.SmoothLift;
 
 /**
  * 拿着石斧右键扶梯后弹出的设置界面。
- * 上半部分：运行速度；下半部分：阶梯动画速度 + 对齐 + 恢复默认。
- * 所有改动只作用于右键的这条扶梯，发送给服务端持久化保存。
+ *
+ * <p>只有两个输入框和两个按钮：
+ * <ul>
+ *   <li>「扶梯速度」——这条扶梯的运行速度；</li>
+ *   <li>「阶梯速度」——这条扶梯的阶梯动画速度；</li>
+ *   <li>「阶梯速度对齐扶梯速度」——把阶梯速度框填成扶梯速度框的值。</li>
+ * </ul>
+ *
+ * <p>没有「确定」按钮：**按 ESC 退出界面时统一应用**（若两项都没改动则什么都不发）。
+ *
+ * <p>联动规则：
+ * <ul>
+ *   <li>改「扶梯速度」时，「阶梯速度」框会自动跟着一起变（除非玩家自己动手改过阶梯速度框）
+ *       —— 应用后阶梯速度就跟随了新的扶梯速度；</li>
+ *   <li>改「阶梯速度」不会反过来影响「扶梯速度」。</li>
+ * </ul>
  */
 public class EscalatorSpeedScreen extends Screen {
-    private static final double MIN_SPEED = 0.0;
-
     private final BlockPos pos;
-    private EditBox input;
+
+    private EditBox runInput;
     private EditBox stepInput;
-    private Component status = Component.empty();
+
+    /** 打开界面时两个框里显示的基准值，用来判断玩家到底改了哪一项。 */
+    private double openRun;
+    private double openStep;
+
+    /** 玩家是否手动改过阶梯速度框；没改过时，改扶梯速度会把阶梯速度一起带着变。 */
+    private boolean stepEdited;
+    /** 程序内部回填阶梯速度框时置位，避免被误判成「玩家手动修改」。 */
+    private boolean suppressStepResponder;
 
     public EscalatorSpeedScreen(BlockPos pos) {
         super(Component.literal("扶梯设置"));
@@ -36,109 +57,126 @@ public class EscalatorSpeedScreen extends Screen {
     @Override
     protected void init() {
         Minecraft mc = Minecraft.getInstance();
+        openRun = currentRunningSpeed(mc);
+        openStep = currentStepSpeed(mc);
 
-        input = new EditBox(this.font, this.width / 2 - 100, 62, 200, 20, Component.literal("运行速度"));
-        input.setMaxLength(32);
-        Double current = mc.level != null ? EscalatorSpeedManager.getClientSpeed(mc.level, pos) : null;
-        if (current == null) {
-            current = mc.level != null ? EscalatorSpeedManager.getClientDefault(mc.level) : EscalatorSpeedData.DEFAULT_SPEED;
-        }
-        input.setValue(EscalatorSpeedData.format(current));
-        addRenderableWidget(input);
+        runInput = new EditBox(this.font, this.width / 2 - 100, 62, 200, 20, Component.literal("扶梯速度"));
+        runInput.setMaxLength(32);
+        runInput.setValue(EscalatorSpeedData.format(openRun));
+        runInput.setResponder(this::onRunEdited);
+        addRenderableWidget(runInput);
 
-        stepInput = new EditBox(this.font, this.width / 2 - 100, 142, 200, 20, Component.literal("阶梯动画速度"));
+        stepInput = new EditBox(this.font, this.width / 2 - 100, 118, 200, 20, Component.literal("阶梯速度"));
         stepInput.setMaxLength(32);
-        double step = mc.level != null ? EscalatorSpeedManager.getStepAnimationSpeed(mc.level, pos) : EscalatorSpeedData.DEFAULT_SPEED;
-        stepInput.setValue(EscalatorSpeedData.format(step));
+        stepInput.setValue(EscalatorSpeedData.format(openStep));
+        stepInput.setResponder(this::onStepEdited);
         addRenderableWidget(stepInput);
-        setInitialFocus(input);
 
-        addRenderableWidget(Button.builder(Component.literal("确定"), button -> confirm())
-                .bounds(this.width / 2 - 100, 92, 95, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("取消"), button -> onClose())
-                .bounds(this.width / 2 + 5, 92, 95, 20)
+        addRenderableWidget(Button.builder(Component.literal("阶梯速度对齐扶梯速度"), button -> alignStepToRun())
+                .bounds(this.width / 2 - 100, 144, 200, 20)
                 .build());
 
-        addRenderableWidget(Button.builder(Component.literal("应用"), button -> applyStep())
-                .bounds(this.width / 2 - 100, 172, 62, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("对齐"), button -> alignStep())
-                .bounds(this.width / 2 - 33, 172, 62, 20)
-                .build());
-        addRenderableWidget(Button.builder(Component.literal("恢复默认"), button -> restoreStep())
-                .bounds(this.width / 2 + 34, 172, 66, 20)
-                .build());
+        setInitialFocus(runInput);
     }
 
-    private void confirm() {
-        double speed;
-        try {
-            speed = Double.parseDouble(input.getValue().trim());
-        } catch (NumberFormatException e) {
-            status = Component.literal("请输入有效的数字");
-            return;
+    /** 这条扶梯当前的运行速度（未单独设置就是维度默认）。 */
+    private double currentRunningSpeed(Minecraft mc) {
+        if (mc.level == null) {
+            return EscalatorSpeedData.DEFAULT_SPEED;
         }
-        if (!validate(speed)) {
-            return;
-        }
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBlockPos(pos);
-        buf.writeDouble(speed);
-        ClientPlayNetworking.send(SmoothLift.SET_SPEED_CHANNEL, buf);
-        status = Component.literal("已发送：运行速度 " + EscalatorSpeedData.format(speed) + " 格/秒");
+        return EscalatorSpeedManager.getSpeed(mc.level, pos);
     }
 
-    private void applyStep() {
-        double step;
+    /** 这条扶梯当前的阶梯动画速度（单独设置 > /jietispeed 维度值 > 跟随运行速度）。 */
+    private double currentStepSpeed(Minecraft mc) {
+        if (mc.level == null) {
+            return EscalatorSpeedData.DEFAULT_SPEED;
+        }
+        return EscalatorSpeedManager.getAnimationSpeed(mc.level, pos);
+    }
+
+    /** 改扶梯速度：只要玩家没自己动过阶梯速度框，就把阶梯速度框同步成一样的值。 */
+    private void onRunEdited(String value) {
+        if (suppressStepResponder || stepEdited || stepInput == null) {
+            return;
+        }
+        suppressStepResponder = true;
         try {
-            step = Double.parseDouble(stepInput.getValue().trim());
-        } catch (NumberFormatException e) {
-            status = Component.literal("请输入有效的阶梯动画速度");
+            stepInput.setValue(value);
+        } finally {
+            suppressStepResponder = false;
+        }
+    }
+
+    /** 改阶梯速度：标记玩家动过它，之后改扶梯速度就不再自动覆盖阶梯速度框。 */
+    private void onStepEdited(String value) {
+        if (suppressStepResponder) {
             return;
         }
-        if (!validate(step)) {
+        stepEdited = true;
+    }
+
+    /** 「阶梯速度对齐扶梯速度」：把阶梯速度框填成扶梯速度框当前的值。 */
+    private void alignStepToRun() {
+        if (runInput == null || stepInput == null) {
             return;
         }
+        Double typed = parse(runInput.getValue());
+        double value = typed != null ? typed : currentRunningSpeed(Minecraft.getInstance());
+        suppressStepResponder = true;
+        try {
+            stepInput.setValue(EscalatorSpeedData.format(EscalatorSpeedData.clamp(value)));
+        } finally {
+            suppressStepResponder = false;
+        }
+        // 对齐之后重新回到「跟着扶梯速度变」的状态。
+        stepEdited = false;
+    }
+
+    /** 按 ESC（或回车）退出时统一应用改动。 */
+    @Override
+    public void onClose() {
+        applyAndClose();
+    }
+
+    private void applyAndClose() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.level != null && runInput != null && stepInput != null) {
+            Double run = parse(runInput.getValue());
+            Double step = parse(stepInput.getValue());
+
+            boolean runChanged = run != null && !nearly(run, openRun);
+            boolean stepChanged = step != null && !nearly(step, openStep);
+            // 阶梯速度正好等于（新的）扶梯速度时不必单独发送：设置扶梯速度会清掉单独设置，
+            // 阶梯速度自然就跟随扶梯速度了，数据也更干净。
+            boolean stepIsJustRun = runChanged && step != null && run != null && nearly(step, run);
+
+            if (runChanged) {
+                sendApply(true, EscalatorSpeedData.clamp(run),
+                        stepChanged && !stepIsJustRun,
+                        step == null ? 0.0 : EscalatorSpeedData.clamp(step));
+            } else if (stepChanged) {
+                sendApply(false, 0.0, true, EscalatorSpeedData.clamp(step));
+            }
+        }
+        // Screen.onClose() 内部就是 minecraft.setScreen(null)。
+        super.onClose();
+    }
+
+    private void sendApply(boolean setRun, double run, boolean setStep, double step) {
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeBlockPos(pos);
+        buf.writeBoolean(setRun);
+        buf.writeDouble(run);
+        buf.writeBoolean(setStep);
         buf.writeDouble(step);
-        ClientPlayNetworking.send(SmoothLift.SET_STEP_SPEED_CHANNEL, buf);
-        status = Component.literal("已发送：阶梯动画速度 " + EscalatorSpeedData.format(step) + " 格/秒");
-    }
-
-    private void alignStep() {
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBlockPos(pos);
-        ClientPlayNetworking.send(SmoothLift.ALIGN_STEP_CHANNEL, buf);
-        status = Component.literal("已发送：阶梯动画对齐到运行速度");
-    }
-
-    private void restoreStep() {
-        FriendlyByteBuf buf = PacketByteBufs.create();
-        buf.writeBlockPos(pos);
-        ClientPlayNetworking.send(SmoothLift.RESTORE_STEP_CHANNEL, buf);
-        status = Component.literal("已发送：阶梯动画恢复为 MTR 原版默认");
-    }
-
-    private boolean validate(double speed) {
-        if (speed < MIN_SPEED || speed > EscalatorSpeedData.MAX_SPEED) {
-            status = Component.literal("速度需在 " + EscalatorSpeedData.format(MIN_SPEED) + " ~ "
-                    + EscalatorSpeedData.format(EscalatorSpeedData.MAX_SPEED) + " 格/秒之间");
-            return false;
-        }
-        return true;
+        ClientPlayNetworking.send(SmoothLift.APPLY_CHAIN_CHANNEL, buf);
     }
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        boolean enter = keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER;
-        if (enter && input != null && input.isFocused()) {
-            confirm();
-            return true;
-        }
-        if (enter && stepInput != null && stepInput.isFocused()) {
-            applyStep();
+        if (keyCode == GLFW.GLFW_KEY_ENTER || keyCode == GLFW.GLFW_KEY_KP_ENTER) {
+            applyAndClose();
             return true;
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
@@ -148,21 +186,42 @@ public class EscalatorSpeedScreen extends Screen {
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         this.renderBackground(guiGraphics);
         super.render(guiGraphics, mouseX, mouseY, partialTick);
+
         guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 32, 0xFFFFFF);
-        guiGraphics.drawCenteredString(this.font, Component.literal("运行速度（格/秒）"),
+        guiGraphics.drawCenteredString(this.font, Component.literal("扶梯速度（格/秒）"),
                 this.width / 2, 50, 0xA0A0A0);
-        guiGraphics.drawCenteredString(this.font, Component.literal("阶梯动画速度（格/秒）"),
-                this.width / 2, 130, 0xA0A0A0);
+        guiGraphics.drawCenteredString(this.font, Component.literal("阶梯速度（格/秒）"),
+                this.width / 2, 106, 0xA0A0A0);
+
+        Minecraft mc = Minecraft.getInstance();
         guiGraphics.drawCenteredString(this.font,
-                Component.literal("扶梯位置: " + pos.toShortString()),
-                this.width / 2, 205, 0x707070);
-        if (!status.getString().isEmpty()) {
-            guiGraphics.drawCenteredString(this.font, status, this.width / 2, this.height - 20, 0xFF5555);
-        }
+                Component.literal("当前：扶梯 " + EscalatorSpeedData.format(currentRunningSpeed(mc))
+                        + "，阶梯 " + EscalatorSpeedData.format(currentStepSpeed(mc)) + " 格/秒"),
+                this.width / 2, 178, 0x808080);
+        guiGraphics.drawCenteredString(this.font,
+                Component.literal("改扶梯速度会同步阶梯速度；改阶梯速度不影响扶梯速度"),
+                this.width / 2, 193, 0x808080);
+
+        guiGraphics.drawCenteredString(this.font,
+                Component.literal("按 ESC 保存并退出　·　扶梯位置 " + pos.toShortString()),
+                this.width / 2, this.height - 24, 0x707070);
     }
 
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    /** 解析输入框内容；不是合法数字返回 null（视为未改动）。 */
+    private static Double parse(String text) {
+        try {
+            return Double.parseDouble(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static boolean nearly(double a, double b) {
+        return Math.abs(a - b) < 1.0E-6;
     }
 }

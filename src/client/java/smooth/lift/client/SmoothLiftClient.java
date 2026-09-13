@@ -1,6 +1,7 @@
 package smooth.lift.client;
 
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
@@ -22,6 +23,10 @@ import java.util.Map;
 public class SmoothLiftClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
+        // 逐条扶梯独立的阶梯动画：注册区块索引 + 世界渲染回调
+        EscalatorStepRenderer.register();
+        ClientTickEvents.END_CLIENT_TICK.register(EscalatorStepRenderer::onClientTick);
+
         // 拿着石斧右键扶梯 -> 打开速度输入界面
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
             if (!world.isClientSide() || hand != InteractionHand.MAIN_HAND) {
@@ -48,6 +53,8 @@ public class SmoothLiftClient implements ClientModInitializer {
         // 断开连接时清空客户端镜像，避免残留上一个世界的速度数据
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             EscalatorSpeedManager.clearClientData();
+            EscalatorAnimationDriver.clear();
+            EscalatorStepRenderer.onDisconnect();
         });
 
         // 接收服务端同步的全部速度+阶梯动画数据
