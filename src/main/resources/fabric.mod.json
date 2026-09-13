@@ -10,6 +10,7 @@
   "icon": "assets/smoothlift/icon.png",
   "license": "MIT",
   "environment": "*",
+  "accessWidener": "smoothlift.accesswidener",
   "entrypoints": {
     "main": [
       "smooth.lift.SmoothLift"

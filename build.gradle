@@ -8,6 +8,7 @@ group = project.maven_group
 
 loom {
 	splitEnvironmentSourceSets()
+	accessWidenerPath = file("src/main/resources/smoothlift.accesswidener")
 }
 
 repositories {
