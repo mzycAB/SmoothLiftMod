@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory;
 import java.io.InputStream;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 运行时把 MTR 的阶梯动画贴图整条（320x5120，16 帧竖排）加载成 SmoothLift 自己的贴图。
@@ -133,7 +134,7 @@ public final class EscalatorStepTextures {
         ResourceLocation png = up ? MTR_UP : MTR_DOWN;
         ResourceLocation textureId = up ? STRIP_UP : STRIP_DOWN;
         try {
-            java.util.Optional<Resource> optional = resources.getResource(png);
+            Optional<Resource> optional = resources.getResource(png);
             if (optional.isEmpty()) {
                 LOGGER.error("[SmoothLift] 找不到贴图资源 {}", png);
                 return false;
@@ -174,7 +175,7 @@ public final class EscalatorStepTextures {
     private static int[] readFrameOrder(Resource resource, int frames) {
         int[] order = identityOrder(frames);
         try {
-            java.util.Optional<AnimationMetadataSection> section =
+            Optional<AnimationMetadataSection> section =
                     resource.metadata().getSection(AnimationMetadataSection.SERIALIZER);
             if (section.isEmpty()) {
                 return order;
