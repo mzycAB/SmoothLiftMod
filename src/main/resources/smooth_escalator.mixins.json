@@ -9,6 +9,7 @@
     "ChunkMapAccessor"
   ],
   "client": [
+    "SoundEngineVolumeMixin"
   ],
   "injectors": {
     "defaultRequire": 1
