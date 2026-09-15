@@ -1,0 +1,7 @@
+{
+  "audio/subway_escalator": {
+    "sounds": [
+      { "name": "smoothlift:audio/subway_escalator", "stream": false }
+    ]
+  }
+}

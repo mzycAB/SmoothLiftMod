@@ -54,6 +54,50 @@ public final class Packets {
                 .decoder(ApplyChainPacket::decode)
                 .consumerMainThread(ApplyChainPacket::handle)
                 .add();
+        // ---- 【1.7~1.14】自定义扶梯声音 ----
+        // 客户端 -> 服务端
+        CHANNEL.messageBuilder(UploadAudioPacket.class)
+                .encoder(UploadAudioPacket::encode)
+                .decoder(UploadAudioPacket::decode)
+                .consumerMainThread(UploadAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(BindAudioPacket.class)
+                .encoder(BindAudioPacket::encode)
+                .decoder(BindAudioPacket::decode)
+                .consumerMainThread(BindAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(UnbindAudioPacket.class)
+                .encoder(UnbindAudioPacket::encode)
+                .decoder(UnbindAudioPacket::decode)
+                .consumerMainThread(UnbindAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(DeleteAudioPacket.class)
+                .encoder(DeleteAudioPacket::encode)
+                .decoder(DeleteAudioPacket::decode)
+                .consumerMainThread(DeleteAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(ImportFolderAudioPacket.class)
+                .encoder(ImportFolderAudioPacket::encode)
+                .decoder(ImportFolderAudioPacket::decode)
+                .consumerMainThread(ImportFolderAudioPacket::handle)
+                .add();
+        // 【1.9/1.12】音量
+        CHANNEL.messageBuilder(SetVolumePacket.class)
+                .encoder(SetVolumePacket::encode)
+                .decoder(SetVolumePacket::decode)
+                .consumerMainThread(SetVolumePacket::handle)
+                .add();
+        // 服务端 -> 客户端
+        CHANNEL.messageBuilder(AudioSyncPacket.class)
+                .encoder(AudioSyncPacket::encode)
+                .decoder(AudioSyncPacket::decode)
+                .consumerMainThread(AudioSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(VolumeSyncPacket.class)
+                .encoder(VolumeSyncPacket::encode)
+                .decoder(VolumeSyncPacket::decode)
+                .consumerMainThread(VolumeSyncPacket::handle)
+                .add();
     }
 
     /** 客户端 -> 服务端：1.20.4 起 SimpleChannel 不再自带 sendToServer，需通过当前客户端连接发送。 */

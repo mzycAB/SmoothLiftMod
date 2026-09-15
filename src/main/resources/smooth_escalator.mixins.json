@@ -8,7 +8,9 @@
     "LivingEntityMixin",
     "ChunkMapAccessor"
   ],
-  "client": [],
+  "client": [
+    "SoundEngineVolumeMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
