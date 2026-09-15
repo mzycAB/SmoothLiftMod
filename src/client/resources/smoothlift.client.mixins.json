@@ -2,7 +2,9 @@
 	"required": true,
 	"package": "smooth.lift.client.mixin",
 	"compatibilityLevel": "JAVA_21",
-	"client": [],
+	"client": [
+		"SoundEngineVolumeMixin"
+	],
 	"injectors": {
 		"defaultRequire": 1
 	},
