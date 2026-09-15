@@ -28,6 +28,14 @@ import java.util.Set;
  * 就等价于「这个方块正在播放第几帧」，而且**零分配**（顶点数组原地改写）。
  *
  * <p>用 {@code #particle}（静态侧板/外壳）的面不归我们管，留给 MTR 自己按原版渲染。
+ *
+ * <p>注意 MTR 3.x 的阶梯面其实是**两族贴图**：斜坡（{@code slope_*}）用
+ * {@code mtr:block/escalator_up|down}（uv 是小窗口），平层（{@code flat_*} /
+ * {@code transition_bottom_*}）用 {@code mtr:block/escalator_flat_up|down}（uv 铺满整张 sprite）。
+ * 资源覆盖把两族模型的 {@code #step} 都换成了同一个标记 sprite，靠 sprite 名字分不出来，
+ * 所以这里额外记下「这个模型的面是不是铺满整张 sprite」（{@code fullWindow}），
+ * 由渲染方据此去挑对应的条带贴图（见 {@link EscalatorStepTextures}）。
+ * uv 的帧内换算两族完全一致，不需要任何特殊处理。
  */
 public final class EscalatorStepModels {
 
@@ -156,7 +164,16 @@ public final class EscalatorStepModels {
         if (up && down) {
             LOGGER.warn("[SmoothLift] 同一个 state 里同时出现了上行和下行阶梯贴图: {}", state);
         }
-        return new StepModel(source, byDirection, stepQuads, up);
+        // 整个模型属于哪一族贴图：所有阶梯面都「铺满整张 sprite」才是平层族
+        // （MTR 3.x 的 flat_* / transition_bottom_*）。斜坡模型里全是小窗口面。
+        boolean flat = true;
+        for (StepQuad quad : stepQuads) {
+            if (!quad.fullWindow) {
+                flat = false;
+                break;
+            }
+        }
+        return new StepModel(source, byDirection, stepQuads, up, flat);
     }
 
     /** 一个会动的阶梯面：自己的顶点数组 + 帧内归一化 uv，帧号变化时原地改写 uv。 */
@@ -165,8 +182,17 @@ public final class EscalatorStepModels {
         /** 4 个顶点的 (帧内u, 帧内v)，都是 0..1。 */
         private final float[] normalized = new float[8];
         /**
-         * v3（MTR 3.2.x）flat 台阶顶面：单一面覆盖整张贴图（u、v 都是 0..1 全窗）。
-         * 这类面必须按条带把采样窗口重映射到 4x4 网格的对应格，否则只能看到格子里的一小片。
+         * 这个面是不是「铺满整张 sprite」的平层阶梯面。
+         *
+         * <p>MTR 3.x 里平层阶梯（{@code flat_*} / {@code transition_bottom_*}）的顶面 uv 是
+         * {@code [0,0,16,16]}，也就是把整张 sprite 铺满面；斜坡阶梯的 uv 都是小窗口（例如
+         * {@code [0,0,4,2]}）。资源覆盖把这两族模型的 {@code #step} 都换成了同一个标记 sprite，
+         * 靠 sprite 名字已经分不出族了，只能靠这个「是否铺满」来区分，
+         * 进而决定该采 {@code escalator_flat_up|down} 还是 {@code escalator_up|down} 那条条带
+         * （见 {@link EscalatorStepTextures}）。
+         *
+         * <p>注意：这只是**选哪条贴图**的判据，uv 的换算规则两族完全一样（都是「整条竖排帧 + 一帧内
+         * 的帧内坐标」），所以帧内 uv 一律照原样保留、只把帧号加进 v 里。
          */
         private final boolean fullWindow;
         private int writtenBand = Integer.MIN_VALUE;
@@ -205,7 +231,7 @@ public final class EscalatorStepModels {
                 minV = Math.min(minV, nv);
                 maxV = Math.max(maxV, nv);
             }
-            // flat 顶面是唯一覆盖整张贴图的面（slope 都是 0..4 宽的小窗），借此识别。
+            // 平层顶面是唯一铺满整张 sprite 的面（斜坡都是小窗口），借此区分两族贴图。
             boolean fullWindow = (maxU - minU > 0.9F) && (maxV - minV > 0.9F);
             int[] copy = vertices.clone();
             StepQuad result = new StepQuad(new BakedQuad(copy, source.getTintIndex(),
@@ -214,29 +240,23 @@ public final class EscalatorStepModels {
             return result;
         }
 
-        /** 把这一面指向贴图的第 band 条（共 bandCount 条）。 */
+        /**
+         * 把这一面指向贴图的第 band 条（共 bandCount 条）。
+         *
+         * <p>两族阶梯面用的是同一条换算：条带是 {@code bandCount} 帧**竖排**、每帧占满整幅宽，
+         * 所以横向帧内坐标 u 原样保留，只把帧号折进纵向坐标 —— {@code v = (band + 帧内v) / bandCount}。
+         * 平层那张 64x1024 也是同样的 16 帧竖排，所以无需任何特殊处理。
+         */
         void write(int band, int bandCount) {
             if (band == writtenBand) {
                 return;
             }
             writtenBand = band;
             int[] vertices = quad.getVertices();
-            if (fullWindow) {
-                // v3 flat 顶面：整张贴图被 4x4 网格切成 16 格，band 的内容格在
-                // (col = band%4, row = band/4)，把采样窗口重映射到那一格，让顶面整块显示格内容。
-                int col = band % 4;
-                int row = band / 4;
-                for (int i = 0; i < 4; i++) {
-                    vertices[i * 8 + 4] = Float.floatToRawIntBits((col + normalized[i * 2]) / 4.0F);
-                    vertices[i * 8 + 5] = Float.floatToRawIntBits(
-                            (band + (row + normalized[i * 2 + 1]) / 4.0F) / bandCount);
-                }
-            } else {
-                for (int i = 0; i < 4; i++) {
-                    vertices[i * 8 + 4] = Float.floatToRawIntBits(normalized[i * 2]);
-                    vertices[i * 8 + 5] = Float.floatToRawIntBits(
-                            (band + normalized[i * 2 + 1]) / bandCount);
-                }
+            for (int i = 0; i < 4; i++) {
+                vertices[i * 8 + 4] = Float.floatToRawIntBits(normalized[i * 2]);
+                vertices[i * 8 + 5] = Float.floatToRawIntBits(
+                        (band + normalized[i * 2 + 1]) / bandCount);
             }
         }
 
@@ -250,20 +270,30 @@ public final class EscalatorStepModels {
         private final List<BakedQuad>[] byDirection;
         private final StepQuad[] quads;
         private final boolean up;
+        private final boolean flat;
         private int band = Integer.MIN_VALUE;
 
         @SuppressWarnings("unchecked")
         private StepModel(net.minecraft.client.resources.model.BakedModel wrapped,
-                          List<BakedQuad>[] byDirection, List<StepQuad> quads, boolean up) {
+                          List<BakedQuad>[] byDirection, List<StepQuad> quads, boolean up, boolean flat) {
             this.wrapped = wrapped;
             this.byDirection = byDirection;
             this.quads = quads.toArray(new StepQuad[0]);
             this.up = up;
+            this.flat = flat;
         }
 
         /** 这条扶梯用的是上行贴图还是下行贴图（决定用哪个渲染类型）。 */
         public boolean up() {
             return up;
+        }
+
+        /**
+         * 这个模型属于平层贴图族（MTR 3.x 的 {@code escalator_flat_up|down}）还是斜坡贴图族。
+         * 渲染时要按它去挑纹理不同的渲染类型。
+         */
+        public boolean flat() {
+            return flat;
         }
 
         /** 设定当前要显示的条带（已按方向重排过），相同则不做任何事。 */
