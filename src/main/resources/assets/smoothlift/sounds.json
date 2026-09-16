@@ -1,0 +1,17 @@
+{
+  "audio/subway_escalator": {
+    "sounds": [
+      { "name": "smoothlift:audio/subway_escalator", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_board": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_board", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_alight": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_alight", "stream": false }
+    ]
+  }
+}

@@ -8,7 +8,7 @@ import smooth.lift.EscalatorSpeedManager;
 
 import java.util.function.Supplier;
 
-/** 客户端 -> 服务端：客户端完全进世界后主动请求全量速度同步。 */
+/** 客户端 -> 服务端：客户端完全进世界后主动请求全量同步（速度 + 音频 + 音量）。 */
 public class RequestSyncPacket {
     public RequestSyncPacket() {
     }
@@ -32,6 +32,16 @@ public class RequestSyncPacket {
                 return;
             }
             EscalatorSpeedManager.syncToAll(player.server);
+            // 【1.7/1.9】音频与音量是独立的小/大包，这里一并回发，
+            // 否则刚进世界时客户端只有速度、音频绑定为空（表现为"明明绑着却静音"）。
+            EscalatorSpeedManager.sendAudioSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendVolumeSyncTo(player, player.serverLevel());
+            // 【1.16/1.18/1.24】提示音开关 / 提示音音量 / 两个可闻范围 也都要补发，
+            // 否则刚进世界时客户端会按默认值响（开了/关了都不生效）。
+            EscalatorSpeedManager.sendHelpSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpVolumeSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendRoundSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpRoundSyncTo(player, player.serverLevel());
         });
         context.setPacketHandled(true);
     }
