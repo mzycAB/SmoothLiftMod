@@ -1,0 +1,32 @@
+{
+  "audio/subway_escalator": {
+    "sounds": [
+      { "name": "smoothlift:audio/subway_escalator", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_board": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_board", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_alight": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_alight", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_rate4": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate4", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_rate25": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate25", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_rate50": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate50", "stream": false }
+    ]
+  }
+}
