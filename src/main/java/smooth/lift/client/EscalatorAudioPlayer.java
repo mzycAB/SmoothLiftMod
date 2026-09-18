@@ -48,9 +48,20 @@ import java.util.concurrent.CompletableFuture;
  * 绑定信息里只存了玩家用石斧点的那**一个**方块，但一条扶梯往往远长于 16 格：
  * 如果只算到那个方块的距离，玩家站在扶梯另一端（离那个方块十几格外）就会莫名其妙静音。
  * 所以这里用 {@link EscalatorUtil#collectChain} 把整条扶梯（含左右两列与侧板）展开成方块集合，
- * 取「玩家到链上**最近**方块」的距离 —— 也就是**离开整条扶梯 16 格才静音**。
+ * 取「玩家到链上**最近**方块」的距离 —— 也就是**离开整条扶梯超过范围才静音**（默认 16 格）。
  *
- * <p>音量 = 距离衰减（16 格内 1.0 → 0.0）× 这条扶梯自己的音量设定（界面输入 1~1000）。
+ * <p><b>【1.17】别把本类的 16 格与「无障碍提示音」的 4 格搞混</b>（两者是**故意不同**的）：
+ * <ul>
+ *   <li><b>本类 = 扶梯运行底噪</b>：作用在**整条扶梯**上、默认射程 **16 格**，坐一整程都听得见才对；</li>
+ *   <li><b>{@link EscalatorChimePlayer} = 无障碍提示音</b>：作用在**单个扶梯方块**上、默认射程 **4 格**，
+ *       只管进出口那几格，这样「哪一头在响」才有导向意义。</li>
+ * </ul>
+ * （早先提示音错用了 16 格，导致坐一整程都只听见上客端那路，已改回 4 格。）
+ *
+ * <p><b>【1.24】这两个射程都变成可调的了</b>（{@code /futiround} 改本类、{@code /futihelpround} 改提示音），
+ * 但**默认仍是 16 : 4**，上面的「整条 vs 单块」语义不变。判定一律走 {@link #rangeFor}（逐 tick 现算）。
+ *
+ * <p>音量 = 距离衰减（范围内 1.0 → 0.0）× 这条扶梯自己的音量设定（界面输入 1~1000）。
  * 【1.12】100 = 原始音量，&gt;100 = 放大（最大 1000 = 10×）。
  * 要让 &gt;1 真正响，必须同时拆掉**两层**夹取：
  * <ol>
@@ -80,19 +91,23 @@ import java.util.concurrent.CompletableFuture;
  * 再用 {@link #FADE_IN_TICKS} tick 指数淡入到目标值。
  * 起点**不能取 0**：MC 见音量 ≤ 0 会直接 {@code channel.stop()} 把通道掐掉。
  *
- * <p>三个静态入口由 {@link SmoothLiftClientEvents} 注册调用：
+ * <p>三个静态入口由 {@link SmoothLiftClient} 注册调用：
  * {@link #onClientTick(Minecraft)}（每 tick）、{@link #onDisconnect()}、{@link #onAudioReloaded()}。
- *
- * <p>Forge 版说明：本类逻辑与 Fabric 版逐行一致，只依赖原版类；
- * 访问 {@code SoundEngine.soundBuffers / instanceToChannel}、{@code SoundBufferLibrary.cache}、
- * {@code Channel.source} 这几个私有字段由 {@code META-INF/accesstransformer.cfg} 打开。
  */
 public final class EscalatorAudioPlayer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("smoothlift");
 
-    /** 超过该距离（格）不播放声音。注意是「离开整条扶梯」的距离，不是到某个方块的距离。 */
-    public static final double MAX_DISTANCE = 16.0;
+    /**
+     * 【1.24】运行底噪的**默认**可闻范围（格）= {@link EscalatorSpeedData#DEFAULT_ROUND} = 16。
+     *
+     * <p>现在是可调的（{@code /futiround}），所以**实际判定一律走 {@link #rangeFor}**；
+     * 本常量只是把「默认 16 格」这件事在播放器这一侧留个名字，方便对照
+     * {@link EscalatorChimePlayer} 那边的默认 4 格（两者故意不同，见 1.17 / 1.24）。
+     *
+     * <p>注意是「离开**整条扶梯**」的距离，不是到某个方块的距离。
+     */
+    public static final double DEFAULT_RANGE = EscalatorSpeedData.DEFAULT_ROUND;
 
     /**
      * 【1.12】最大音量增益 = {@link EscalatorSpeedData#AUDIO_VOLUME_MAX}/{@link EscalatorSpeedData#DEFAULT_AUDIO_VOLUME}
@@ -131,9 +146,15 @@ public final class EscalatorAudioPlayer {
     /**
      * 【1.12】给音量 Mixin 用：返回这条声音**未夹取**的增益（可 &gt;1）；
      * 不是本模组的扶梯声音时返回 {@link #NOT_ESCALATOR_SOUND}，让 Mixin 交回原版处理。
+     *
+     * <p><b>【1.20】改成按 {@link GainManagedSound} 接口判定</b>，不再逐个 {@code instanceof}：
+     * 运行底噪（本类的 {@code EscalatorSoundInstance}）与无障碍提示音
+     * （{@link EscalatorChimePlayer} 的 {@code ChimeInstance}）都实现该接口。
+     * 早先只认底噪，提示音被漏掉 → 原版把它夹到 [0,1] → 「提示音音量调到 100 以上没变化」。
+     * 以后再加新的扶梯声音，只要实现 {@link GainManagedSound} 就自动享有 &gt;1 的增益。
      */
     public static float rawEscalatorGain(SoundInstance instance) {
-        return instance instanceof EscalatorSoundInstance ? instance.getVolume() : NOT_ESCALATOR_SOUND;
+        return instance instanceof GainManagedSound ? instance.getVolume() : NOT_ESCALATOR_SOUND;
     }
 
     /** 正在播放的实例：音频ID → 实例（一个音频同一时刻只播一个实例，防止重复 play 泄漏）。 */
@@ -160,7 +181,7 @@ public final class EscalatorAudioPlayer {
      * 【1.11】设了默认音频时用的「附近最近的扶梯方块」缓存。
      *
      * <p>只在 {@code defaultAudio != null} 时才会去扫描，所以没设默认音频的世界
-     * （也就是旧存档）**一点额外开销都没有**。扫描半径 = {@link #MAX_DISTANCE}，
+     * （也就是旧存档）**一点额外开销都没有**。扫描半径 = {@link EscalatorSpeedManager#getMaxRound}，
      * 结果缓存 {@link #NEARBY_TTL_TICKS} tick；期间即使玩家移动，
      * 每 tick 仍然用「玩家当前坐标 → 缓存方块」重算距离，只是候选选择最多滞后 0.5 秒。
      */
@@ -238,10 +259,13 @@ public final class EscalatorAudioPlayer {
             stopAll(mc);
             return;
         }
-        if (bestDist > MAX_DISTANCE) {
+        // 【1.24】可闻范围按**这条扶梯自己的**生效范围算（/futiround 设置，默认 16 格）。
+        // 每 tick 现算：范围是网络同步驱动的，绝不能塞进任何「缓存到方块变化为止」的计算里（坑 17）。
+        double range = rangeFor(mc, bestPos);
+        if (bestDist > range) {
             stopAll(mc);
             note("最近的扶梯整条都在 " + String.format("%.1f", bestDist)
-                    + " 格外（离开整条扶梯 " + (int) MAX_DISTANCE + " 格内才发声）");
+                    + " 格外（离开整条扶梯 " + String.format("%.0f", range) + " 格内才发声，可用 /futiround 调整）");
             return;
         }
         // 【1.8】内置音频走原版资源包加载（sounds.json 已注册 smoothlift:audio/<key>），
@@ -281,10 +305,11 @@ public final class EscalatorAudioPlayer {
             ACTIVE.remove(bestId);
             inst = null;
         }
-        // 音量 = 距离衰减（离开整条扶梯 16 格内 1.0 -> 0.0）× 这条扶梯自己的音量设定（1~1000）。
+        // 音量 = 距离衰减（离开整条扶梯 range 格内 1.0 -> 0.0）× 这条扶梯自己的音量设定（1~1000）。
         // 【1.12】100 = 原始音量（增益 1.0），1000 = 10× 放大。这里存的是「未夹取」的增益，
         // 引擎每 tick 用实例的 volume/x/y/z 同步到 Channel；>1 的部分靠 SoundEngineVolumeMixin 放行。
-        float distanceFactor = (float) Math.max(0.0, 1.0 - bestDist / MAX_DISTANCE);
+        // 【1.24】range 由 /futiround 决定（默认 16 格），见上面的 rangeFor。
+        float distanceFactor = (float) Math.max(0.0, 1.0 - bestDist / range);
         int userVolume = EscalatorSpeedManager.getClientBindingVolume(mc.level.dimension(), bestPos);
         float target = distanceFactor * (userVolume / (float) EscalatorSpeedData.DEFAULT_AUDIO_VOLUME);
 
@@ -434,8 +459,12 @@ public final class EscalatorAudioPlayer {
     // ------------------------------------------------------------------
 
     /**
-     * 附近最近的扶梯方块（半径 {@link #MAX_DISTANCE} 格），结果缓存 {@link #NEARBY_TTL_TICKS} tick。
+     * 附近最近的扶梯方块（半径 = 本维度**可能的最大**底噪范围），结果缓存 {@link #NEARBY_TTL_TICKS} tick。
      * 只有设了默认音频时才会被调用，所以旧存档/没设默认音频的世界完全不受影响。
+     *
+     * <p>【1.24】扫描半径取 {@link EscalatorSpeedManager#getMaxRound}（默认值 + 单独设置的最大值），
+     * 这样把范围调大以后也能找到更远的扶梯；真正判定「听不听得见」是在
+     * {@link #onClientTick} 里按**那条扶梯自己的**范围再比一次。
      */
     private static BlockPos nearestEscalatorNear(Minecraft mc) {
         long now = mc.level.getGameTime();
@@ -448,42 +477,49 @@ public final class EscalatorAudioPlayer {
     }
 
     /**
-     * 按球壳由近到远扫描，返回半径内最近的扶梯方块；范围内没有则返回 null。
+     * 在「已加载区块里的扶梯**阶梯**方块」索引里找离玩家最近的那一块；范围内没有则返回 null。
      *
-     * <p>球壳扫描能在「身边就有扶梯」时立刻返回（玩家站在扶梯上通常只查几个方块），
-     * 只有附近完全没有扶梯时才会扫满整个立方体（33³ ≈ 3.6 万次 getBlockState）——
-     * 客户端区块未加载时 getBlockState 走的是空区块，很快。
+     * <p>【1.24】<b>改成走索引而不是逐格扫立方体</b>。原来的球壳扫描是 O(半径³)：
+     * 半径 16 时 33³ ≈ 3.6 万次 {@code getBlockState} 还能接受，但范围现在可以被 {@code /futiround}
+     * 调到 128，那就是 257³ ≈ **1700 万**次 —— 每 0.5 秒一次，会直接卡出可见的掉帧。
+     * 走索引后代价只跟「已加载的阶梯块数量」有关，与半径无关，和 {@link EscalatorChimePlayer#scan} 同一套做法。
+     *
+     * <p>只认**阶梯**块（不认护栏/侧板）是刻意的：阶梯块铺满整条扶梯，取最近的那块就足以代表
+     * 「最近的扶梯」，而且和提示音那边的定位依据完全一致（见坑 22 的链条展开规则）。
      */
     private static BlockPos scanNearestEscalator(Minecraft mc) {
-        int radius = (int) MAX_DISTANCE;
+        List<BlockPos> steps = EscalatorStepIndex.positions();
+        if (steps.isEmpty()) {
+            return null;
+        }
+        int radius = EscalatorSpeedManager.getMaxRound(mc.level);
         BlockPos center = mc.player.blockPosition();
-        for (int r = 0; r <= radius; r++) {
-            BlockPos best = null;
-            double bestDist = Double.MAX_VALUE;
-            for (int dx = -r; dx <= r; dx++) {
-                for (int dy = -r; dy <= r; dy++) {
-                    for (int dz = -r; dz <= r; dz++) {
-                        // 只看当前半径这一层壳
-                        if (Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz))) != r) {
-                            continue;
-                        }
-                        BlockPos pos = center.offset(dx, dy, dz);
-                        if (!EscalatorUtil.isEscalator(mc.level.getBlockState(pos))) {
-                            continue;
-                        }
-                        double dist = (double) dx * dx + (double) dy * dy + (double) dz * dz;
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = pos;
-                        }
-                    }
-                }
+        Vec3 eye = mc.player.position();
+        BlockPos best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (BlockPos pos : steps) {
+            if (Math.abs(pos.getX() - center.getX()) > radius
+                    || Math.abs(pos.getY() - center.getY()) > radius
+                    || Math.abs(pos.getZ() - center.getZ()) > radius) {
+                continue;
             }
-            if (best != null) {
-                return best;
+            double dist = distanceToBlock(eye, pos);
+            if (dist < bestDist) {
+                bestDist = dist;
+                best = pos;
             }
         }
-        return null;
+        return best;
+    }
+
+    /**
+     * 【1.24】这条扶梯**生效的**运行底噪可闻范围（格）：单独设置 &gt; 维度默认（/futiround，初始 16）。
+     *
+     * <p>每 tick 调用一次，结果直接参与距离衰减与「该不该响」的判定 —— 所以
+     * {@code /futiround} 改完**下一个 tick** 就生效，不需要重进世界。
+     */
+    public static double rangeFor(Minecraft mc, BlockPos pos) {
+        return EscalatorSpeedManager.getRound(mc.level, pos);
     }
 
     /** 断开连接：停掉所有扶梯声音。 */
@@ -551,6 +587,29 @@ public final class EscalatorAudioPlayer {
     }
 
     /**
+     * 【1.39】把一段存档音频注入声音引擎缓存 —— 供**无障碍提示音**播放器复用同一套解码链路
+     * （{@link EscalatorChimePlayer} 里选择自定义提示音时走这里，而不是另写一份解码）。
+     *
+     * <p>与底噪走完全同一条路：Ogg Vorbis 解码 → 塞进 {@code soundBuffers.cache}
+     * （key 必须等于 {@code Sound.getPath()}）→ 播放器自己造 {@code Sound} 绕过 sounds.json 查找。
+     *
+     * <p>★ 已经解码失败过的音频直接返回 false，**不再重试** —— 提示音是每 tick 调用的，
+     * 每 tick 重试会把日志刷爆（底噪那边靠 {@link #DECODE_FAILED} 达到同样效果）。
+     *
+     * @return 是否可用（缓存里已有同样算可用）
+     */
+    static boolean injectAudio(Minecraft mc, String audioId) {
+        if (audioId == null || mc == null || mc.level == null || DECODE_FAILED.contains(audioId)) {
+            return false;
+        }
+        byte[] bytes = EscalatorSpeedManager.getAudioBytes(mc.level, audioId);
+        if (bytes == null) {
+            return false;
+        }
+        return inject(mc, audioId, bytes);
+    }
+
+    /**
      * 音频 ID（= 存档音频文件夹里的文件名）可能包含大写字母、空格或中文，
      * 这种字符串直接塞进 {@link ResourceLocation} 会抛 {@code ResourceLocationException}
      * 并让客户端在渲染线程崩掉。这里把 ID 映射成合法且互不相同的路径：
@@ -559,7 +618,7 @@ public final class EscalatorAudioPlayer {
      *
      * @return 声音事件的 location（不含前缀与扩展名，如 {@code smoothlift:audio/a_b_1a2b3c4d}）
      */
-    private static ResourceLocation soundLocation(String audioId) {
+    static ResourceLocation soundLocation(String audioId) {
         StringBuilder path = new StringBuilder("audio/a");
         int limit = Math.min(audioId.length(), 48);
         for (int i = 0; i < limit; i++) {
@@ -613,11 +672,12 @@ public final class EscalatorAudioPlayer {
      * 会因为注册表里没有 smoothlift:audio/&lt;id&gt; 而把 sound 置为 EMPTY_SOUND 并返回 null，
      * play() 会直接放弃。
      */
-    private static final class EscalatorSoundInstance extends AbstractSoundInstance implements TickableSoundInstance {
+    private static final class EscalatorSoundInstance extends AbstractSoundInstance implements TickableSoundInstance,
+            GainManagedSound {
         private final String audioId;
         private final boolean builtin;
 
-        /** 【1.14】本实例首次播放时的游戏时刻，用于淡入（见 {@link #fadeInGain}）。 */
+        /** 【1.14】本实例首次播放时的游戏时刻，用于淡入（见 {@link #fadeIn}）。 */
         private long startTick = Long.MIN_VALUE;
 
         EscalatorSoundInstance(String audioId) {

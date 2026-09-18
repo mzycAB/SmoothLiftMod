@@ -2,9 +2,10 @@ package smooth.lift.network;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.event.network.CustomPayloadEvent;
 import smooth.lift.EscalatorSpeedManager;
+
 
 /** 客户端 -> 服务端：客户端完全进世界后主动请求全量同步（速度 + 音频 + 音量）。 */
 public class RequestSyncPacket {
@@ -33,6 +34,16 @@ public class RequestSyncPacket {
             // 否则刚进世界时客户端只有速度、音频绑定为空（表现为"明明绑着却静音"）。
             EscalatorSpeedManager.sendAudioSyncTo(player, player.serverLevel());
             EscalatorSpeedManager.sendVolumeSyncTo(player, player.serverLevel());
+            // 【1.16/1.18/1.24】提示音开关 / 提示音音量 / 两个可闻范围 也都要补发，
+            // 否则刚进世界时客户端会按默认值响（开了/关了都不生效）。
+            EscalatorSpeedManager.sendHelpSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpVolumeSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendRoundSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpRoundSyncTo(player, player.serverLevel());
+            // 【1.31/1.41】提示音速率与提示音音乐是两条独立的小包，同样要补发 ——
+            //   否则刚进世界时客户端会按默认值播（用 /futihelpspeed、/futihelpmusic 改过的设置看不到）。
+            EscalatorSpeedManager.sendHelpSpeedSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpAudioSyncTo(player, player.serverLevel());
         });
         context.setPacketHandled(true);
     }

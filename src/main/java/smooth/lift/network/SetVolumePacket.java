@@ -5,10 +5,11 @@ import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.event.network.CustomPayloadEvent;
 import smooth.lift.EscalatorSpeedManager;
 import smooth.lift.EscalatorUtil;
+
 
 /**
  * 【1.9】客户端 -> 服务端：设置某条扶梯的声音音量（1~1000，100 = 原始音量，1000 = 10× 放大）。

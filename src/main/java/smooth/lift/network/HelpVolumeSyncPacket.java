@@ -14,44 +14,42 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 【1.9】服务端 -> 客户端：同步「扶梯方块 → 声音音量」表（含【1.12】的默认音量）。
- *
- * <p>这是一个**小包**：只带音量，不含音频字节。改音量时只发它，
- * 避免为了一个数字重发整个音频库。
+ * 【1.18】服务端 -> 客户端：同步「扶梯方块 → 无障碍提示音音量」表（含维度默认音量）。
+ * 小包：只带音量，不含音频字节。
  */
-public class VolumeSyncPacket {
+public class HelpVolumeSyncPacket {
     private final String dimension;
-    private final int defaultVolume;
-    private final Map<BlockPos, Integer> volumes;
+    private final int defaultHelpVolume;
+    private final Map<BlockPos, Integer> helpVolume;
 
-    public VolumeSyncPacket(String dimension, int defaultVolume, Map<BlockPos, Integer> volumes) {
+    public HelpVolumeSyncPacket(String dimension, int defaultHelpVolume, Map<BlockPos, Integer> helpVolume) {
         this.dimension = dimension;
-        this.defaultVolume = defaultVolume;
-        this.volumes = volumes;
+        this.defaultHelpVolume = defaultHelpVolume;
+        this.helpVolume = helpVolume;
     }
 
-    public static void encode(VolumeSyncPacket pkt, FriendlyByteBuf buf) {
+    public static void encode(HelpVolumeSyncPacket pkt, FriendlyByteBuf buf) {
         buf.writeUtf(pkt.dimension, 256);
-        buf.writeVarInt(pkt.defaultVolume);
-        buf.writeVarInt(pkt.volumes.size());
-        for (Map.Entry<BlockPos, Integer> entry : pkt.volumes.entrySet()) {
+        buf.writeVarInt(pkt.defaultHelpVolume);
+        buf.writeVarInt(pkt.helpVolume.size());
+        for (Map.Entry<BlockPos, Integer> entry : pkt.helpVolume.entrySet()) {
             buf.writeBlockPos(entry.getKey());
             buf.writeVarInt(entry.getValue());
         }
     }
 
-    public static VolumeSyncPacket decode(FriendlyByteBuf buf) {
+    public static HelpVolumeSyncPacket decode(FriendlyByteBuf buf) {
         String dimension = buf.readUtf(256);
-        int defaultVolume = buf.readVarInt();
+        int defaultHelpVolume = buf.readVarInt();
         int count = buf.readVarInt();
-        Map<BlockPos, Integer> volumes = new HashMap<>();
+        Map<BlockPos, Integer> helpVolume = new HashMap<>();
         for (int i = 0; i < count; i++) {
-            volumes.put(buf.readBlockPos(), buf.readVarInt());
+            helpVolume.put(buf.readBlockPos(), buf.readVarInt());
         }
-        return new VolumeSyncPacket(dimension, defaultVolume, volumes);
+        return new HelpVolumeSyncPacket(dimension, defaultHelpVolume, helpVolume);
     }
 
-    public static void handle(VolumeSyncPacket pkt, CustomPayloadEvent.Context context) {
+    public static void handle(HelpVolumeSyncPacket pkt, CustomPayloadEvent.Context context) {
         if (context.getDirection() != NetworkDirection.PLAY_TO_CLIENT) {
             context.setPacketHandled(true);
             return;
@@ -63,7 +61,7 @@ public class VolumeSyncPacket {
             } catch (Exception e) {
                 return;
             }
-            EscalatorSpeedManager.applyClientVolumes(dimKey, pkt.volumes, pkt.defaultVolume);
+            EscalatorSpeedManager.applyClientHelpVolume(dimKey, pkt.defaultHelpVolume, pkt.helpVolume);
         });
         context.setPacketHandled(true);
     }

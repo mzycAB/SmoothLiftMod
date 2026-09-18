@@ -72,6 +72,8 @@ public class SmoothLiftClientEvents {
         PENDING_SYNC_CHUNKS.clear();
         // 【1.7】停掉所有扶梯声音，并清掉链缓存/解码失败记录。
         EscalatorAudioPlayer.onDisconnect();
+        // 【1.15】停掉无障碍提示音并清掉定位缓存。
+        EscalatorChimePlayer.onDisconnect();
         EscalatorStepRenderer.onDisconnect();
     }
 
@@ -85,6 +87,8 @@ public class SmoothLiftClientEvents {
         EscalatorStepRenderer.onClientTick(mc);
         // 【1.7】自定义扶梯声音播放器：每 tick 检查附近扶梯并调整音量与位置。
         EscalatorAudioPlayer.onClientTick(mc);
+        // 【1.15】香港式无障碍提示音播放器：每 tick 找最近扶梯、按两端距离起停两路提示音。
+        EscalatorChimePlayer.onClientTick(mc);
     }
 
     /** 世界渲染到 AFTER_ENTITIES 阶段时逐条绘制阶梯面。 */

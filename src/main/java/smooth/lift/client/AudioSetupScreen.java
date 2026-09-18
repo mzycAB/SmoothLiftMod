@@ -24,11 +24,13 @@ import java.util.List;
 /**
  * 石斧界面里的「选择扶梯音乐」子界面。列表从上到下三段：
  * <ol>
- *   <li>① <b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
+ *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li><b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
  *       由模组自己的 {@code sounds.json} 注册）。点一下即绑定，<b>不需要玩家准备任何文件、也不需要 ffmpeg</b>。</li>
- *   <li>② 已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
- *   <li>③ 存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li>已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
  * </ol>
+ * 【1.38】段与段之间的说明文字已按用户要求删掉（只保留最上面那一行「文件夹待导入」提示），
+ * 三段的区别靠行本身的形态区分：待导入=歌名、内置=显示名、已存入=右边多一个「删除」按钮。
  * 行数可能超过一屏，支持鼠标滚轮滚动；列表右侧有滚动条。
  * 界面在按钮点击后保持打开，只在按 ESC 或「返回」时回到设置界面。
  *
@@ -200,27 +202,24 @@ public class AudioSetupScreen extends Screen {
     private void rebuildRows() {
         rows.clear();
 
-        rows.add(new Row(T_HEADER, null, "① 模组内置音频（装了模组就自带，点一下即绑定）"));
+        // 第一段（最上端、位置固定）：模组内置音频 =「默认音乐」，永远可用。
         for (String id : builtin) {
             rows.add(new Row(T_BUILTIN, id, EscalatorSpeedManager.displayName(id)));
         }
 
-        rows.add(new Row(T_HEADER, null, "② 已存入存档的音频（左=绑定；右=删除）"));
-        if (stored.isEmpty()) {
-            rows.add(new Row(T_NOTE, null, "（暂无）"));
-        } else {
-            for (String id : stored) {
-                rows.add(new Row(T_STORED, id, id));
-            }
-        }
-
-        rows.add(new Row(T_HEADER, null, "③ 存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
+        // 第二段：存档文件夹里的 OGG（玩家自己导入的音乐），点=导入并绑定。
+        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {
             for (String id : pending) {
                 rows.add(new Row(T_PENDING, id, id));
             }
+        }
+
+        // 第三段：已存入存档的音频（点名字=绑定；右边的「删除」=从存档移除）。
+        for (String id : stored) {
+            rows.add(new Row(T_STORED, id, id));
         }
 
         int total = rows.size() * ROW_H;
@@ -355,8 +354,8 @@ public class AudioSetupScreen extends Screen {
                 this.width / 2, statusY + 16, 0x808080);
         guiGraphics.drawCenteredString(this.font,
                 Component.literal(maxScroll > 0
-                        ? "音量在上一页「扶梯设置」里调（滚轮可滚动列表）；离开整条扶梯 16 格内才听得见"
-                        : "音量在上一页「扶梯设置」里调；离开整条扶梯 16 格内才听得见"),
+                        ? "音量（底噪/提示音）都在上一页「扶梯设置」里调（滚轮可滚动列表）；底噪离开整条扶梯 16 格内才听得见"
+                        : "音量（底噪/提示音）都在上一页「扶梯设置」里调；底噪离开整条扶梯 16 格内才听得见"),
                 this.width / 2, statusY + 30, 0x808080);
     }
 

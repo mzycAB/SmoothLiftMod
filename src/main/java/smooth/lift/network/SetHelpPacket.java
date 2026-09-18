@@ -11,26 +11,29 @@ import smooth.lift.EscalatorSpeedManager;
 import smooth.lift.EscalatorUtil;
 
 
-/** 客户端 -> 服务端：把一段音频绑定到某条扶梯（音频必须已入库，或是内置音频）。 */
-public class BindAudioPacket {
+/**
+ * 【1.16】客户端 -> 服务端：石斧界面里的「无障碍提示音」开关。
+ * 开关极小，服务端只回发「提示音开关表」小包（{@link HelpSyncPacket}）。
+ */
+public class SetHelpPacket {
     private final BlockPos pos;
-    private final String audioId;
+    private final boolean enabled;
 
-    public BindAudioPacket(BlockPos pos, String audioId) {
+    public SetHelpPacket(BlockPos pos, boolean enabled) {
         this.pos = pos;
-        this.audioId = audioId;
+        this.enabled = enabled;
     }
 
-    public static void encode(BindAudioPacket pkt, FriendlyByteBuf buf) {
+    public static void encode(SetHelpPacket pkt, FriendlyByteBuf buf) {
         buf.writeBlockPos(pkt.pos);
-        buf.writeUtf(pkt.audioId, 128);
+        buf.writeBoolean(pkt.enabled);
     }
 
-    public static BindAudioPacket decode(FriendlyByteBuf buf) {
-        return new BindAudioPacket(buf.readBlockPos(), buf.readUtf(128));
+    public static SetHelpPacket decode(FriendlyByteBuf buf) {
+        return new SetHelpPacket(buf.readBlockPos(), buf.readBoolean());
     }
 
-    public static void handle(BindAudioPacket pkt, CustomPayloadEvent.Context context) {
+    public static void handle(SetHelpPacket pkt, CustomPayloadEvent.Context context) {
         if (context.getDirection() != NetworkDirection.PLAY_TO_SERVER) {
             context.setPacketHandled(true);
             return;
@@ -44,12 +47,11 @@ public class BindAudioPacket {
             if (!EscalatorUtil.isEscalator(level.getBlockState(pkt.pos))) {
                 return;
             }
-            if (EscalatorSpeedManager.bindAudio(level, pkt.pos, pkt.audioId)) {
-                player.displayClientMessage(Component.literal("已为这条扶梯绑定自定义声音"), true);
-                EscalatorSpeedManager.syncAudioToAll(player.server);
-            } else {
-                player.displayClientMessage(Component.literal("绑定失败：音频不存在"), true);
-            }
+            EscalatorSpeedManager.setHelp(level, pkt.pos, pkt.enabled);
+            boolean applied = EscalatorSpeedManager.isHelpEnabled(level, pkt.pos);
+            player.displayClientMessage(Component.literal(
+                    "这条扶梯的无障碍提示音已" + (applied ? "开启" : "关闭")), true);
+            EscalatorSpeedManager.syncHelpToAll(player.server);
         });
         context.setPacketHandled(true);
     }

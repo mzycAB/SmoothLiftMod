@@ -2,8 +2,8 @@ package smooth.lift.network;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.event.network.CustomPayloadEvent;
 import smooth.lift.EscalatorSpeedManager;
 
 import java.util.ArrayList;

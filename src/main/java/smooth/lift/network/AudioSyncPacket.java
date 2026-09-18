@@ -2,10 +2,11 @@ package smooth.lift.network;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.event.network.CustomPayloadEvent;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.event.network.CustomPayloadEvent;
 import smooth.lift.client.SmoothLiftClientEvents;
+
 
 /**
  * 服务端 -> 客户端：分块同步音频库、来源文件夹名单、扶梯-音频绑定与默认音频。

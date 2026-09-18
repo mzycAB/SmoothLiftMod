@@ -14,44 +14,42 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 【1.9】服务端 -> 客户端：同步「扶梯方块 → 声音音量」表（含【1.12】的默认音量）。
- *
- * <p>这是一个**小包**：只带音量，不含音频字节。改音量时只发它，
- * 避免为了一个数字重发整个音频库。
+ * 【1.24】服务端 -> 客户端：同步「扶梯方块 → 无障碍提示音可闻范围（格）」表（含维度默认范围）。
+ * 小包：只带范围数字，不含音频字节。
  */
-public class VolumeSyncPacket {
+public class HelpRoundSyncPacket {
     private final String dimension;
-    private final int defaultVolume;
-    private final Map<BlockPos, Integer> volumes;
+    private final int defaultHelpRound;
+    private final Map<BlockPos, Integer> helpRounds;
 
-    public VolumeSyncPacket(String dimension, int defaultVolume, Map<BlockPos, Integer> volumes) {
+    public HelpRoundSyncPacket(String dimension, int defaultHelpRound, Map<BlockPos, Integer> helpRounds) {
         this.dimension = dimension;
-        this.defaultVolume = defaultVolume;
-        this.volumes = volumes;
+        this.defaultHelpRound = defaultHelpRound;
+        this.helpRounds = helpRounds;
     }
 
-    public static void encode(VolumeSyncPacket pkt, FriendlyByteBuf buf) {
+    public static void encode(HelpRoundSyncPacket pkt, FriendlyByteBuf buf) {
         buf.writeUtf(pkt.dimension, 256);
-        buf.writeVarInt(pkt.defaultVolume);
-        buf.writeVarInt(pkt.volumes.size());
-        for (Map.Entry<BlockPos, Integer> entry : pkt.volumes.entrySet()) {
+        buf.writeVarInt(pkt.defaultHelpRound);
+        buf.writeVarInt(pkt.helpRounds.size());
+        for (Map.Entry<BlockPos, Integer> entry : pkt.helpRounds.entrySet()) {
             buf.writeBlockPos(entry.getKey());
             buf.writeVarInt(entry.getValue());
         }
     }
 
-    public static VolumeSyncPacket decode(FriendlyByteBuf buf) {
+    public static HelpRoundSyncPacket decode(FriendlyByteBuf buf) {
         String dimension = buf.readUtf(256);
-        int defaultVolume = buf.readVarInt();
+        int defaultHelpRound = buf.readVarInt();
         int count = buf.readVarInt();
-        Map<BlockPos, Integer> volumes = new HashMap<>();
+        Map<BlockPos, Integer> helpRounds = new HashMap<>();
         for (int i = 0; i < count; i++) {
-            volumes.put(buf.readBlockPos(), buf.readVarInt());
+            helpRounds.put(buf.readBlockPos(), buf.readVarInt());
         }
-        return new VolumeSyncPacket(dimension, defaultVolume, volumes);
+        return new HelpRoundSyncPacket(dimension, defaultHelpRound, helpRounds);
     }
 
-    public static void handle(VolumeSyncPacket pkt, CustomPayloadEvent.Context context) {
+    public static void handle(HelpRoundSyncPacket pkt, CustomPayloadEvent.Context context) {
         if (context.getDirection() != NetworkDirection.PLAY_TO_CLIENT) {
             context.setPacketHandled(true);
             return;
@@ -63,7 +61,7 @@ public class VolumeSyncPacket {
             } catch (Exception e) {
                 return;
             }
-            EscalatorSpeedManager.applyClientVolumes(dimKey, pkt.volumes, pkt.defaultVolume);
+            EscalatorSpeedManager.applyClientHelpRounds(dimKey, pkt.defaultHelpRound, pkt.helpRounds);
         });
         context.setPacketHandled(true);
     }

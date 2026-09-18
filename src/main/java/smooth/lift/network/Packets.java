@@ -98,6 +98,66 @@ public final class Packets {
                 .decoder(VolumeSyncPacket::decode)
                 .consumerMainThread(VolumeSyncPacket::handle)
                 .add();
+        // 【1.16】无障碍提示音开关：客户端 -> 服务端 + 服务端 -> 客户端
+        CHANNEL.messageBuilder(SetHelpPacket.class)
+                .encoder(SetHelpPacket::encode)
+                .decoder(SetHelpPacket::decode)
+                .consumerMainThread(SetHelpPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(HelpSyncPacket.class)
+                .encoder(HelpSyncPacket::encode)
+                .decoder(HelpSyncPacket::decode)
+                .consumerMainThread(HelpSyncPacket::handle)
+                .add();
+        // 【1.18】无障碍提示音音量：客户端 -> 服务端 + 服务端 -> 客户端
+        CHANNEL.messageBuilder(SetHelpVolumePacket.class)
+                .encoder(SetHelpVolumePacket::encode)
+                .decoder(SetHelpVolumePacket::decode)
+                .consumerMainThread(SetHelpVolumePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(HelpVolumeSyncPacket.class)
+                .encoder(HelpVolumeSyncPacket::encode)
+                .decoder(HelpVolumeSyncPacket::decode)
+                .consumerMainThread(HelpVolumeSyncPacket::handle)
+                .add();
+        // 【1.24】两个淡入淡出范围（底噪 / 提示音）：只有服务端 -> 客户端
+        CHANNEL.messageBuilder(RoundSyncPacket.class)
+                .encoder(RoundSyncPacket::encode)
+                .decoder(RoundSyncPacket::decode)
+                .consumerMainThread(RoundSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(HelpRoundSyncPacket.class)
+                .encoder(HelpRoundSyncPacket::encode)
+                .decoder(HelpRoundSyncPacket::decode)
+                .consumerMainThread(HelpRoundSyncPacket::handle)
+                .add();
+        // 【1.31】无障碍提示音速率（进 / 出两套合成一只包）：只有服务端 -> 客户端
+        CHANNEL.messageBuilder(HelpSpeedSyncPacket.class)
+                .encoder(HelpSpeedSyncPacket::encode)
+                .decoder(HelpSpeedSyncPacket::decode)
+                .consumerMainThread(HelpSpeedSyncPacket::handle)
+                .add();
+        // 【1.41】无障碍提示音音乐（进 / 出两套合成一只包）：服务端 -> 客户端 + 客户端 -> 服务端
+        CHANNEL.messageBuilder(HelpAudioSyncPacket.class)
+                .encoder(HelpAudioSyncPacket::encode)
+                .decoder(HelpAudioSyncPacket::decode)
+                .consumerMainThread(HelpAudioSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(BindHelpAudioPacket.class)
+                .encoder(BindHelpAudioPacket::encode)
+                .decoder(BindHelpAudioPacket::decode)
+                .consumerMainThread(BindHelpAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(UnbindHelpAudioPacket.class)
+                .encoder(UnbindHelpAudioPacket::encode)
+                .decoder(UnbindHelpAudioPacket::decode)
+                .consumerMainThread(UnbindHelpAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(ImportFolderHelpAudioPacket.class)
+                .encoder(ImportFolderHelpAudioPacket::encode)
+                .decoder(ImportFolderHelpAudioPacket::decode)
+                .consumerMainThread(ImportFolderHelpAudioPacket::handle)
+                .add();
     }
 
     /** 客户端 -> 服务端：1.20.4 起 SimpleChannel 不再自带 sendToServer，需通过当前客户端连接发送。 */
