@@ -327,15 +327,22 @@ public class SmoothLiftClient implements ClientModInitializer {
             });
         });
 
-        // 【1.39】接收服务端同步的「默认提示音音乐 + 扶梯方块 → 提示音音乐」表（小包）
+        // 【1.41】接收服务端同步的「默认提示音音乐 + 扶梯方块 → 提示音音乐」表
+        //   （小包，进 / 出两套 —— 顺序同 buildHelpAudioPacket：默认in, 表in, 默认out, 表out）
         //   音频字节仍然来自 AUDIO_SYNC 那一份（同一个库），这里只发「选了哪一个」。
         ClientPlayNetworking.registerGlobalReceiver(SmoothLift.HELP_AUDIO_SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
             String dimId = buf.readUtf(256);
-            String defaultHelpAudio = buf.readUtf(128);
-            int count = buf.readVarInt();
-            final Map<BlockPos, String> helpAudio = new HashMap<>();
-            for (int i = 0; i < count; i++) {
-                helpAudio.put(buf.readBlockPos(), buf.readUtf(128));
+            String defaultIn = buf.readUtf(128);
+            int countIn = buf.readVarInt();
+            final Map<BlockPos, String> blockIn = new HashMap<>();
+            for (int i = 0; i < countIn; i++) {
+                blockIn.put(buf.readBlockPos(), buf.readUtf(128));
+            }
+            String defaultOut = buf.readUtf(128);
+            int countOut = buf.readVarInt();
+            final Map<BlockPos, String> blockOut = new HashMap<>();
+            for (int i = 0; i < countOut; i++) {
+                blockOut.put(buf.readBlockPos(), buf.readUtf(128));
             }
             final ResourceKey<Level> dimKey;
             try {
@@ -344,9 +351,9 @@ public class SmoothLiftClient implements ClientModInitializer {
                 return;
             }
             client.execute(() -> {
-                EscalatorSpeedManager.applyClientHelpAudio(dimKey, defaultHelpAudio, helpAudio);
-                LOGGER.info("[SmoothLift/HelpAudio] 无障碍提示音已同步（{}）：默认 {}、单独设置 {} 处",
-                        dimKey.location(), defaultHelpAudio, helpAudio.size());
+                EscalatorSpeedManager.applyClientHelpAudio(dimKey, defaultIn, blockIn, defaultOut, blockOut);
+                LOGGER.info("[SmoothLift/HelpAudio] 无障碍提示音已同步（{}）：默认 进入 {}、离开 {}，单独设置 {} / {} 处",
+                        dimKey.location(), defaultIn, defaultOut, blockIn.size(), blockOut.size());
                 HelpAudioSetupScreen.notifyDataChanged();
             });
         });

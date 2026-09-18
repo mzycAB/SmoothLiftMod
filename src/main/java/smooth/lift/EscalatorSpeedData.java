@@ -69,7 +69,7 @@ import java.util.Set;
  * 提示音音量（defaultHelpVolume/blockHelpVolume）、
  * 底噪范围（defaultRound/blockRound）、提示音范围（defaultHelpRound/blockHelpRound）、
  * 提示音速率（defaultHelpSpeedIn/Out + blockHelpSpeedIn/Out）、
- * 提示音音乐（defaultHelpAudio/blockHelpAudio）。
+ * 提示音音乐（defaultHelpAudioIn/Out + blockHelpAudioIn/Out）。
  *
  * 【1.31 起】无障碍提示音的**速率**（每秒响几次，单位 Hz）——把 1.25~1.27 定死的
  * 「入口 10 Hz / 出口 1 Hz」做成可调（{@code /futihelpspeed in|out <Hz>}）：
@@ -84,12 +84,22 @@ import java.util.Set;
  *             细节见 {@code EscalatorChimePlayer}；取值范围 {@link #HELP_SPEED_MIN}~{@link #HELP_SPEED_MAX}。
  *
  * 【1.39 起】无障碍提示音的**音乐**（用哪段声音当提示音）：
- * defaultHelpAudio / blockHelpAudio：与 {@code /futimusic} 的运行底噪**完全对称**的第二套「音频绑定」，
- *             但**共用同一个导入文件夹与同一个 {@link #audioLibrary}**（导入一次，两边都能选）。
+ * defaultHelpAudioIn/Out / blockHelpAudioIn/Out：与 {@code /futimusic} 的运行底噪**完全对称**的
+ *             第二套「音频绑定」，但**共用同一个导入文件夹与同一个 {@link #audioLibrary}**
+ *             （导入一次，两边都能选）。
  *             {@link #HELP_AUDIO_DEFAULT} = 模组原来的提示音（初始值，旧存档缺字段也是它）；
- *             {@link #HELP_AUDIO_OFF} = 这条扶梯不播提示音；其它值 = 音频库里的文件名。
+ *             {@link #HELP_AUDIO_OFF} = 这一头不播提示音；其它值 = 音频库里的文件名。
  *             ★ 速率（/futihelpspeed）只对 {@link #HELP_AUDIO_DEFAULT} 生效 ——
  *             自定义音频按原速循环播（素材是玩家自己的，没法按 1/4/10/25/50 Hz 分档）。
+ *
+ * 【1.41 起】提示音**音乐**也分成**进入 / 离开**两套（形状同 /futihelpspeed 的 in|out）：
+ *             进扶梯那一头（上客端）与出扶梯那一头（落客端）可以各放各的声音，
+ *             于是「进站播一段、出站播另一段」这种需求不用再靠改素材实现。
+ *             1.39 的单一字段（{@code defaultHelpAudio} / {@code blockHelpAudio}）在
+ *             {@link #fromTag} 里被**同时**当作两头初值读入 ⇒ 旧存档听感逐字节不变；
+ *             保存时再把它当**兼容镜像**写回（= 进扶梯那一头），供回退版本读取。
+ *             ★ `off` 的粒度也跟着细了：现在可以只让**这一头**不响、另一头照常响
+ *             （在 {@code EscalatorChimePlayer} 里按端头分别拦，见那里 1.41 段）。
  *
  */
 public class EscalatorSpeedData extends SavedData {
@@ -190,8 +200,9 @@ public class EscalatorSpeedData extends SavedData {
     /**
      * 【1.39】无障碍提示音「音乐」的哨兵 ID：**模组原来的提示音**（五档「咔啪」素材 + 速率分档）。
      *
-     * <p>这是 {@link #defaultHelpAudio} 的初始值，也是旧存档缺字段时的取值
-     * ⇒ **1.38 及之前的行为逐字节不变**（进扶梯端 10 Hz、出扶梯端 1 Hz 那套）。
+     * <p>这是 {@link #defaultHelpAudioIn} / {@link #defaultHelpAudioOut} 的初始值，
+     * 也是旧存档缺字段时的取值 ⇒ **1.38 及之前的行为逐字节不变**
+     * （进扶梯端 10 Hz、出扶梯端 1 Hz 那套）。
      *
      * <p>它和 {@code /futimusic} 的 {@code default}（内置运行底噪）是**两件不同的事**：
      * 那个是整条扶梯 23 秒的环境音，这个是端头 2 秒一循环的定位提示音。
@@ -317,26 +328,44 @@ public class EscalatorSpeedData extends SavedData {
     public final Map<BlockPos, Integer> blockHelpSpeedOut = new HashMap<>();
 
     /**
-     * 【1.39】维度默认**无障碍提示音「音乐」**（{@code /futihelpmusic} 设置）：没有单独设置过的扶梯用它。
+     * 【1.41】维度默认**进入扶梯（上客端）**的无障碍提示音「音乐」（{@code /futihelpmusic in} 设置）：
+     * 没有单独设置过的扶梯用它。
      *
      * <p>取值只有三种：
      * <ul>
      *   <li>{@link #HELP_AUDIO_DEFAULT}（初始值）= 模组原来的提示音；</li>
-     *   <li>{@link #HELP_AUDIO_OFF} = 不播提示音；</li>
-     *   <li>玩家导入的音频文件名（如 {@code example.ogg}）= 在两端循环播放这段音频。</li>
+     *   <li>{@link #HELP_AUDIO_OFF} = 这一头不播提示音；</li>
+     *   <li>玩家导入的音频文件名（如 {@code example.ogg}）= 在这一头循环播放这段音频。</li>
      * </ul>
      *
      * <p>音频字节**不重复存**：用的就是 {@link #audioLibrary}（与 {@code /futimusic} 的
      * 运行底噪共用同一个导入文件夹与同一个库），这里只记「选了哪一个」。
      * 与 {@link #defaultAudio}（运行底噪）是两套互不影响的数据。
+     *
+     * <p>★【1.41】起「进入扶梯」与「离开扶梯」是**两套独立数据**（形状同
+     * {@code /futihelpspeed in|out}），所以进、出两头可以各放各的声音。
+     * 1.39 那个单一的 {@code defaultHelpAudio} 字段在读取时**同时**喂给两头
+     * （见 {@link #fromTag}），保证旧存档听起来**逐字节不变**。
      */
-    public String defaultHelpAudio = HELP_AUDIO_DEFAULT;
+    public String defaultHelpAudioIn = HELP_AUDIO_DEFAULT;
 
     /**
-     * 【1.39】扶梯方块（x,y,z）→ 这条扶梯无障碍提示音的「音乐」ID（单独设置层）。
-     * 只记录与 {@link #defaultHelpAudio} **不同的**项；旧存档缺这一段也能正常读（= 跟随默认）。
+     * 【1.41】扶梯方块（x,y,z）→ 这条扶梯**进入扶梯（上客端）**的提示音「音乐」ID（单独设置层）。
+     * 只记录与 {@link #defaultHelpAudioIn} **不同的**项；旧存档缺这一段也能正常读（= 跟随默认）。
      */
-    public final Map<BlockPos, String> blockHelpAudio = new HashMap<>();
+    public final Map<BlockPos, String> blockHelpAudioIn = new HashMap<>();
+
+    /**
+     * 【1.41】维度默认**离开扶梯（落客端）**的无障碍提示音「音乐」（{@code /futihelpmusic out} 设置）。
+     * 取值与 {@link #defaultHelpAudioIn} 相同，但**互不影响**。
+     */
+    public String defaultHelpAudioOut = HELP_AUDIO_DEFAULT;
+
+    /**
+     * 【1.41】扶梯方块（x,y,z）→ 这条扶梯**离开扶梯（落客端）**的提示音「音乐」ID（单独设置层）。
+     * 只记录与 {@link #defaultHelpAudioOut} **不同的**项。
+     */
+    public final Map<BlockPos, String> blockHelpAudioOut = new HashMap<>();
 
     /** 维度默认阶梯动画速度：未单独设置阶梯动画的扶梯使用它。 */
     public double defaultStepSpeed() {
@@ -425,17 +454,46 @@ public class EscalatorSpeedData extends SavedData {
         if (tag.contains("defaultHelpSpeedOut")) {
             data.defaultHelpSpeedOut = clampHelpSpeed(tag.getInt("defaultHelpSpeedOut"));
         }
-        // 【1.39】无障碍提示音「音乐」（旧存档没有这一段 → default = 模组原来的提示音，行为逐字节不变）
+        // 【1.39→1.41】无障碍提示音「音乐」
+        // ① 1.39 的旧字段（单一 defaultHelpAudio / blockHelpAudio，两头共用一段声音）
+        //    读进来**同时**当作「进 / 出」两头的初值 ⇒ 旧存档听起来逐字节不变；
+        // ② 随后用 1.41 的 in / out 字段覆盖各自那一头（新存档两边都写，以新字段为准）。
         for (Map.Entry<String, String> entry : readStringMap(tag.getCompound("blockHelpAudio")).entrySet()) {
             BlockPos pos = parsePos(entry.getKey());
             if (pos != null) {
-                data.blockHelpAudio.put(pos, entry.getValue());
+                data.blockHelpAudioIn.put(pos, entry.getValue());
+                data.blockHelpAudioOut.put(pos, entry.getValue());
             }
         }
         if (tag.contains("defaultHelpAudio")) {
             String id = tag.getString("defaultHelpAudio");
             if (!id.isEmpty()) {
-                data.defaultHelpAudio = id;
+                data.defaultHelpAudioIn = id;
+                data.defaultHelpAudioOut = id;
+            }
+        }
+        for (Map.Entry<String, String> entry : readStringMap(tag.getCompound("blockHelpAudioIn")).entrySet()) {
+            BlockPos pos = parsePos(entry.getKey());
+            if (pos != null) {
+                data.blockHelpAudioIn.put(pos, entry.getValue());
+            }
+        }
+        if (tag.contains("defaultHelpAudioIn")) {
+            String id = tag.getString("defaultHelpAudioIn");
+            if (!id.isEmpty()) {
+                data.defaultHelpAudioIn = id;
+            }
+        }
+        for (Map.Entry<String, String> entry : readStringMap(tag.getCompound("blockHelpAudioOut")).entrySet()) {
+            BlockPos pos = parsePos(entry.getKey());
+            if (pos != null) {
+                data.blockHelpAudioOut.put(pos, entry.getValue());
+            }
+        }
+        if (tag.contains("defaultHelpAudioOut")) {
+            String id = tag.getString("defaultHelpAudioOut");
+            if (!id.isEmpty()) {
+                data.defaultHelpAudioOut = id;
             }
         }
         return data;
@@ -456,6 +514,16 @@ public class EscalatorSpeedData extends SavedData {
         Map<String, String> out = new HashMap<>();
         for (String key : compound.getAllKeys()) {
             out.put(key, compound.getString(key));
+        }
+        return out;
+    }
+
+    /** 【1.41】把「方块 → 字符串」写成 NBT（键 = {@code x,y,z}）。 */
+    private static CompoundTag writeStringMap(Map<BlockPos, String> map) {
+        CompoundTag out = new CompoundTag();
+        for (Map.Entry<BlockPos, String> entry : map.entrySet()) {
+            BlockPos pos = entry.getKey();
+            out.putString(pos.getX() + "," + pos.getY() + "," + pos.getZ(), entry.getValue());
         }
         return out;
     }
@@ -520,16 +588,18 @@ public class EscalatorSpeedData extends SavedData {
         tag.put("blockHelpSpeedIn", writeIntMap(blockHelpSpeedIn));
         tag.putInt("defaultHelpSpeedOut", defaultHelpSpeedOut);
         tag.put("blockHelpSpeedOut", writeIntMap(blockHelpSpeedOut));
-        // 【1.39】无障碍提示音「音乐」（默认值与音频库共用，这里只存 ID）
-        if (defaultHelpAudio != null && !defaultHelpAudio.isEmpty()) {
-            tag.putString("defaultHelpAudio", defaultHelpAudio);
-        }
-        CompoundTag helpBindTag = new CompoundTag();
-        for (Map.Entry<BlockPos, String> entry : blockHelpAudio.entrySet()) {
-            BlockPos pos = entry.getKey();
-            helpBindTag.putString(pos.getX() + "," + pos.getY() + "," + pos.getZ(), entry.getValue());
-        }
-        tag.put("blockHelpAudio", helpBindTag);
+        // 【1.41】无障碍提示音「音乐」（进 / 出各一套；默认值与音频库共用，这里只存 ID）
+        tag.putString("defaultHelpAudioIn", defaultHelpAudioIn);
+        tag.put("blockHelpAudioIn", writeStringMap(blockHelpAudioIn));
+        tag.putString("defaultHelpAudioOut", defaultHelpAudioOut);
+        tag.put("blockHelpAudioOut", writeStringMap(blockHelpAudioOut));
+        // ★ 旧字段（1.39，单一值）作为**向后兼容镜像**写一份，值 = **进入扶梯**那一头。
+        //   目的只有一个：万一这份存档被回退版本（或不认 in/out 的构建）打开，
+        //   至少还能看到进扶梯那套设置，而不是「提示音全没了」。
+        //   反过来旧版一旦保存，它会把这一个值当成两头的唯一值写回（out 那份设置丢失）——
+        //   这是旧版不认识 out 的必然结果，可以接受。
+        tag.putString("defaultHelpAudio", defaultHelpAudioIn);
+        tag.put("blockHelpAudio", writeStringMap(blockHelpAudioIn));
         return tag;
     }
 
@@ -807,37 +877,45 @@ public class EscalatorSpeedData extends SavedData {
     public void removeAudio(String audioId) {
         audioLibrary.remove(audioId);
         blockAudio.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
-        blockHelpAudio.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
+        blockHelpAudioIn.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
+        blockHelpAudioOut.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
     }
 
     // ------------------------------------------------------------------
-    // 【1.39】无障碍提示音「音乐」（两层：维度默认 /futihelpmusic + 每条扶梯单独设置）
+    // 【1.41】无障碍提示音「音乐」（两层：维度默认 /futihelpmusic in|out + 每条扶梯单独设置）
     //
     // 与运行底噪那套（blockAudio / defaultAudio）**完全对称**，但数据独立：
     // 同一段导入的 OGG 可以「底噪播它、提示音也播它」，也可以只用在一边。
-    // 读取一律走 EscalatorSpeedManager 的顺链查找（同一条扶梯上任意一块设过就整条算设过）。
+    // 「进入扶梯（上客端）」与「离开扶梯（落客端）」是**两套独立数据**（形状同 /futihelpspeed），
+    // 所以每条扶梯最多 2 条记录（一头一条）。读取一律走 EscalatorSpeedManager 的顺链查找
+    // （同一条扶梯上任意一块设过就整条算设过）。
     // ------------------------------------------------------------------
 
-    /** 该扶梯方块是否**单独设置**过无障碍提示音音乐。 */
-    public boolean hasHelpAudio(BlockPos pos) {
-        return blockHelpAudio.containsKey(pos);
+    /** 该扶梯方块是否**单独设置**过提示音音乐；{@code in} 为 true = 看进入扶梯（上客端）那一头。 */
+    public boolean hasHelpAudio(BlockPos pos, boolean in) {
+        return (in ? blockHelpAudioIn : blockHelpAudioOut).containsKey(pos);
     }
 
     /** 返回该扶梯方块**单独设置**的提示音音乐 ID；没单独设置返回 null（= 跟随维度默认）。 */
-    public String getHelpAudioId(BlockPos pos) {
-        return blockHelpAudio.get(pos);
+    public String getHelpAudioId(BlockPos pos, boolean in) {
+        return (in ? blockHelpAudioIn : blockHelpAudioOut).get(pos);
     }
 
     /** 把提示音音乐 ID 单独设到该扶梯方块。存在性校验由调用方（EscalatorSpeedManager）负责。 */
-    public void bindHelpAudio(BlockPos pos, String audioId) {
+    public void bindHelpAudio(BlockPos pos, String audioId, boolean in) {
         if (audioId != null) {
-            blockHelpAudio.put(pos, audioId);
+            (in ? blockHelpAudioIn : blockHelpAudioOut).put(pos, audioId);
         }
     }
 
     /** 清掉该扶梯方块的提示音音乐单独设置（回到维度默认）。 */
-    public void unbindHelpAudio(BlockPos pos) {
-        blockHelpAudio.remove(pos);
+    public void unbindHelpAudio(BlockPos pos, boolean in) {
+        (in ? blockHelpAudioIn : blockHelpAudioOut).remove(pos);
+    }
+
+    /** 取该维度的「单独设置」表：{@code in} 为 true = 进入扶梯那一头。 */
+    public Map<BlockPos, String> helpAudioOverrides(boolean in) {
+        return in ? blockHelpAudioIn : blockHelpAudioOut;
     }
 
     // ------------------------------------------------------------------

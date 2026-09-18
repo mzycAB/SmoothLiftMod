@@ -373,6 +373,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 量化台阶、踏步声、动画驱动）对这 tick **完全不可达**；原版 travel 继续跑完 ——
  * 与 1.20.1 / 与扶梯停止时的行为一致。
  * 潜行、骑乘、离地、上升本来就放手，维持原样。
+ * （★【1.38k】推翻了「潜行放手」这一条：潜行也改成接管，见类头【1.38k】；其余三条不变。）
  *
  * <p><b>代价（用户明确选择接受）</b>：
  * <ul>
@@ -459,6 +460,83 @@ import java.util.concurrent.ConcurrentHashMap;
  *       扶梯快 + 疾跑时目标值会「跨两级」，但脚底只被允许每 tick 降一级，剩下的下一 tick 再降
  *       ⇒ 一级一级踩下去，没有「一步掉一大格」的悬空摔落 = 正常下楼梯的节奏。</li>
  * </ul>
+ *
+ * <h2>【1.38j】撤销 1.38g 的「到站移交」：回到 1.32 ① ② + 1.35 的结论</h2>
+ *
+ * 用户原话：「玩家在移动到扶梯尽头时会被扶梯轻轻的推一下（平滑的位移会卡顿一下，
+ * 上下扶梯都有这个问题）？而不是平滑站稳」。
+ *
+ * <p><b>症状与 1.32 ① ② 完全同源，判定为 1.38g 把同一处 bug 复活了。</b>
+ * 1.38g 把 old 的到站移交（{@code ARRIVE_DISTANCE} 到站判据 + {@code SLOWDOWN_DISTANCE} 线性减速
+ * + 脚高补位 + 沿轴末速度 + 40 tick 冷却）原样请回来时，**漏看了 1.31 已经改掉的一个前提**：
+ * old 的 {@code targetPos} 是**端部静态踏板本身**，而 1.31 起 {@link #walkToEndpoint} 改成返回
+ * **踏板前的那一格**（会动的过渡块 / 斜坡），1.35 又在其上加了「站在钢板上就放手」。
+ * 于是到站触发点从「踏板上」挪到了「**会动的过渡块**上」（距该块中心 0.45 格 ≈ 块内进度 t≈0.05~0.10），
+ * 三件事一起发生（离线仿真 `_tools_port/sim_end_push.py`，链布局见其文件头）：
+ * <ol>
+ *   <li><b>一抬一落</b>：脚被硬抬到 {@code targetPos.getY() + 1.0}（那一格的**块顶**），
+ *       可那一刻该格可见面只有 {@code +0.5}~{@code +0.6} ⇒ 单 tick 硬抬 <b>+0.401 格</b>，
+ *       抬完还悬在空中；接着 40 tick 冷却里脚自由落体掉回碰撞箱顶面 ⇒ 上行实测
+ *       「单 tick 竖直跳变 &gt; 0.2 格」的 tick = <b>1 个（+0.401）</b>。</li>
+ *   <li><b>被推一下</b>：交接时凭空给一个沿运行轴的水平末速度（默认速度下 <b>+0.0133 格/tick</b>）。
+ *       接管期速度恒为 0（{@link #rideOnSurface} 每 tick {@code setDeltaMovement(ZERO)}）、
+ *       位置直接摆 —— 速度从「恒定 0」突变成「原版物理 + 冲量」，体感就是被轻轻推了一把
+ *       （正是 1.32 ① 的原话）。</li>
+ *   <li><b>下行直接掉半格</b>：下端过渡块的可见面（t≈0.95 处 1.475）比它自己的碰撞箱顶面
+ *       （15/16 = 0.938）高 <b>0.538 格</b> ⇒ 放手瞬间脚落 0.538 格（单 tick 最大 −0.240）。</li>
+ * </ol>
+ *
+ * <p><b>修法：整段删除</b>（{@code ARRIVE_DISTANCE} / {@code SLOWDOWN_DISTANCE} /
+ * {@code RELEASE_COOLDOWN_TICKS} / {@code PLAYER_RELEASE_TIME} 与那段到站块一起去掉），
+ * 回到 1.32/1.35 的唯一一条不变量：**接管一直贴可见面送，交接点只放在静态钢板上**
+ * （{@link #isStaticLanding}）。钢板上脚已被 {@link #rideOnSurface} 贴到块顶
+ * （== 可见面 == 碰撞箱顶面），且接管期速度恒为 0 ⇒ 放手即「原地站住」，零跳变、零冲量。
+ * 仿真对照（同一条链、同一出发点，玩家无输入）：
+ * <pre>
+ *          最大单 tick 竖直跳变&gt;0.2 的 tick 数        到站释放时
+ *   现状   上行 1 个（+0.401）／下行 1 个（−0.240）   脚悬空 0.40 格后落下／脚掉 0.538 格
+ *   修复后 上行 0 个／下行 0 个                        Δy=0，脚 5.001 == 钢板顶 5.000
+ * </pre>
+ * 两端对称、上下扶梯一致 —— 因为这本来就是「板子上不送人」的同一条规则。
+ *
+ * ★ 1.38g 的注释声称「与 1.35 钢板放手共存，到站移交只对**无钢板**情况兜底」，
+ * 但那段代码里**没有任何「前方没有钢板」的判据**（只有 {@code horizontalDist &lt; ARRIVE_DISTANCE}），
+ * 所以在带钢板的正常扶梯上它**总会抢在钢板规则之前触发** —— 注释与实现不符，这正是当时没被发现的原因。
+ * ★ 无钢板链条（玩家横着走出 / 被推离）仍由 {@link #rideOnSurface} 返回 false 那条路径正常放手，不受影响。
+ *
+ * <h2>【1.38k】潜行（shift）不再放手：不该「加速移动」，也不该「陷进电梯里」</h2>
+ *
+ * 用户原话：「为什么玩家在扶梯上按下shift会加速移动？玩家按下shift之后不应该加速移动，
+ * 只是蹲下就行。而且按下shift玩家有可能陷进电梯里」
+ *
+ * <p>两个症状同一个根因：**潜行被写进了 {@code travel} 开头的「整体放手」条件**
+ * （{@code self.isShiftKeyDown()}）⇒ 一按 shift 本模组就把这一 tick 完全交还原版，
+ * 而原版那条路在扶梯上正好有两处已被验证的坏处：
+ * <ol>
+ *   <li><b>「加速移动」</b>：放手后搬运速度不再是本模组的恒定 {@code getSpeed() / 20}
+ *       （默认 1.0 ⇒ <b>0.05 格/tick</b>），而是 <b>MTR 自己的推送</b>。
+ *       MTR 4.0.5 {@code BlockEscalatorStep.onEntityCollision2} 字节码实测 =
+ *       每 tick 对重叠的每个阶梯块 {@code entity.addVelocity(±0.1, 0, 0)}
+ *       （仅 {@code status=true} 时推；轴向与正负由 {@code facing}/{@code direction} 决定，
+ *       四个朝向的对应关系逐条写在字节码里）。它是**累加**的，被地面摩擦（×0.546/tick）平衡后
+ *       稳态约 <b>0.12 格/tick ≈ 2.4 格/秒</b> ⇒ 一按 shift 立刻比接管时的 0.05 快约 <b>2.4 倍</b>。
+ *       （类头【1.38f】「放手期间被搬运的速度 = MTR 默认 speed」一句早就点明了这件事，
+ *       只是当时没意识到潜行也走这条路。）</li>
+ *   <li><b>「陷进电梯里」</b>：放手后脚底由 MTR 的**碰撞箱**决定，它是把 45° 可见斜面近似成
+ *       每半格一阶的楼梯：{@code BlockEscalatorBase.getCollisionShape2} 的 SLOPE / TRANSITION_TOP
+ *       分支 = {@code union(cuboid(0,0,0,16,8,16), getVoxelShapeByDirection(0,8,0,16,15,8,facing))}
+ *       （下 8/16 满板 ∪ 上 7/16 半板，字节码实测），比可见面低最多约半格。
+ *       **更关键的是潜行会关掉原版自动上台阶**（原版 {@code Entity.isSteppingCarefully()} = 潜行），
+ *       而坡段是一级一级的碰撞台阶 ⇒ 蹲着被 MTR 沿轴推、却跨不上那半格 ⇒ 顶在台阶立面上
+ *       「陷进扶梯里」。这也解释了为什么**只有**按 shift 才明显：直立走路时自己能跨上去。</li>
+ * </ol>
+ *
+ * <p><b>修法</b>：把 {@code self.isShiftKeyDown()} 从放手条件里删掉 —— 潜行也照常接管，
+ * 于是「蹲下」只剩它该有的表现（姿态、碰撞箱变矮），搬运仍是本模组的平滑恒定速度、脚仍贴可见面。
+ * 代价与 1.38h 一致：接管期间不走原版物理。**唯一必须自己补的是潜行的减速系数**：
+ * 原版潜行速度 = 普通行走的 <b>30%</b>，而这个系数**不在 {@code getSpeed()} 里**
+ * （它作用在 {@code getSpeed()} 之后），所以显式乘上 {@link #SNEAK_STEP_FACTOR}。
+ * ★ 观感旋钮：想「蹲下但不减速」把该常量改成 {@code 1.0} 即可（单常数、一行）。
  */
 @Mixin(LivingEntity.class)
 public abstract class LivingEntityMixin {
@@ -487,6 +565,17 @@ public abstract class LivingEntityMixin {
     private static final int MAX_WALK_LENGTH = 512;
 
     /**
+     * 【1.38k】原版**潜行**速度系数 = 普通行走的 30%。
+     *
+     * <p>为什么必须自己乘：1.38k 之前潜行是「{@code travel} 开头直接放手」，交给原版算，
+     * 所以那时不需要管；现在潜行也接管了，而**这个系数不在 {@link LivingEntity#getSpeed()} 里**
+     * —— 原版是先取 {@code getSpeed()} 再算位移，潜行的 0.3 作用在后者上。见类头【1.38k】。
+     *
+     * <p><b>★ 观感旋钮</b>：把它改成 {@code 1.0} 就变成「蹲下但不减速」（只管姿态与碰撞箱高度）。
+     */
+    private static final double SNEAK_STEP_FACTOR = 0.3;
+
+    /**
      * 坡段专用悬浮量：MTR 台阶碰撞箱比视觉斜面高约半格，坡段贴面时用半格余量
      * 避免脚部穿进碰撞箱。平台段（LANDING / FLAT / TRANSITION_BOTTOM）可见顶面
      * 就是块顶，站立面必须等于块顶，不能套用该余量。
@@ -500,24 +589,15 @@ public abstract class LivingEntityMixin {
     private static final double ENTRY_RISE = 0.6;
 
     /**
-     * 【1.38g】以下三条从 `smoothlift1.20.4old`（用户收藏的旧版手感）**原样移植**回来：
-     * 到站判定距离、接近端部的线性减速、放手后 40 tick 冷却。
+     * 【1.38j】这里原有 1.38g 从 old 请回来的三条常量 —— {@code ARRIVE_DISTANCE = 0.45}、
+     * {@code SLOWDOWN_DISTANCE = 1.5}、{@code RELEASE_COOLDOWN_TICKS = 40}。
      *
-     * <p>背景：1.32 曾以「末速度会推人 / 减速会渐近卡住 / 冷却是抽搐窗口」为由整条删掉它们，
-     * 1.35 又把到站目标改成「钢板放手」。但用户明确要「old 文件夹里的玩家扶梯移动效果」——
-     * 于是把 old 的到站移交逻辑（含减速与末速度）以原样请回来：
-     * <ul>
-     *   <li>{@code ARRIVE_DISTANCE}：中心距端部目标平台小于此距离即移交原版物理（old 原值 0.45）；</li>
-     *   <li>{@code SLOWDOWN_DISTANCE}：距端部 1.5 格内按剩余距离线性减速（old 原值 1.5 格）；</li>
-     *   <li>{@code RELEASE_COOLDOWN_TICKS}：移交后 40 tick 不再接管（old 原值 40）。</li>
-     * </ul>
-     * ★ 与 1.35 钢板放手共存：站在静态踏板上仍立即放手（那是 MTR 语义，用户后来点名的修复），
-     *   到站移交只对到了尽头的**无钢板**情况（或斜坡/平段末端）兜底。
-     * ★ 1.32 的「去末速度/去减速/去冷却」结论就本条件（old 行为）作废，保留在类头【1.32】里只留档。
+     * <p>用户实测报「到扶梯尽头会被轻轻推一下、平滑的位移会卡顿一下（上下扶梯都有）」，
+     * 症状与 1.32 ① ② 完全同源（原因见类头【1.38j】）⇒ 三条**整条删除**，回到 1.32/1.35 的结论。
+     * 1.38g 的原始说明留档于此：它们是从 `smoothlift1.20.4old` **原样移植**的
+     * 到站判定距离 / 接近端部线性减速 / 放手后 40 tick 冷却；当时以为「与 1.35 钢板放手共存、
+     * 只对无钢板情况兜底」，但那条件从未写进代码，实际会抢在钢板规则前触发。
      */
-    private static final double ARRIVE_DISTANCE = 0.45;
-    private static final double SLOWDOWN_DISTANCE = 1.5;
-    private static final int RELEASE_COOLDOWN_TICKS = 40;
 
     /**
      * 【1.33】踏面节距：玩家**自己走动 / 奔跑**时，把站立高度按这个节距量化成台阶，
@@ -605,14 +685,12 @@ public abstract class LivingEntityMixin {
     private static final Map<String, Boolean> PLAYER_DIRECTION = new ConcurrentHashMap<>();
 
     /**
-     * 【1.38g】放手冷却表（从 old 版移植回来）：装「移交原版物理的时刻」，40 tick 内不再接管。
-     * 键同 {@link #sideKey}（客户端 / 服务端各一份，互不干扰）。
+     * 【1.38j】这里原有 1.38g 的放手冷却表 {@code PLAYER_RELEASE_TIME}（装「移交原版物理的时刻」，
+     * 40 tick 内不再接管）。随到站移交整段删除一起去掉，见类头【1.38j】与【1.32】②。
+     *
+     * <p>顺带修掉 1.38g 移植时留下的一段**未闭合 javadoc**：它从「放手冷却表」讲到一半没有
+     * {@code *&#47;}，把紧跟其后的 {@link #sideKey} 的说明整段吞进了注释里（本来只是难看，不影响编译）。
      */
-    private static final Map<String, Long> PLAYER_RELEASE_TIME = new ConcurrentHashMap<>();
-
-    /**
-     * 【1.38g】放手冷却表（从 old 版移植回来）：装「移交原版物理的时刻」，40 tick 内不再接管。
-     * 键同 {@link #sideKey}（客户端 / 服务端各一份，互不干扰）。
 
     /** 状态表键：把「哪一侧」编进键里，见 {@link #PLAYER_DIRECTION}。 */
     private static String sideKey(LivingEntity entity) {
@@ -645,7 +723,6 @@ public abstract class LivingEntityMixin {
         if (((Player) self).isSpectator()) {
             String spectatorKey = sideKey(self);
             PLAYER_DIRECTION.remove(spectatorKey);
-            PLAYER_RELEASE_TIME.remove(spectatorKey);
             MOD_EXEMPT.remove(spectatorKey);
             return;
         }
@@ -659,8 +736,15 @@ public abstract class LivingEntityMixin {
         //   向下 = 每 tick 沿斜面连续下降（ΔY ≈ 沿轴位移，无 0.5 跳变，像正常下楼梯）。
         // 走 / 跑的手感（踏步声、走路动画、视角摆动）由本模组按原版公式补（见下方接管块），
         // 1.20.1 的「硬」转由「节拍正确的踏步声 + walkDist 视角摆动」承担。
-        // 潜行（shift）、骑乘、离地、上升仍然放手（原版才能防掉边缘 / 给足跳跃物理）。
-        if (self.isPassenger() || self.isFallFlying() || self.isShiftKeyDown()
+        // 【1.38k】潜行（shift）**不再放手**。原来这里用 isShiftKeyDown() 把这一 tick 交给原版，
+        // 但原版那条路在扶梯上有两处坏处（都是用户报过的）：
+        //   ① 搬运速度变成 MTR 自己的推送 getVelocity(...).add(±0.1)/tick，稳态约 0.12 格/tick，
+        //      比本模组恒定的 getSpeed()/20（默认 0.05）快约 2.4 倍 ⇒ 「按 shift 会加速移动」；
+        //   ② 潜行会关掉原版自动上台阶，而 MTR 碰撞箱是每半格一阶的楼梯 ⇒ 坡段上跨不上去、
+        //      顶在台阶立面上 ⇒ 「陷进电梯里」。
+        // 现在潜行也照常接管，只是把玩家自己的输入按原版潜行系数放慢（见下面 selfStep）。
+        // 骑乘 / 鞘翅 / 离地 / 上升仍然放手（原版才能防掉边缘、给足跳跃与飞行物理）。
+        if (self.isPassenger() || self.isFallFlying()
                 || !self.onGround()
                 || self.getDeltaMovement().y > 0.01) {
             PLAYER_DIRECTION.remove(sideKey(self));
@@ -670,21 +754,10 @@ public abstract class LivingEntityMixin {
 
         Level level = self.level();
 
-        // 【1.38g】放手冷却（从 old 版移植回来）：移交原版物理后 40 tick 内不重新接管，
-        // 让玩家在原版物理里把「交接那一步」走稳（old 原装行为）。1.32 曾以「抽搐窗口」删掉它，
-        // 用户点名要 old 效果，照旧恢复 —— 详见类头【1.32】② 与本次改动说明。
-        Long releaseTime = PLAYER_RELEASE_TIME.get(sideKey(self));
-        if (releaseTime != null) {
-            if (level.getGameTime() - releaseTime < RELEASE_COOLDOWN_TICKS) {
-                setPhysicsExempt(self, false);
-                return;
-            }
-            PLAYER_RELEASE_TIME.remove(sideKey(self));
-        }
-
-        // 【1.32】原来这里有一段「放手后 40 tick 内不再接管」的冷却。它没有任何正面作用，
+        // 【1.32】这里在 1.38g 期间被塞回了一段「放手后 40 tick 内不再接管」的冷却，
+        // 1.38j 又删掉了（见类头【1.38j】）。1.32 原本的理由仍然成立：它没有任何正面作用，
         // 却正好把玩家留在「半格沉降的原版物理」里待满 2 秒 —— 抽搐的观感有一半来自它。
-        // 现在只在静态踏板上放手（判据已上移到本方法开头），踏板上不会沉格，冷却也就不需要了。
+        // 现在只在静态踏板上放手（判据就在下两行），踏板上不会沉格，冷却也就不需要了。
 
         BlockPos escalatorPos = findEscalatorBelow(level, self);
         if (escalatorPos == null) {
@@ -707,9 +780,8 @@ public abstract class LivingEntityMixin {
         String key = sideKey(self);
         Direction facing = getFacingProperty(state);
 
-        // 【1.38g】到站目标（从 old 移植回来）：无输入被搬时以端部平台为中心点，
-        // 接近后按 old 逻辑移交原版物理（见下面的到站块）。
-        BlockPos targetPos = null;
+        // 【1.38j】1.38g 在这里还声明了一个 {@code targetPos}（到站目标），随到站移交一起删掉。
+        // 现在只需要「运行轴方向」{@code horizontal}，无 facing 时用两端连线 {@code fallbackDir}。
         Direction horizontal = null;
         Vec3 fallbackDir = null;
 
@@ -739,7 +811,6 @@ public abstract class LivingEntityMixin {
             }
 
             horizontal = up ? facing : facing.getOpposite();
-            targetPos = up ? endpoints[1] : endpoints[0];
         } else {
             BlockPos[] endpoints = findEscalatorEndpoints(level, escalatorPos);
             if (endpoints == null || endpoints.length < 2) {
@@ -775,7 +846,6 @@ public abstract class LivingEntityMixin {
                     lowestPos.getY() + 0.5 - (highestPos.getY() + 0.5),
                     lowestPos.getZ() + 0.5 - (highestPos.getZ() + 0.5)
             ).normalize();
-            targetPos = up ? highestPos : lowestPos;
         }
 
         if (fallbackDir != null && fallbackDir.lengthSqr() < 1.0E-4) {
@@ -792,42 +862,24 @@ public abstract class LivingEntityMixin {
 
         // 【1.38h】玩家自己这一 tick 想走的位移（原版 getInputVector 的等价物）。
         // 有输入也接管（不再放手），把自己的位移叠加到扶梯传送位移上；
-        // selfWalking 决定「踏步声 / 走路动画」以及「到站移交是否生效」。
+        // selfWalking 决定「踏步声 / 走路动画」是否驱动（扶梯的搬运不计入）。
+        // 【1.38k】潜行也接管了 ⇒ 这里必须自己乘原版的潜行减速系数（它不在 getSpeed() 里）。
         double selfStep = self.getSpeed() * SPEED_TO_STEP;
+        if (self.isShiftKeyDown()) {
+            selfStep *= SNEAK_STEP_FACTOR;
+        }
         Vec3 selfMove = inputVector(movementInput, selfStep, self.getYRot());
         boolean selfWalking = selfMove.lengthSqr() > 1.0E-7;
 
         double speed = EscalatorSpeedManager.getSpeed(level, escalatorPos) / 20.0;
 
-        // 【1.38g】到站移交（从 old 原样移植）＋【1.38h】条件收紧为**纯被搬**（!selfWalking）：
-        // 无输入被搬时以端部平台为目标，距端部 SLOWDOWN_DISTANCE 内按剩余距离线性减速，
-        // 进入 ARRIVE_DISTANCE 就移交原版物理（补脚高到平台站立面、给沿运行轴的水平末速度、
-        // 记 40 tick 放手冷却 —— 末速度 / 减速 / 冷却都是 old 原味）。
-        // 玩家自己走 / 跑时**不**触发：不强制减速、不给末速度，让他自由走到钢板上由 1.35 静默放手，
-        // 或横向走出链端由 rideOnSurface 返回 false 放手。
-        double dx = targetPos.getX() + 0.5 - self.getX();
-        double dz = targetPos.getZ() + 0.5 - self.getZ();
-        double horizontalDist = Math.sqrt(dx * dx + dz * dz);
-        if (!selfWalking && horizontalDist < ARRIVE_DISTANCE) {
-            speed *= Math.min(1.0, horizontalDist / SLOWDOWN_DISTANCE);
-            PLAYER_DIRECTION.remove(key);
-            PLAYER_RELEASE_TIME.put(key, level.getGameTime());
-            // 交还原版物理前，把脚底补到目标平台的真实站立面（块顶）之上，
-            // 只上抬、且限幅在自动上台阶高度内，确保不会低于台阶碰撞箱顶面
-            // （脚一旦陷进碰撞箱，原版会把玩家顶回 / 推一下，甚至直接穿下去）。
-            double standY = targetPos.getY() + 1.0 + FLAT_EPSILON;
-            if (self.getY() < standY) {
-                self.setPos(self.getX(), Math.min(standY, self.getY() + ENTRY_RISE), self.getZ());
-            }
-            Vec3 exit = horizontal != null
-                    ? new Vec3(horizontal.getStepX(), 0, horizontal.getStepZ()).scale(speed)
-                    : new Vec3(fallbackDir.x, 0, fallbackDir.z).normalize().scale(speed);
-            self.setDeltaMovement(exit);
-            self.setOnGround(true);
-            self.fallDistance = 0;
-            setPhysicsExempt(self, false);
-            return;
-        }
+        // 【1.38j】这里原有 1.38g 的「到站移交」整段（到站判据 / 线性减速 / 脚高补位 /
+        // 沿轴末速度 / 40 tick 冷却）。它把交接点放在了**会动的过渡块**上（1.31 起
+        // walkToEndpoint 返回的是踏板前那一格），于是「脚被硬抬 0.4 格再落回」「凭空多一个
+        // 水平末速度」这两件事同时发生 = 用户报的「到尽头被推一下 + 平滑位移卡顿一下」。
+        // 已整段删除，回到 1.32/1.35 的结论：**一直贴可见面送，只在静态钢板上静默放手**
+        // （判据在本方法开头，那里脚已与钢板顶齐平、速度恒为 0 ⇒ 零跳变、零冲量）。
+        // 详细成因、仿真数字与「为什么当时没被发现」见类头【1.38j】。
 
         // 接管移动：服务端关闭方块碰撞校验（noPhysics），
         // 使贴视觉面的位置（AABB 与台阶碰撞箱重叠）不会被 handleMovePlayer 拉回。
@@ -892,7 +944,8 @@ public abstract class LivingEntityMixin {
      * 就是原版 {@code Entity.getInputVector} 在做的事（斜向走会被归一化，所以不会更快）。
      *
      * <p>{@code step} 传的是**每 tick 位移**（见 {@link #SPEED_TO_STEP}），不是速度属性值。
-     * 潜行已在上游分支排除（潜行交给原版），所以不用再乘 0.3。
+     * 潜行的 0.3 系数由**调用方**乘（见 {@link #SNEAK_STEP_FACTOR}）——【1.38k】起潜行也接管了，
+     * 不再靠「上游放手交给原版」来回避这件事。
      */
     private static Vec3 inputVector(Vec3 input, double step, float yRot) {
         double len = input.lengthSqr();

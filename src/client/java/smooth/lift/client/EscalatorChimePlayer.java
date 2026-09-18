@@ -80,22 +80,31 @@ import java.util.Set;
  * </ol>
  *
  * <p><b>【1.39】提示音可以换成玩家导入的 OGG 了</b>（{@code /futihelpmusic} + 提示音选择界面）。
- * 数据上是与运行底噪**完全对称**的第二套「音频绑定」（{@code defaultHelpAudio} / {@code blockHelpAudio}），
+ * 数据上是与运行底噪**完全对称**的第二套「音频绑定」
+ * （{@code defaultHelpAudioIn/Out} / {@code blockHelpAudioIn/Out}），
  * 而且**共用同一个导入文件夹与同一份音频库**（{@code <存档>/smoothlift_audio/}）——
  * 导入一次，底噪与提示音两边都能选。取值三种：
  * <ul>
  *   <li>{@link EscalatorSpeedData#HELP_AUDIO_DEFAULT}（{@code default}，初始值，旧存档缺字段也是它）
  *       = **模组原来的提示音**，也就是 1.15~1.34 那套「五档素材 + 速率分档」，行为**逐字节不变**；</li>
- *   <li>{@link EscalatorSpeedData#HELP_AUDIO_OFF}（{@code off}）= 这条扶梯（或整个默认层）**不播提示音** ——
- *       比 {@code /futihelp off} 更细：可以只让某一条扶梯哑掉，而不动其它扶梯；</li>
- *   <li>音频库里的文件名 = 在这条扶梯两端**循环播放**这段自定义音频。</li>
+ *   <li>{@link EscalatorSpeedData#HELP_AUDIO_OFF}（{@code off}）= **这一头**（或整个默认层）**不播提示音** ——
+ *       比 {@code /futihelp off} 更细：可以只让某一条扶梯的某一头哑掉，而不动其它；</li>
+ *   <li>音频库里的文件名 = 在这一头**循环播放**这段自定义音频。</li>
  * </ul>
  * ★ <b>速率只对 {@code default} 生效</b>：自定义音频按**原速**循环播（pitch 恒 1.0）——
  * 速率是靠「换素材 + 调 pitch」实现的（见上面 1.31 那段），而素材是玩家自己的，
  * 没法按 1/4/10/25/50 Hz 分档。音量（{@code /futihelploud}）与范围（{@code /futihelpround}）
  * 对两种选择都照常生效。
  * 于是同一路提示音上现在有**五个独立维度**：开关 / 音量 / 范围 / 速率（只对 default）/ 音乐。
- * 「音乐」同样是**可变条件**，一律逐 tick 现算 + 代次缓存（{@link #helpAudioId}），**绝不进 {@link #describe}**。
+ * 「音乐」同样是**可变条件**，一律逐 tick 现算 + 代次缓存（{@link #helpAudioIds}），**绝不进 {@link #describe}**。
+ *
+ * <p><b>【1.41】「音乐」也分成进 / 出两头了</b>（{@code /futihelpmusic in|out}，形状与
+ * {@code /futihelpspeed in|out} 完全一致）：上面每一条语义都**按端头各来一份** ——
+ * 上客端可以放一段「进站」音、落客端放另一段，两边互不影响；{@code off} 也跟着细到了单头
+ * （只让某一头不播，另一头照常响，见 {@link #updateEnd} / {@link #stopEnd}）。
+ * 取值与缓存方式不变：两头一起查、共用一个代次（{@link #helpAudioIds}）。
+ * ★ <b>旧存档兼容</b>：1.39 的单一字段在 {@code EscalatorSpeedData#fromTag} 里被**同时**
+ * 当作两头初值读入，所以旧存档升级上来听起来与 1.39 **逐字节一致**。
  *
  * 两条音源各**只装在扶梯首、尾那两块扶梯方块上**（各自是「同一位置左右两列」算一块），
  * 所以声音从哪个方向来，就等于扶梯的哪一头在响 ——
@@ -324,12 +333,13 @@ public final class EscalatorChimePlayer {
             new Rates(EscalatorSpeedData.DEFAULT_HELP_SPEED_IN, EscalatorSpeedData.DEFAULT_HELP_SPEED_OUT);
 
     /**
-     * 【1.39】这条扶梯**实际生效**的提示音「音乐」ID 的上次查询结果 + 代次（见 {@link #helpAudioId}），
-     * 缓存策略与开关 / 音量 / 范围 / 速率完全相同。
+     * 【1.41】这条扶梯**实际生效**的提示音「音乐」ID（进 / 出两头）的上次查询结果 + 代次
+     * （见 {@link #helpAudioIds}），缓存策略与开关 / 音量 / 范围 / 速率完全相同。
      */
     private static BlockPos cachedHelpAudioAnchor;
     private static long cachedHelpAudioGeneration = -1L;
-    private static String cachedHelpAudioValue = EscalatorSpeedData.HELP_AUDIO_DEFAULT;
+    private static AudioIds cachedHelpAudioValue =
+            new AudioIds(EscalatorSpeedData.HELP_AUDIO_DEFAULT, EscalatorSpeedData.HELP_AUDIO_DEFAULT);
 
     /** 上一次「该不该响」的判定结果，只用来在状态翻转时打一条日志（不参与播放逻辑）。 */
     private static boolean lastAudible = true;
@@ -358,6 +368,19 @@ public final class EscalatorChimePlayer {
      * @param out 离开扶梯（落客端）那一路，默认 1
      */
     private record Rates(int in, int out) {
+    }
+
+    /**
+     * 【1.41】一条扶梯两头**该放哪段声音**（提示音「音乐」ID）。
+     *
+     * <p>与 {@link Rates} 同样「两头一起查、一起缓存」（同一只同步包、同一个代次）。
+     * 取值范围三种：{@link EscalatorSpeedData#HELP_AUDIO_DEFAULT}（内置素材 + 速率分档）、
+     * {@link EscalatorSpeedData#HELP_AUDIO_OFF}（**这一头**不播）、或音频库里的文件名。
+     *
+     * @param in  进入扶梯（上客端）那一路
+     * @param out 离开扶梯（落客端）那一路
+     */
+    private record AudioIds(String in, String out) {
     }
 
     /**
@@ -427,24 +450,27 @@ public final class EscalatorChimePlayer {
         double range = helpRange(mc, target.anchor);
         // 【1.31】两个端头的速率（Hz）同样逐 tick 现算带代次缓存：/futihelpspeed 改完立刻换速度。
         Rates rates = helpRates(mc, target.anchor);
-        // 【1.39】这两头**放什么声音**同样逐 tick 现算带代次缓存（/futihelpmusic 改完立刻换）：
-        //   default = 内置「咔啪」素材（按速率分档）；自定义音频 = 原速循环；
-        //   `off`（这条扶梯不播）已经在 isAudibleNow 里拦掉了，走不到这里。
-        Sample boardSample = sampleFor(mc, target.anchor, rates.in());
-        Sample alightSample = sampleFor(mc, target.anchor, rates.out());
-        update(mc, End.BOARD, target.boardPos, boardSample,
-                player, "上客端（进入，" + describeSample(boardSample, rates.in()) + "）", volumeFactor, range);
-        update(mc, End.ALIGHT, target.alightPos, alightSample,
-                player, "落客端（离开，" + describeSample(alightSample, rates.out()) + "）", volumeFactor, range);
+        // 【1.41】这两头**各放什么声音**同样逐 tick 现算带代次缓存
+        //（/futihelpmusic in|out 改完立刻换）：default = 内置「咔啪」素材（按速率分档）；
+        //   自定义音频 = 原速循环；某一头是 `off` = **只静掉那一头**（另一头照常响，见 updateEnd）。
+        AudioIds ids = helpAudioIds(mc, target.anchor);
+        updateEnd(mc, End.BOARD, target.boardPos, ids.in(), rates.in(),
+                player, "上客端（进入", volumeFactor, range);
+        updateEnd(mc, End.ALIGHT, target.alightPos, ids.out(), rates.out(),
+                player, "落客端（离开", volumeFactor, range);
     }
 
     /**
-     * 这条扶梯**现在**该不该响：没被停掉（{@code status != false}）且无障碍提示音开关是「开」，
-     * 【1.39】并且这条扶梯的提示音「音乐」不是 {@code off}。
+     * 这条扶梯**现在**该不该响：没被停掉（{@code status != false}）且无障碍提示音开关是「开」。
      *
-     * <p>三个条件都每 tick 现算，绝不做「算一次就缓存到 anchor 不变为止」的处理
+     * <p>★【1.41】这里只管**整条扶梯**层面的两个条件。「**这一头**被设成 {@code off}」是按端头
+     * 单独判的 —— 在 {@link #onClientTick} 里逐端拦（见 {@link #updateEnd}），
+     * 所以只让某一头不响时，另一头照常响。
+     *
+     * <p>两个条件都每 tick 现算，绝不做「算一次就缓存到 anchor 不变为止」的处理
      * （见 {@link #onClientTick}）。★ 提示音音乐是**可变条件**，所以它只能出现在这里
-     * 和 {@link #helpAudioId} 里，**绝不能塞进按 anchor 缓存的 {@link #describe}**（坑 17）。
+     * 和 {@link #helpAudioIds} / {@link #updateEnd} 里，**绝不能塞进按 anchor 缓存的
+     * {@link #describe}**（坑 17）。
      */
     private static boolean isAudibleNow(Minecraft mc, BlockPos anchor) {
         if (mc.level == null) {
@@ -454,10 +480,7 @@ public final class EscalatorChimePlayer {
         if (!EscalatorUtil.getBooleanProperty(state, "status", true)) {
             return false;
         }
-        if (!helpEnabled(mc, anchor)) {
-            return false;
-        }
-        return !EscalatorSpeedData.HELP_AUDIO_OFF.equals(helpAudioId(mc, anchor));
+        return helpEnabled(mc, anchor);
     }
 
     /**
@@ -548,44 +571,80 @@ public final class EscalatorChimePlayer {
     }
 
     /**
-     * 【1.39】这条扶梯**实际生效**的提示音「音乐」ID：单独设置 &gt; 维度默认
-     * （{@code /futihelpmusic}，初始 = {@code default} = 模组原来的提示音）。**永远非 null**。
+     * 【1.41】这条扶梯**实际生效**的提示音「音乐」ID（进 / 出两头）：单独设置 &gt; 维度默认
+     * （{@code /futihelpmusic in|out}，初始 = {@code default} = 模组原来的提示音）。**永远非 null**。
      *
      * <p>取值三种：{@link EscalatorSpeedData#HELP_AUDIO_DEFAULT}（内置素材 + 速率分档）、
-     * {@link EscalatorSpeedData#HELP_AUDIO_OFF}（这条扶梯不播，在 {@link #isAudibleNow} 里拦掉）、
-     * 或音频库里的文件名（在两端循环播放这段自定义音频）。
+     * {@link EscalatorSpeedData#HELP_AUDIO_OFF}（**这一头**不播，在 {@link #updateEnd} 里拦掉）、
+     * 或音频库里的文件名（在这一头循环播放这段自定义音频）。
      *
      * <p>缓存策略与 {@link #helpEnabled} / {@link #helpVolumeFactor} / {@link #helpRange} /
      * {@link #helpRates} 完全一致：只在「客户端镜像换代」或「换了一条扶梯」时才真的去查
      * （查的时候要顺整条链找，每 tick 做没必要）。代次由
-     * {@link EscalatorSpeedManager#applyClientHelpAudio} 递增，所以 {@code /futihelpmusic}
-     * 改完**下一个 tick** 就换声音。
+     * {@link EscalatorSpeedManager#applyClientHelpAudio} 递增，所以 {@code /futihelpmusic in|out}
+     * 改完**下一个 tick** 就换声音。两头共用一次查询、一个代次（同一只同步包）。
      *
      * <p><b>绝不能塞进按 anchor 缓存的 {@link #describe}</b>（坑 17）：那样玩家站在扶梯上不动时
      * 永远读不到新的提示音 —— 表现就是「指令改了没反应」。
      */
-    private static String helpAudioId(Minecraft mc, BlockPos anchor) {
+    private static AudioIds helpAudioIds(Minecraft mc, BlockPos anchor) {
         long generation = EscalatorSpeedManager.clientHelpAudioGeneration();
         if (anchor.equals(cachedHelpAudioAnchor) && generation == cachedHelpAudioGeneration) {
             return cachedHelpAudioValue;
         }
         cachedHelpAudioAnchor = anchor;
         cachedHelpAudioGeneration = generation;
-        cachedHelpAudioValue = EscalatorSpeedManager.effectiveHelpAudioId(mc.level, anchor);
+        cachedHelpAudioValue = new AudioIds(
+                EscalatorSpeedManager.effectiveHelpAudioId(mc.level, anchor, true),
+                EscalatorSpeedManager.effectiveHelpAudioId(mc.level, anchor, false));
         return cachedHelpAudioValue;
     }
 
     /**
-     * 【1.39】这一个端头这次该放的声音：{@code default} 走内置素材 + 速率分档，
+     * 【1.41】这一个端头这次该放的声音：{@code default} 走内置素材 + 速率分档，
      * 其它（自定义音频）走 {@link EscalatorAudioPlayer} 那套解码注入链路、原速循环。
+     *
+     * <p>★ 与 /futihelpspeed 一样，**两头各算各的**：进扶梯那头与出扶梯那头
+     * 可以一段是内置「咔啪」、另一段是玩家导入的 OGG，互不影响。
      */
-    private static Sample sampleFor(Minecraft mc, BlockPos anchor, int hz) {
-        String audioId = helpAudioId(mc, anchor);
+    private static Sample sampleFor(String audioId, int hz) {
         if (EscalatorSpeedData.HELP_AUDIO_DEFAULT.equals(audioId)) {
             return new Sample(chimeEventFor(hz), null, chimePitchFor(hz));
         }
         // 自定义音频：文件名 → 合法资源路径（与底噪共用同一个映射，注入/解析必须一致）。
         return new Sample(EscalatorAudioPlayer.soundLocation(audioId), audioId, 1.0f);
+    }
+
+    /**
+     * 【1.41】维护**一个端头**的提示音：这一头被设成 {@code off}（不播）就停掉它，
+     * 否则按 {@link #update} 正常维护（按距离算增益、按需启动/重建/停掉）。
+     *
+     * <p>★ 这正是 1.41 与 1.39 的差别所在：1.39 的 {@code off} 是「整条扶梯不播」
+     * （在 {@link #isAudibleNow} 里一刀拦掉），现在细到了单头 ——
+     * 可以只让落客端不响、上客端照常响，反过来也行。
+     *
+     * @param endLabel 日志 / 文案里的端头名（不含右括号）：「上客端（进入」/「落客端（离开」
+     */
+    private static void updateEnd(Minecraft mc, End kind, Vec3 pos, String audioId, int hz,
+                                  Vec3 player, String endLabel, float volumeFactor, double range) {
+        if (EscalatorSpeedData.HELP_AUDIO_OFF.equals(audioId)) {
+            stopEnd(mc, kind, endLabel);
+            return;
+        }
+        Sample sample = sampleFor(audioId, hz);
+        update(mc, kind, pos, sample, player,
+                endLabel + "，" + describeSample(sample, hz) + "）", volumeFactor, range);
+    }
+
+    /** 【1.41】停掉某一个端头那一路（这一头被设成 {@code off}）。本来就没在播则什么也不做。 */
+    private static void stopEnd(Minecraft mc, End kind, String endLabel) {
+        ChimeInstance inst = ACTIVE.get(kind);
+        if (inst == null) {
+            return;
+        }
+        mc.getSoundManager().stop(inst);
+        ACTIVE.remove(kind);
+        LOGGER.info("[SmoothLift/Chime] {}）这一路提示音已停（这一头被设为不播）", endLabel);
     }
 
     /** 【1.39】日志文案用：这一头放的是什么（内置素材带速率，自定义音频直接点名）。 */
@@ -1167,10 +1226,11 @@ public final class EscalatorChimePlayer {
         cachedRatesAnchor = null;
         cachedRatesGeneration = -1L;
         cachedRatesValue = new Rates(EscalatorSpeedData.DEFAULT_HELP_SPEED_IN, EscalatorSpeedData.DEFAULT_HELP_SPEED_OUT);
-        // 【1.39】提示音音乐缓存同样要清，否则断线重连后沿用上一个世界的提示音
+        // 【1.41】提示音音乐缓存同样要清，否则断线重连后沿用上一个世界的提示音
         cachedHelpAudioAnchor = null;
         cachedHelpAudioGeneration = -1L;
-        cachedHelpAudioValue = EscalatorSpeedData.HELP_AUDIO_DEFAULT;
+        cachedHelpAudioValue =
+                new AudioIds(EscalatorSpeedData.HELP_AUDIO_DEFAULT, EscalatorSpeedData.HELP_AUDIO_DEFAULT);
         lastAudible = true;
     }
 

@@ -13,18 +13,25 @@ import java.util.List;
 /**
  * 临时校验工具（放在 _tools，不参与打包）：脱离游戏环境把真·指令树（{@link SmoothLift#registerCommands}）
  * 建出来，然后 dump 出各层级的 Tab 补全项，确认 `/futihelp`、`/futihelploud`、`/futiround`、
- * `/futihelpround`、`/futihelpspeed`、`/futihelpmusic`（【1.39】）的每个分支都真的可达。
+ * `/futihelpround`、`/futihelpspeed`、`/futihelpmusic`（【1.39】，【1.41】起带 in|out）的每个分支都真的可达。
  *
  * <p>用法见 _tools/check-command-tree.sh。核心手法是给 {@code dispatcher.parse(input, null)}
  * 传一个 <b>null source</b>：Brigadier 解析与补全只用到指令树本身，不会去碰 source，
  * 所以不需要真的开一个 MC 服务器。
  *
- * <p>⚠️ 两条已知的「不算失败」的 Brigadier 行为，都放在对照区（probe）：
+ * <p>【1.41】还多了一项 <b>{@link #expectSameShape}</b>：把 `/futihelpmusic` 与 `/futihelpspeed`
+ * 的补全结构**逐层对比**（顶层 / in / out / -f / 各层 to …）—— 需求就是「指令细节与
+ * /futihelpspeed 的 in|out **对齐**」，用一条可复跑的断言把它钉住，比人工看 dump 可靠。
+ *
+ * <p>⚠️ 三条已知的「不算失败」的 Brigadier 行为，都放在对照区（probe）：
  * <ol>
  *   <li><b>数值参数不给补全项</b> —— {@code futiround 20 to } 的期望是 {@code []} 而不是 {@code [0]}；</li>
  *   <li><b>根节点自带执行器的指令，后面多打一个词会停在根节点、不报异常</b> ——
- *       {@code /futihelp bogus} 与 {@code /futihelpspeed 5} 都是既有的
- *       「不带参数 = 显示当前值」语义的副作用，别写成 {@code expectNotParsed}。</li>
+ *       {@code /futihelp bogus}、{@code /futihelpspeed 5}、以及【1.41】之后的
+ *       {@code /futihelpmusic default}（忘了写 in|out）都是既有的
+ *       「不带参数 = 显示当前值」语义的副作用，别写成 {@code expectNotParsed}；</li>
+ *   <li><b>字符串参数不给补全项、也不在解析期报错</b> —— 名字（含 {@code -f}、{@code to}）会被
+ *       整个吃掉，真正的报错发生在 {@code resolveHelpAudioName} 里。</li>
  * </ol>
  */
 public final class CmdTreeCheck {
@@ -83,13 +90,22 @@ public final class CmdTreeCheck {
         failures += dump(dispatcher, "futihelpspeed -f out 1 ", "futihelpspeed -f out <Hz> 的下一层");
 
         System.out.println();
-        System.out.println("==================== /futihelpmusic 指令树（【1.39】与 /futimusic 对齐） ====================");
-        failures += dump(dispatcher, "futihelpmusic ", "futihelpmusic 的直接子节点（字符串参数不补全，只有 -f）");
-        failures += dump(dispatcher, "futihelpmusic default ", "futihelpmusic <名字> 的下一层");
-        failures += dump(dispatcher, "futihelpmusic default to ", "futihelpmusic <X> to 的下一层");
-        failures += dump(dispatcher, "futihelpmusic -f ", "futihelpmusic -f 的下一层");
-        failures += dump(dispatcher, "futihelpmusic -f default ", "futihelpmusic -f <名字> 的下一层");
-        failures += dump(dispatcher, "futihelpmusic -f default to ", "futihelpmusic -f <X> to 的下一层");
+        System.out.println("==================== /futihelpmusic 指令树（【1.41】与 /futihelpspeed 的 in|out 对齐） ====================");
+        failures += dump(dispatcher, "futihelpmusic ", "futihelpmusic 的直接子节点（应有 -f / in / out）");
+        failures += dump(dispatcher, "futihelpmusic in ", "futihelpmusic in 的下一层（字符串参数不补全）");
+        failures += dump(dispatcher, "futihelpmusic in default ", "futihelpmusic in <名字> 的下一层");
+        failures += dump(dispatcher, "futihelpmusic in default to ", "futihelpmusic in <X> to 的下一层");
+        failures += dump(dispatcher, "futihelpmusic out default ", "futihelpmusic out <名字> 的下一层");
+        failures += dump(dispatcher, "futihelpmusic out default to ", "futihelpmusic out <X> to 的下一层");
+        failures += dump(dispatcher, "futihelpmusic -f ", "futihelpmusic -f 的下一层（应有 in / out）");
+        failures += dump(dispatcher, "futihelpmusic -f in ", "futihelpmusic -f in 的下一层（字符串参数不补全）");
+        failures += dump(dispatcher, "futihelpmusic -f in default ", "futihelpmusic -f in <名字> 的下一层");
+        failures += dump(dispatcher, "futihelpmusic -f in default to ", "futihelpmusic -f in <X> to 的下一层");
+        failures += dump(dispatcher, "futihelpmusic -f out default ", "futihelpmusic -f out <名字> 的下一层");
+
+        System.out.println();
+        System.out.println("==================== 【1.41】/futihelpmusic 与 /futihelpspeed 形状对齐 ====================");
+        failures += expectSameShape(dispatcher, "futihelpmusic", "futihelpspeed");
 
         System.out.println();
         System.out.println("==================== 期望的补全项 ====================");
@@ -124,16 +140,22 @@ public final class CmdTreeCheck {
         failures += expect(dispatcher, "futihelpspeed -f in 5 to ");
         failures += expect(dispatcher, "futihelpspeed -f out 1 ", "to");
 
-        // 【1.39】/futihelpmusic：结构与 /futimusic 逐层对齐（名字是字符串参数 → 不补全，
-        // 所以顶层只能补出 -f；`to` 之后的 target 同理）。
+        // 【1.41】/futihelpmusic：结构与 /futihelpspeed 逐层对齐（顶层 = -f / in / out，
+        // 每个 in|out 下都是 `<名字> [to <名字>]`；名字是字符串参数 → 不补全）。
         // ★ 这里没有 expectNotParsed：「名字」是 StringArgumentType.string()，会把任何词（含 -f、to）
         //   都当成名字吃掉，所以不存在「打错词就报错」的分支 —— 与 /futimusic 完全一致。
-        failures += expect(dispatcher, "futihelpmusic ", "-f");
-        failures += expect(dispatcher, "futihelpmusic default ", "to");
-        failures += expect(dispatcher, "futihelpmusic default to ");
-        failures += expect(dispatcher, "futihelpmusic -f ");
-        failures += expect(dispatcher, "futihelpmusic -f default ", "to");
-        failures += expect(dispatcher, "futihelpmusic -f default to ");
+        failures += expect(dispatcher, "futihelpmusic ", "-f", "in", "out");
+        failures += expect(dispatcher, "futihelpmusic in ");
+        failures += expect(dispatcher, "futihelpmusic in default ", "to");
+        failures += expect(dispatcher, "futihelpmusic in default to ");
+        failures += expect(dispatcher, "futihelpmusic out default ", "to");
+        failures += expect(dispatcher, "futihelpmusic out default to ");
+        failures += expect(dispatcher, "futihelpmusic -f ", "in", "out");
+        failures += expect(dispatcher, "futihelpmusic -f in ");
+        failures += expect(dispatcher, "futihelpmusic -f in default ", "to");
+        failures += expect(dispatcher, "futihelpmusic -f in default to ");
+        failures += expect(dispatcher, "futihelpmusic -f out default ", "to");
+        failures += expect(dispatcher, "futihelpmusic -f out default to ");
 
         System.out.println();
         System.out.println("==================== 每条完整指令都可执行 ====================");
@@ -180,17 +202,23 @@ public final class CmdTreeCheck {
         failures += expectExecutable(dispatcher, "futihelpspeed -f in 5 to 8");
         failures += expectExecutable(dispatcher, "futihelpspeed -f out 1");
         failures += expectExecutable(dispatcher, "futihelpspeed -f out 1 to 2");
-        // 【1.39】/futihelpmusic：5 种形状都能执行（default / off / 文件名 / to / -f）
+        // 【1.41】/futihelpmusic：进 / 出两套 × 5 种形状都能执行（default / off / 文件名 / to / -f）
         failures += expectExecutable(dispatcher, "futihelpmusic");
-        failures += expectExecutable(dispatcher, "futihelpmusic default");
-        failures += expectExecutable(dispatcher, "futihelpmusic off");
-        failures += expectExecutable(dispatcher, "futihelpmusic example.ogg");
-        failures += expectExecutable(dispatcher, "futihelpmusic default to off");
-        failures += expectExecutable(dispatcher, "futihelpmusic example.ogg to default");
-        failures += expectExecutable(dispatcher, "futihelpmusic -f default");
-        failures += expectExecutable(dispatcher, "futihelpmusic -f off");
-        failures += expectExecutable(dispatcher, "futihelpmusic -f default to example.ogg");
-        failures += expectExecutable(dispatcher, "futihelpmusic -f example.ogg to off");
+        failures += expectExecutable(dispatcher, "futihelpmusic in default");
+        failures += expectExecutable(dispatcher, "futihelpmusic in off");
+        failures += expectExecutable(dispatcher, "futihelpmusic in example.ogg");
+        failures += expectExecutable(dispatcher, "futihelpmusic out default");
+        failures += expectExecutable(dispatcher, "futihelpmusic out off");
+        failures += expectExecutable(dispatcher, "futihelpmusic out example.ogg");
+        failures += expectExecutable(dispatcher, "futihelpmusic in default to off");
+        failures += expectExecutable(dispatcher, "futihelpmusic out example.ogg to default");
+        failures += expectExecutable(dispatcher, "futihelpmusic -f in default");
+        failures += expectExecutable(dispatcher, "futihelpmusic -f in off");
+        failures += expectExecutable(dispatcher, "futihelpmusic -f in default to example.ogg");
+        failures += expectExecutable(dispatcher, "futihelpmusic -f out default");
+        failures += expectExecutable(dispatcher, "futihelpmusic -f out example.ogg to off");
+        // ★ 旧的「裸名字」写法（1.39 的 /futihelpmusic <名字>）在 1.41 已经**不存在**了；
+        //   它现在会停在根节点（不带参数 = 显示当前值），所以只能放对照区 probe，不能写 expectNotParsed。
 
         System.out.println();
         System.out.println("==================== 不该存在的分支 ====================");
@@ -231,7 +259,13 @@ public final class CmdTreeCheck {
         // resolveHelpAudioName 里（"存档里没有叫…的音频"），不是解析期 —— 所以同样只能放对照区。
         probe(dispatcher, "futihelpmusic bogus");
         probe(dispatcher, "futihelpmusic -f");
-        probe(dispatcher, "futihelpmusic default to");
+        probe(dispatcher, "futihelpmusic in");
+        probe(dispatcher, "futihelpmusic in default to");
+        // 【1.41】忘了写 in|out 的旧写法（1.39 的 /futihelpmusic <名字>）：会停在根节点
+        //（= 执行「不带参数就显示当前值」），**不报异常** —— 与 /futihelpspeed 5 同一个
+        // Brigadier 行为（根节点自带执行器），所以只能放对照区。
+        probe(dispatcher, "futihelpmusic default");
+        probe(dispatcher, "futihelpmusic default to off");
 
         System.out.println();
         if (failures == 0) {
@@ -271,6 +305,51 @@ public final class CmdTreeCheck {
         boolean ok = actual.equals(want);
         System.out.println((ok ? "  OK   " : "  FAIL ") + "「" + input + "」 期望 " + want + " 实际 " + actual);
         return ok ? 0 : 1;
+    }
+
+    /**
+     * 【1.41】指令形状对齐校验：把 {@code base}（/futihelpmusic）与 {@code otherBase}（/futihelpspeed）
+     * 在**同一组层级**下的 Tab 补全结果逐条对比，必须完全一致。
+     *
+     * <p>需求是「/futihelpmusic 的 in|out 细节与 /futihelpspeed 对齐（含 -f）」，这条断言把
+     * 「顶层 = -f / in / out」「in|out 下各带 to」这些形状钉死 —— 以后谁把 in/out 挪出 -f 之外、
+     * 或漏掉某一层的 to，这里立刻会红。
+     *
+     * <p>两个指令的参数类型不同（速率是整数、名字是字符串），但**都不给补全项**，所以补全结果恰好可比：
+     * 能补出来的只有字面量（in / out / to / -f）。左边用 {@code a} 当名字占位、右边用 {@code 5}
+     * 当速率占位（必须都是各自合法的值，否则那一层会解析失败、补全为空，比出来就是假红）。
+     */
+    private static int expectSameShape(CommandDispatcher<CommandSourceStack> dispatcher,
+                                       String base, String otherBase) {
+        String[][] layers = {
+                {"", ""},
+                {"in ", "in "},
+                {"in a ", "in 5 "},
+                {"in a to ", "in 5 to "},
+                {"out ", "out "},
+                {"out a ", "out 1 "},
+                {"out a to ", "out 1 to "},
+                {"-f ", "-f "},
+                {"-f in ", "-f in "},
+                {"-f in a ", "-f in 5 "},
+                {"-f in a to ", "-f in 5 to "},
+                {"-f out ", "-f out "},
+                {"-f out a ", "-f out 1 "},
+                {"-f out a to ", "-f out 1 to "},
+        };
+        int bad = 0;
+        for (String[] layer : layers) {
+            List<String> a = completionNames(dispatcher, dispatcher.parse(base + " " + layer[0], null));
+            List<String> b = completionNames(dispatcher, dispatcher.parse(otherBase + " " + layer[1], null));
+            boolean ok = a.equals(b);
+            System.out.println((ok ? "  OK   " : "  FAIL ") + "形状「"
+                    + (layer[0].isEmpty() ? "(顶层)" : layer[0]) + "」 " + base + "=" + a
+                    + " / " + otherBase + "=" + b);
+            if (!ok) {
+                bad++;
+            }
+        }
+        return bad;
     }
 
     private static int expectExecutable(CommandDispatcher<CommandSourceStack> dispatcher, String input) {

@@ -25,11 +25,17 @@ import java.util.List;
  * <ol>
  *   <li><b>默认提示音（模组原声）</b>：= 模组原来的「咔啪」提示音（进扶梯端 10 次/秒、出扶梯端 1 次/秒，
  *       速率可用 {@code /futihelpspeed} 改）。<b>永远排在最顶端</b>（与运行底噪界面把「默认音乐」放最顶一致）。</li>
- *   <li><b>不播提示音</b>：这条扶梯单独哑掉（比 {@code /futihelp off} 更细），其它扶梯不受影响。</li>
+ *   <li><b>不播提示音</b>：这条扶梯**当前这一头**单独哑掉（比 {@code /futihelp off} 更细），其它不受影响。</li>
  *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG（**与运行底噪共用同一个文件夹**）：
  *       点 = 导入存档并设为这条扶梯的提示音（之后删原文件仍可播）。</li>
  *   <li>已存入存档的音频：点名字 = 设为提示音；删除 = 从存档移除。</li>
  * </ol>
+ *
+ * <p>★★【1.41】界面里的每一次「选择 / 清除」都只作用在**当前正在设置的那一头**上
+ * （底部按钮切换「进入扶梯（上客端）」⇄「离开扶梯（落客端）」），与指令
+ * {@code /futihelpmusic in|out} 是同一套数据 —— 于是「进站一段、出站另一段」在界面上也能配。
+ * 进 / 出两头的设置**互不影响**：切换端头只是换一个视图，不会动另一头的数据。
+ * <p>★ 想「改回跟随默认」直接点列表顶端的「默认提示音」行即可（那一行就是默认层）。
  *
  * <p>★ 与运行底噪界面共享同一份音频库，所以「删除」会**同时**影响底噪那边的绑定
  * （底部有一行提示写明了这一点）。
@@ -44,7 +50,7 @@ public class HelpAudioSetupScreen extends Screen {
 
     private static final int ROW_H = 22;          // 每行固定高度（含行间距）
     private static final int LIST_TOP = 50;       // 列表可视区顶部
-    private static final int BOTTOM_RESERVE = 76;  // 底部固定区（跟随默认按钮 + 状态 + 提示）占用的高度
+    private static final int BOTTOM_RESERVE = 96;  // 底部固定区（端头切换 + 状态 + 提示）占用的高度
     private static final int BTN_W = 200;         // 单列按钮宽度
 
     // 行类型
@@ -77,9 +83,15 @@ public class HelpAudioSetupScreen extends Screen {
     /** 四段拼成的扁平行列表（每次刷新重建）。 */
     private final List<Row> rows = new ArrayList<>();
 
-    /** 这条扶梯**实际生效**的提示音 ID（单独设置 &gt; 维度默认；永远不会是 null）。 */
+    /**
+     * 【1.41】当前**正在设置哪一头**：true = 进入扶梯（上客端），false = 离开扶梯（落客端）。
+     * 列表里点的每一次选择 / 清除都只作用在这一头上；右下角按钮切换它。
+     */
+    private boolean editIn = true;
+
+    /** 这条扶梯**当前这一头实际生效**的提示音 ID（单独设置 &gt; 维度默认；永远不会是 null）。 */
     private String effectiveAudioId = EscalatorSpeedData.HELP_AUDIO_DEFAULT;
-    /** 上面那个 ID 是不是「本扶梯单独设置」的（否则来自默认层）。只影响文案。 */
+    /** 上面那个 ID 是不是「本扶梯这一头单独设置」的（否则来自默认层）。只影响文案。 */
     private boolean individualAudio;
     /** 这条扶梯的提示音音量（1~1000；100 = 原始音量），仅用于回显。 */
     private int boundVolume = EscalatorSpeedData.DEFAULT_HELP_VOLUME;
@@ -121,14 +133,9 @@ public class HelpAudioSetupScreen extends Screen {
     protected void init() {
         OPEN = this;
         Minecraft mc = Minecraft.getInstance();
-        // 回显「这条扶梯实际会播什么」，而不是「本方块自己设了什么」——单独设置优先，其次默认层。
-        effectiveAudioId = mc.level == null
-                ? EscalatorSpeedData.HELP_AUDIO_DEFAULT
-                : EscalatorSpeedManager.effectiveHelpAudioId(mc.level, pos);
-        individualAudio = mc.level != null && EscalatorSpeedManager.hasIndividualHelpAudio(mc.level, pos);
-        boundVolume = mc.level == null
-                ? EscalatorSpeedData.DEFAULT_HELP_VOLUME
-                : EscalatorSpeedManager.getHelpVolume(mc.level, pos);
+        // 【1.41】回显「**当前这一头**实际会播什么」，而不是「本方块自己设了什么」——
+        // 单独设置优先，其次默认层。
+        refreshEndState();
 
         stored.clear();
         pending.clear();
@@ -140,6 +147,27 @@ public class HelpAudioSetupScreen extends Screen {
         Collections.sort(pending);
 
         buildUi();
+    }
+
+    /**
+     * 【1.41】重新回显「**当前正在设置的那一头**实际会播什么」：
+     * 单独设置优先，其次维度默认层。切换端头 / 收到同步 / 点完按钮后都会走这里。
+     */
+    private void refreshEndState() {
+        Minecraft mc = Minecraft.getInstance();
+        effectiveAudioId = mc.level == null
+                ? EscalatorSpeedData.HELP_AUDIO_DEFAULT
+                : EscalatorSpeedManager.effectiveHelpAudioId(mc.level, pos, editIn);
+        individualAudio = mc.level != null
+                && EscalatorSpeedManager.hasIndividualHelpAudio(mc.level, pos, editIn);
+        boundVolume = mc.level == null
+                ? EscalatorSpeedData.DEFAULT_HELP_VOLUME
+                : EscalatorSpeedManager.getHelpVolume(mc.level, pos);
+    }
+
+    /** 【1.41】当前端头在界面上的短名（「进入扶梯」/「离开扶梯」）。 */
+    private String endLabel() {
+        return editIn ? "进入扶梯" : "离开扶梯";
     }
 
     /** 清空并重建控件（滚动、删除、同步回调后都会走到这里）。 */
@@ -183,13 +211,16 @@ public class HelpAudioSetupScreen extends Screen {
             }
         }
 
-        // 底部：清掉这条扶梯的单独设置（回到默认层）
-        addRenderableWidget(Button.builder(Component.literal("跟随默认（清除单独设置）"), button -> {
-            FriendlyByteBuf buf = PacketByteBufs.create();
-            buf.writeBlockPos(pos);
-            ClientPlayNetworking.send(SmoothLift.UNBIND_HELP_AUDIO_CHANNEL, buf);
-            setStatus("已请求改回跟随默认");
-        }).bounds(this.width / 2 - 90, this.height - BOTTOM_RESERVE + 6, 180, 20).build());
+        // 【1.41】底部：切换「正在设置的那一头」（只换视图，不动任何一头的数据）。
+        // 原来是「跟随默认（清这一头）」+「设置端头」两只 130 宽的并排按钮；
+        // 「跟随默认」那只已按需求从界面上撤掉（回默认改用列表顶端的「默认提示音」行），
+        // 于是这里把「设置端头」恢复成与列表同一套的常规宽度（BTN_W）并居中，
+        // 正好占满原先两只按钮让出来的位置。
+        addRenderableWidget(Button.builder(
+                Component.literal("设置端头：" + endLabel()), button -> {
+            editIn = !editIn;
+            init();
+        }).bounds(this.width / 2 - BTN_W / 2, this.height - BOTTOM_RESERVE + 6, BTN_W, 20).build());
     }
 
     /**
@@ -250,13 +281,14 @@ public class HelpAudioSetupScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
-    /** 把一个音频（默认提示音 / 不播 / 已存档的某段）设为这条扶梯的提示音。 */
+    /** 【1.41】把一个音频（默认提示音 / 不播 / 已存档的某段）设为这条扶梯**当前这一头**的提示音。 */
     private void setHelpAudio(String id) {
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeBlockPos(pos);
         buf.writeUtf(id, 128);
+        buf.writeBoolean(editIn);
         ClientPlayNetworking.send(SmoothLift.BIND_HELP_AUDIO_CHANNEL, buf);
-        setStatus("已选择：" + truncate(helpAudioLabel(id), 20));
+        setStatus("已选择「" + endLabel() + "」：" + truncate(helpAudioLabel(id), 18));
     }
 
     /** 从存档删除一段音频（服务端会同时解绑引用它的扶梯 —— 底噪与提示音两边都解）。 */
@@ -269,29 +301,24 @@ public class HelpAudioSetupScreen extends Screen {
         setStatus("已请求删除：" + truncate(name, 20) + "（底噪与提示音的引用都会解绑）");
     }
 
-    /** 把存档文件夹里的一个文件导入到存档并设为这条扶梯的提示音（之后删原文件仍可播）。 */
+    /** 把存档文件夹里的一个文件导入到存档并设为这条扶梯**当前这一头**的提示音（之后删原文件仍可播）。 */
     private void importFolderAudio(String name) {
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeBlockPos(pos);
         buf.writeUtf(name, 128);
+        buf.writeBoolean(editIn);
         ClientPlayNetworking.send(SmoothLift.IMPORT_FOLDER_HELP_AUDIO_CHANNEL, buf);
         pending.remove(name);
         buildUi();
-        setStatus("正在从文件夹导入并设为提示音：" + truncate(name, 20));
+        setStatus("正在从文件夹导入并设为「" + endLabel() + "」的提示音：" + truncate(name, 16));
     }
 
     /** 回到渲染线程刷新反馈文字与设置回显。 */
     private void setStatus(String text) {
         Minecraft.getInstance().execute(() -> {
             this.statusText = text;
-            Minecraft mc = Minecraft.getInstance();
-            this.effectiveAudioId = mc.level == null
-                    ? EscalatorSpeedData.HELP_AUDIO_DEFAULT
-                    : EscalatorSpeedManager.effectiveHelpAudioId(mc.level, pos);
-            this.individualAudio = mc.level != null && EscalatorSpeedManager.hasIndividualHelpAudio(mc.level, pos);
-            this.boundVolume = mc.level == null
-                    ? EscalatorSpeedData.DEFAULT_HELP_VOLUME
-                    : EscalatorSpeedManager.getHelpVolume(mc.level, pos);
+            // 【1.41】回显按「当前这一头」刷新（editIn 可能刚被切过）
+            refreshEndState();
         });
     }
 
@@ -343,23 +370,24 @@ public class HelpAudioSetupScreen extends Screen {
             guiGraphics.fill(barX, thumbY, barX + 4, thumbY + thumbH, 0xFFAAAAAA);
         }
 
-        // 无反馈时这一行显示设置状态；有反馈时换成黄色反馈文字。
-        int statusY = this.height - BOTTOM_RESERVE + 30;
+        // 无反馈时这一行显示「当前正在设置的那一头」的设置状态；有反馈时换成黄色反馈文字。
+        int statusY = this.height - BOTTOM_RESERVE + 36;
         String info = statusText;
         if (info == null) {
-            String prefix = individualAudio ? "本扶梯单独设置：" : "跟随默认：";
-            info = prefix + truncate(helpAudioLabel(effectiveAudioId), 22) + "　音量 " + boundVolume + "%";
+            String prefix = individualAudio ? "单独设置：" : "跟随默认：";
+            info = endLabel() + "　" + prefix + truncate(helpAudioLabel(effectiveAudioId), 18)
+                    + "　音量 " + boundVolume + "%";
         }
         guiGraphics.drawCenteredString(this.font, Component.literal(info), this.width / 2, statusY,
                 statusText == null ? 0x808080 : 0xFFFF55);
 
         guiGraphics.drawCenteredString(this.font,
-                Component.literal("自定义提示音按原速循环播（/futihelpspeed 只对「默认提示音」生效）；音量与范围照常生效"),
+                Component.literal("自定义提示音按原速循环播（速率只对「默认提示音」生效）；进 / 出两头各设各的"),
                 this.width / 2, statusY + 16, 0x808080);
         guiGraphics.drawCenteredString(this.font,
                 Component.literal(maxScroll > 0
-                        ? "音频与运行底噪共用同一个文件夹 / 同一个库，删除会同时解绑底噪（滚轮可滚动列表）"
-                        : "音频与运行底噪共用同一个文件夹 / 同一个库，删除会同时解绑底噪"),
+                        ? "音频与运行底噪共用同一个库，删除会同时解绑底噪（滚轮可滚动列表）"
+                        : "音频与运行底噪共用同一个库，删除会同时解绑底噪"),
                 this.width / 2, statusY + 30, 0x808080);
     }
 
