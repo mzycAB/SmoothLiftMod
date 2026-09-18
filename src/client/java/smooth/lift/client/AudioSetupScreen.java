@@ -1,11 +1,13 @@
 package smooth.lift.client;
 
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
@@ -15,6 +17,7 @@ import smooth.lift.network.ImportFolderAudioPayload;
 import smooth.lift.network.RequestSyncPayload;
 import smooth.lift.network.UnbindAudioPayload;
 
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -22,11 +25,13 @@ import java.util.List;
 /**
  * 石斧界面里的「选择扶梯音乐」子界面。列表从上到下三段：
  * <ol>
- *   <li>① <b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
+ *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li><b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
  *       由模组自己的 {@code sounds.json} 注册）。点一下即绑定，<b>不需要玩家准备任何文件、也不需要 ffmpeg</b>。</li>
- *   <li>② 已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
- *   <li>③ 存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li>已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
  * </ol>
+ * 【1.38】段与段之间的说明文字已按用户要求删掉（只保留最上面那一行「文件夹待导入」提示），
+ * 三段的区别靠行本身的形态区分：待导入=歌名、内置=显示名、已存入=右边多一个「删除」按钮。
  * 行数可能超过一屏，支持鼠标滚轮滚动；列表右侧有滚动条。
  * 界面在按钮点击后保持打开，只在按 ESC 或「返回」时回到设置界面。
  */
@@ -190,31 +195,40 @@ public class AudioSetupScreen extends Screen {
         }).bounds(this.width / 2 - 60, this.height - BOTTOM_RESERVE + 6, 120, 20).build());
     }
 
-    /** 把三段列表拼成扁平行列表，并重算滚动范围。 */
+    /**
+     * 把三段列表拼成扁平行列表，并重算滚动范围。
+     *
+     * <p>【1.38d】行顺序按用户要求再调：**「默认音乐」永远排在最顶端，它下面才是导入的音乐**。
+     * 「默认音乐」= {@link #builtin}（模组内置音频，装完模组就有、不依赖存档 / 文件夹 / 同步），
+     * 它自己一条就是玩家能立刻点的那一项；「导入的音乐」= {@link #pending}（存档文件夹里待导入）
+     * + {@link #stored}（已存入存档）。
+     *
+     * <p>【1.38】的调整仍然保留：删掉了「① 模组内置音频…」「② 已存入存档的音频…」两段介绍文字
+     * （行本身的形态已经能区分三段：待导入=歌名、内置=显示名、已存入=右边多一个「删除」按钮）。
+     * ★ 拼装机制没变：三种行类型（{@code T_BUILTIN} / {@code T_STORED} / {@code T_PENDING}）
+     * 与各自的点击行为仍各管各的（见 {@link #buildUi()}）。
+     */
     private void rebuildRows() {
         rows.clear();
 
-        rows.add(new Row(T_HEADER, null, "① 模组内置音频（装了模组就自带，点一下即绑定）"));
+        // 第一段（最上端、位置固定）：模组内置音频 =「默认音乐」，永远可用。
         for (String id : builtin) {
             rows.add(new Row(T_BUILTIN, id, EscalatorSpeedManager.displayName(id)));
         }
 
-        rows.add(new Row(T_HEADER, null, "② 已存入存档的音频（左=绑定；右=删除）"));
-        if (stored.isEmpty()) {
-            rows.add(new Row(T_NOTE, null, "（暂无）"));
-        } else {
-            for (String id : stored) {
-                rows.add(new Row(T_STORED, id, id));
-            }
-        }
-
-        rows.add(new Row(T_HEADER, null, "③ 存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
+        // 第二段：存档文件夹里的 OGG（玩家自己导入的音乐），点=导入并绑定。
+        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {
             for (String id : pending) {
                 rows.add(new Row(T_PENDING, id, id));
             }
+        }
+
+        // 第三段：已存入存档的音频（点名字=绑定；右边的「删除」=从存档移除）。
+        for (String id : stored) {
+            rows.add(new Row(T_STORED, id, id));
         }
 
         int total = rows.size() * ROW_H;
@@ -349,8 +363,8 @@ public class AudioSetupScreen extends Screen {
                 this.width / 2, statusY + 16, 0x808080);
         guiGraphics.drawCenteredString(this.font,
                 Component.literal(maxScroll > 0
-                        ? "音量在上一页「扶梯设置」里调（滚轮可滚动列表）；离开整条扶梯 16 格内才听得见"
-                        : "音量在上一页「扶梯设置」里调；离开整条扶梯 16 格内才听得见"),
+                        ? "音量（底噪/提示音）都在上一页「扶梯设置」里调（滚轮可滚动列表）；底噪离开整条扶梯 16 格内才听得见"
+                        : "音量（底噪/提示音）都在上一页「扶梯设置」里调；底噪离开整条扶梯 16 格内才听得见"),
                 this.width / 2, statusY + 30, 0x808080);
     }
 
