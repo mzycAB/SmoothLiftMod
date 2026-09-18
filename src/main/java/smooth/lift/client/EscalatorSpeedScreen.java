@@ -26,7 +26,10 @@ import smooth.lift.network.SetVolumePacket;
  *   <li>「扶梯速度」——这条扶梯的运行速度；</li>
  *   <li>「阶梯速度」——这条扶梯的阶梯动画速度；</li>
  *   <li>「阶梯速度对齐扶梯速度」——把阶梯速度框填成扶梯速度框的值；</li>
- *   <li>「声音设置…」——进入自定义声音子界面（绑定/解绑 OGG 音频）。</li>
+ *   <li>「声音设置…」——进入自定义声音子界面（给这条扶梯的运行底噪绑定/解绑 OGG 音频）；</li>
+ *   <li>【1.39】「提示音设置…」——进入无障碍提示音子界面（选这条扶梯两端放什么提示音：
+ *       模组原声 / 不播 / 导入的 OGG，与底噪**共用同一个导入文件夹**）；</li>
+ *   <li>「无障碍：开/关」——这条扶梯的无障碍提示音总开关。</li>
  * </ul>
  *
  * <p>【1.9】声音部分：
@@ -124,14 +127,20 @@ public class EscalatorSpeedScreen extends Screen {
         helpVolumeInput.setFilter(text -> text.isEmpty() || text.chars().allMatch(Character::isDigit));
         addRenderableWidget(helpVolumeInput);
 
-        // 【1.7】自定义声音：音乐选择子界面入口
+        // 【1.7】自定义声音：运行底噪的音乐选择子界面入口
+        // 【1.39】同一行再并排一个「提示音设置…」—— 无障碍提示音现在也能导入自定义 OGG。
+        //   两者共用同一个导入文件夹与同一份音频库（导入一次两边都能选），只是
+        //   「哪段声音用在哪儿」是两套独立数据。三个按钮各 64 宽（共 200，与上面的输入框同宽）、间距 4。
         addRenderableWidget(Button.builder(Component.literal("声音设置…"), button -> openAudioSetup())
-                .bounds(this.width / 2 - 100, 150, 96, 20)
+                .bounds(this.width / 2 - 100, 150, 64, 20)
+                .build());
+        addRenderableWidget(Button.builder(Component.literal("提示音设置…"), button -> openHelpAudioSetup())
+                .bounds(this.width / 2 - 32, 150, 64, 20)
                 .build());
 
         // 【1.16】无障碍提示音开关：点一下切换，按 ESC 退出时与其他改动一起发出去
         helpButton = Button.builder(helpLabel(), button -> toggleHelp())
-                .bounds(this.width / 2 + 4, 150, 96, 20)
+                .bounds(this.width / 2 + 36, 150, 64, 20)
                 .build();
         addRenderableWidget(helpButton);
 
@@ -158,6 +167,15 @@ public class EscalatorSpeedScreen extends Screen {
     private void openAudioSetup() {
         applyChanges();
         Minecraft.getInstance().setScreen(new AudioSetupScreen(pos));
+    }
+
+    /**
+     * 【1.39】打开「选择无障碍提示音」子界面（本界面被替换掉，返回时由提示音界面重建）。
+     * 同样先把改动发出去，理由与 {@link #openAudioSetup()} 一样。
+     */
+    private void openHelpAudioSetup() {
+        applyChanges();
+        Minecraft.getInstance().setScreen(new HelpAudioSetupScreen(pos));
     }
 
     /** 这条扶梯当前的运行速度（未单独设置就是维度默认）。 */

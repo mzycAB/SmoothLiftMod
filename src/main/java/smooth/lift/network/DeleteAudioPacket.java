@@ -41,6 +41,8 @@ public class DeleteAudioPacket {
             if (EscalatorSpeedManager.deleteAudio(level, pkt.audioId)) {
                 player.displayClientMessage(Component.literal("已从存档删除音频（引用它的扶梯已静音）"), true);
                 EscalatorSpeedManager.syncAudioToAll(player.server);
+                // 【1.39】提示音那边也可能引用过这一段（共用同一个库），单独设置也要一起刷新
+                EscalatorSpeedManager.syncHelpAudioToAll(player.server);
             }
         });
         context.setPacketHandled(true);

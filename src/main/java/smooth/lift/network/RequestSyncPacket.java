@@ -42,6 +42,10 @@ public class RequestSyncPacket {
             EscalatorSpeedManager.sendHelpVolumeSyncTo(player, player.serverLevel());
             EscalatorSpeedManager.sendRoundSyncTo(player, player.serverLevel());
             EscalatorSpeedManager.sendHelpRoundSyncTo(player, player.serverLevel());
+            // 【1.31/1.41】提示音速率与提示音音乐是两条独立的小包，同样要补发 ——
+            //   否则刚进世界时客户端会按默认值播（用 /futihelpspeed、/futihelpmusic 改过的设置看不到）。
+            EscalatorSpeedManager.sendHelpSpeedSyncTo(player, player.serverLevel());
+            EscalatorSpeedManager.sendHelpAudioSyncTo(player, player.serverLevel());
         });
         context.setPacketHandled(true);
     }

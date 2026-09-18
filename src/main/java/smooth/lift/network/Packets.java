@@ -133,5 +133,32 @@ public final class Packets {
                 .decoder(HelpRoundSyncPacket::decode)
                 .consumerMainThread(HelpRoundSyncPacket::handle)
                 .add();
+        // 【1.31】无障碍提示音速率（进 / 出两套合成一只包）：只有服务端 -> 客户端
+        CHANNEL.messageBuilder(HelpSpeedSyncPacket.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(HelpSpeedSyncPacket::encode)
+                .decoder(HelpSpeedSyncPacket::decode)
+                .consumerMainThread(HelpSpeedSyncPacket::handle)
+                .add();
+        // 【1.41】无障碍提示音音乐（进 / 出两套合成一只包）：服务端 -> 客户端 + 客户端 -> 服务端
+        CHANNEL.messageBuilder(HelpAudioSyncPacket.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(HelpAudioSyncPacket::encode)
+                .decoder(HelpAudioSyncPacket::decode)
+                .consumerMainThread(HelpAudioSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(BindHelpAudioPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(BindHelpAudioPacket::encode)
+                .decoder(BindHelpAudioPacket::decode)
+                .consumerMainThread(BindHelpAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(UnbindHelpAudioPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(UnbindHelpAudioPacket::encode)
+                .decoder(UnbindHelpAudioPacket::decode)
+                .consumerMainThread(UnbindHelpAudioPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(ImportFolderHelpAudioPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ImportFolderHelpAudioPacket::encode)
+                .decoder(ImportFolderHelpAudioPacket::decode)
+                .consumerMainThread(ImportFolderHelpAudioPacket::handle)
+                .add();
     }
 }

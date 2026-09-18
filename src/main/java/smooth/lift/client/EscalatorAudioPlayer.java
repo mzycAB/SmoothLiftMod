@@ -587,6 +587,29 @@ public final class EscalatorAudioPlayer {
     }
 
     /**
+     * 【1.39】把一段存档音频注入声音引擎缓存 —— 供**无障碍提示音**播放器复用同一套解码链路
+     * （{@link EscalatorChimePlayer} 里选择自定义提示音时走这里，而不是另写一份解码）。
+     *
+     * <p>与底噪走完全同一条路：Ogg Vorbis 解码 → 塞进 {@code soundBuffers.cache}
+     * （key 必须等于 {@code Sound.getPath()}）→ 播放器自己造 {@code Sound} 绕过 sounds.json 查找。
+     *
+     * <p>★ 已经解码失败过的音频直接返回 false，**不再重试** —— 提示音是每 tick 调用的，
+     * 每 tick 重试会把日志刷爆（底噪那边靠 {@link #DECODE_FAILED} 达到同样效果）。
+     *
+     * @return 是否可用（缓存里已有同样算可用）
+     */
+    static boolean injectAudio(Minecraft mc, String audioId) {
+        if (audioId == null || mc == null || mc.level == null || DECODE_FAILED.contains(audioId)) {
+            return false;
+        }
+        byte[] bytes = EscalatorSpeedManager.getAudioBytes(mc.level, audioId);
+        if (bytes == null) {
+            return false;
+        }
+        return inject(mc, audioId, bytes);
+    }
+
+    /**
      * 音频 ID（= 存档音频文件夹里的文件名）可能包含大写字母、空格或中文，
      * 这种字符串直接塞进 {@link ResourceLocation} 会抛 {@code ResourceLocationException}
      * 并让客户端在渲染线程崩掉。这里把 ID 映射成合法且互不相同的路径：
@@ -595,7 +618,7 @@ public final class EscalatorAudioPlayer {
      *
      * @return 声音事件的 location（不含前缀与扩展名，如 {@code smoothlift:audio/a_b_1a2b3c4d}）
      */
-    private static ResourceLocation soundLocation(String audioId) {
+    static ResourceLocation soundLocation(String audioId) {
         StringBuilder path = new StringBuilder("audio/a");
         int limit = Math.min(audioId.length(), 48);
         for (int i = 0; i < limit; i++) {

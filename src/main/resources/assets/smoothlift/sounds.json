@@ -13,5 +13,20 @@
     "sounds": [
       { "name": "smoothlift:audio/escalator_chime_alight", "stream": false }
     ]
+  },
+  "audio/escalator_chime_rate4": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate4", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_rate25": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate25", "stream": false }
+    ]
+  },
+  "audio/escalator_chime_rate50": {
+    "sounds": [
+      { "name": "smoothlift:audio/escalator_chime_rate50", "stream": false }
+    ]
   }
 }

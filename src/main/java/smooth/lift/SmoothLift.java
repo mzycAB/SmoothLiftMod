@@ -182,6 +182,56 @@ public class SmoothLift {
                         .executes(SmoothLift::futiHelpRoundFromTo))))
             .then(futiHelpRoundForce("-f"))
         );
+
+        // /futihelpspeed：无障碍**提示音**的速率（每秒响几次，单位 Hz，范围 1~50）。
+        //   （无参数）            -> 显示当前扶梯进 / 出两头的速率
+        //   in|out <Hz>           -> 默认速率 = Hz（单独设置过的扶梯不变）
+        //   in|out <X> to <Y>     -> 默认速率正好是 X 时才改成 Y（单独设置的一律不动）
+        //   -f in|out <Hz>        -> 强制游戏内所有扶梯该端速率 = Hz（清掉单独设置）
+        //   -f in|out <X> to <Y>  -> 把所有该端速率正好是 X 的扶梯改成 Y
+        // ★ 进 / 出是**两套独立数据**，所以子命令写在 in|out 里（与 /futihelpmusic 完全同形）。
+        // 速率范围与素材分档见 EscalatorSpeedData.HELP_SPEED_MIN/MAX 与 EscalatorChimePlayer。
+        event.getDispatcher().register(Commands.literal("futihelpspeed")
+            .executes(SmoothLift::futiHelpSpeedShow)
+            .then(Commands.literal("in")
+                .then(Commands.argument("hz", helpSpeedArg())
+                    .executes(context -> futiHelpSpeedGlobal(context, true))
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", helpSpeedArg())
+                            .executes(context -> futiHelpSpeedFromTo(context, true))))))
+            .then(Commands.literal("out")
+                .then(Commands.argument("hz", helpSpeedArg())
+                    .executes(context -> futiHelpSpeedGlobal(context, false))
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", helpSpeedArg())
+                            .executes(context -> futiHelpSpeedFromTo(context, false))))))
+            .then(futiHelpSpeedForce("-f"))
+        );
+
+        // /futihelpmusic：无障碍**提示音**的音乐（进 / 出各放各的，与运行底噪 /futimusic 是两个东西）。
+        //   （无参数）                -> 显示这条扶梯两头当前用的提示音
+        //   in|out <名字>             -> 默认提示音 = 名字（单独设置过的扶梯不变）
+        //   in|out <X> to <Y>         -> 默认提示音正好是 X 时才改成 Y
+        //   -f in|out <名字>          -> 强制游戏内所有扶梯该端提示音 = 名字（清掉单独设置）
+        //   -f in|out <X> to <Y>      -> 把所有该端提示音为 X 的扶梯改成 Y
+        // 名字：default = 模组原来的提示音（速率见 /futihelpspeed）、off = 这一头不播、
+        //       其它 = 音频库里的文件名（与 /futimusic 共用同一个导入文件夹，导入一次两边都能选）。
+        event.getDispatcher().register(Commands.literal("futihelpmusic")
+            .executes(SmoothLift::futiHelpMusicShow)
+            .then(Commands.literal("in")
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .executes(context -> futiHelpMusicSet(context, true))
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", StringArgumentType.string())
+                            .executes(context -> futiHelpMusicFromTo(context, true))))))
+            .then(Commands.literal("out")
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .executes(context -> futiHelpMusicSet(context, false))
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", StringArgumentType.string())
+                            .executes(context -> futiHelpMusicFromTo(context, false))))))
+            .then(futiHelpMusicForce("-f"))
+        );
     }
 
 
@@ -195,7 +245,13 @@ public class SmoothLift {
         // 【1.30】玩家拿着扶梯物品右键 = 正在放/延长扶梯。MTR 是自己在 useOnBlock 里
         // setBlockState 的，不会触发 Forge 的放置事件，所以这里只记下点了哪一格，
         // 下一个服务端刻（见 onServerTick）再去看实际落了哪些方块、把整条链的单独设置补齐。
-        if (isEscalatorItem(event.getItemStack())) {
+        //
+        // 触发条件放宽到「拿着扶梯物品 **或** 右键点到的就是扶梯方块」：后者覆盖
+        // 「拿方块物品把敲掉的那一格补回去」这类路径（此时手上不是扶梯物品，
+        // 旧条件会漏掉）。补扫是幂等的 —— 链上本来就一致时 reconcileChain 返回 false，
+        // 不写数据也不发包，所以放宽不会带来额外开销。
+        if (isEscalatorItem(event.getItemStack())
+                || EscalatorUtil.isEscalator(event.getLevel().getBlockState(event.getPos()))) {
             EscalatorSpeedManager.scheduleChainReconcile(event.getLevel(), event.getPos());
         }
         if (event.getEntity().getMainHandItem().is(Items.STONE_AXE)
@@ -643,6 +699,343 @@ public class SmoothLift {
     }
 
 
+    // ------------------------------------------------------------------
+    // 【1.31】/futihelpspeed in|out <Hz>：无障碍提示音的**速率**（每秒响几次）
+    // 【1.41】/futihelpmusic in|out <名字>：无障碍提示音的**音乐**（进 / 出各放各的）
+    //
+    // 与 /futiloud、/futihelpround 同一套写法（显示 / 设默认 / X to Y / -f）。
+    // 指令树形状也刻意与 /futihelpspeed 完全一致（各 14 层），便于同时记两条。
+    // ------------------------------------------------------------------
+
+    // ------------------------------------------------------------------
+    // 【1.31】/futihelpspeed —— 无障碍提示音的**速率**（每秒响几次，单位 Hz）
+    //
+    //   与上面三个提示音指令凑成完整一套、互不影响：
+    //     /futihelp      开关    -> 响不响
+    //     /futihelploud  音量    -> 多响
+    //     /futihelpround 范围    -> 多远还听得见
+    //     本指令         速率    -> 响得多快
+    //   ★ 与 /futiround（整条扶梯的运行底噪）是两件事：本指令只管端头**单块**那路提示音。
+    //   ★ 有 `in`（进入扶梯 / 上客端）与 `out`（离开扶梯 / 落客端）两个子命令，各是一套数据。
+    //   ★ 速率靠「换素材 + 调 pitch」实现（原版把 pitch 夹在 [0.5,2.0]），
+    //     所以区间是 1~100 Hz（【1.34】上限由 20 提到 100），见 EscalatorSpeedData#HELP_SPEED_MAX。
+    // ------------------------------------------------------------------
+
+    /** /futihelpspeed 的速率参数：{@link EscalatorSpeedData#HELP_SPEED_MIN}~{@link EscalatorSpeedData#HELP_SPEED_MAX} Hz（每秒响几次）。 */
+    private static IntegerArgumentType helpSpeedArg() {
+        return IntegerArgumentType.integer(EscalatorSpeedData.HELP_SPEED_MIN, EscalatorSpeedData.HELP_SPEED_MAX);
+    }
+
+    /** 指令文案里用的端头名（/futihelpspeed 与 /futihelpmusic 共用）。 */
+    public static String helpEndLabel(boolean in) {
+        return in ? "进入扶梯（上客端）" : "离开扶梯（落客端）";
+    }
+
+    /** 注册 `/futihelpspeed` 的 `-f` 分支：`-f in|out <Hz>` 与 `-f in|out <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> futiHelpSpeedForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.literal("in")
+                        .then(Commands.argument("hz", helpSpeedArg())
+                                .executes(context -> futiHelpSpeedForceAll(context, true))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", helpSpeedArg())
+                                                .executes(context -> futiHelpSpeedForceFromTo(context, true))))))
+                .then(Commands.literal("out")
+                        .then(Commands.argument("hz", helpSpeedArg())
+                                .executes(context -> futiHelpSpeedForceAll(context, false))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", helpSpeedArg())
+                                                .executes(context -> futiHelpSpeedForceFromTo(context, false))))));
+    }
+
+    /** /futihelpspeed（不带参数）—— 显示当前扶梯两头的无障碍提示音速率。 */
+    private static int futiHelpSpeedShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int globalIn = EscalatorSpeedManager.getDefaultHelpSpeedIn(level);
+        int globalOut = EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
+        ServerPlayer player = source.getPlayer();
+        BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
+        if (pos == null) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有站在扶梯上。默认无障碍提示音速率：进入扶梯 " + globalIn + " 次/秒、离开扶梯 "
+                            + globalOut + " 次/秒"), false);
+            return 1;
+        }
+        int in = EscalatorSpeedManager.getHelpSpeedIn(level, pos);
+        int out = EscalatorSpeedManager.getHelpSpeedOut(level, pos);
+        boolean ownIn = EscalatorSpeedManager.hasOwnHelpSpeedIn(level, pos);
+        boolean ownOut = EscalatorSpeedManager.hasOwnHelpSpeedOut(level, pos);
+        int blocks = EscalatorUtil.countChainSteps(level, pos);
+        source.sendSuccess(() -> Component.literal(
+                "当前无障碍提示音速率：进入扶梯 " + in + " 次/秒（" + (ownIn ? "单独设置" : "使用默认速率")
+                        + "）、离开扶梯 " + out + " 次/秒（" + (ownOut ? "单独设置" : "使用默认速率")
+                        + "）（这条扶梯，共 " + blocks + " 格）；默认 进入 " + globalIn + "、离开 "
+                        + globalOut + " 次/秒"), false);
+        return 1;
+    }
+
+    /** /futihelpspeed in|out &lt;Hz&gt; —— 设置**默认**速率（单独设置过的扶梯不变）。 */
+    private static int futiHelpSpeedGlobal(CommandContext<CommandSourceStack> context, boolean in) {
+        int hz = IntegerArgumentType.getInteger(context, "hz");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (in) {
+            EscalatorSpeedManager.setDefaultHelpSpeedIn(level, hz);
+        } else {
+            EscalatorSpeedManager.setDefaultHelpSpeedOut(level, hz);
+        }
+        EscalatorSpeedManager.syncHelpSpeedToAll(source.getServer());
+        int applied = in ? EscalatorSpeedManager.getDefaultHelpSpeedIn(level)
+                : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
+        source.sendSuccess(() -> Component.literal(
+                "默认" + helpEndLabel(in) + "无障碍提示音速率已设为 " + applied + " 次/秒；"
+                        + "没有单独设置过速率的扶梯都会用它（单独设置过的不受影响）"), false);
+        return 1;
+    }
+
+    /** /futihelpspeed in|out &lt;X&gt; to &lt;Y&gt; —— 默认速率正好是 X 时才改成 Y（单独设置的不动）。 */
+    private static int futiHelpSpeedFromTo(CommandContext<CommandSourceStack> context, boolean in) {
+        int from = IntegerArgumentType.getInteger(context, "hz");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = in ? EscalatorSpeedManager.getDefaultHelpSpeedIn(level)
+                : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "默认" + helpEndLabel(in) + "无障碍提示音速率不是 " + from + " 次/秒（当前为 " + current
+                            + " 次/秒），未做修改；单独设置过速率的扶梯不受本指令影响"), false);
+            return 0;
+        }
+        if (in) {
+            EscalatorSpeedManager.replaceDefaultHelpSpeedIn(level, from, to);
+        } else {
+            EscalatorSpeedManager.replaceDefaultHelpSpeedOut(level, from, to);
+        }
+        EscalatorSpeedManager.syncHelpSpeedToAll(source.getServer());
+        int applied = in ? EscalatorSpeedManager.getDefaultHelpSpeedIn(level)
+                : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
+        source.sendSuccess(() -> Component.literal(
+                "默认" + helpEndLabel(in) + "无障碍提示音速率从 " + from + " 次/秒改为 " + applied + " 次/秒"), false);
+        return 1;
+    }
+
+    /** /futihelpspeed -f in|out &lt;Hz&gt; —— 强制**所有**扶梯这一头都用该速率（清掉单独设置）。 */
+    private static int futiHelpSpeedForceAll(CommandContext<CommandSourceStack> context, boolean in) {
+        int hz = IntegerArgumentType.getInteger(context, "hz");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int cleared = in ? EscalatorSpeedManager.forceDefaultHelpSpeedIn(level, hz)
+                : EscalatorSpeedManager.forceDefaultHelpSpeedOut(level, hz);
+        EscalatorSpeedManager.syncHelpSpeedToAll(source.getServer());
+        int applied = in ? EscalatorSpeedManager.getDefaultHelpSpeedIn(level)
+                : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
+        source.sendSuccess(() -> Component.literal(
+                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音速率 = " + applied + " 次/秒（清掉 "
+                        + cleared + " 处单独设置）"), false);
+        return 1;
+    }
+
+    /** /futihelpspeed -f in|out &lt;X&gt; to &lt;Y&gt; —— 把速率正好是 X 的扶梯（含单独设置的）改成 Y。 */
+    private static int futiHelpSpeedForceFromTo(CommandContext<CommandSourceStack> context, boolean in) {
+        int from = IntegerArgumentType.getInteger(context, "hz");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int changed = in ? EscalatorSpeedManager.forceReplaceHelpSpeedInFromTo(level, from, to)
+                : EscalatorSpeedManager.forceReplaceHelpSpeedOutFromTo(level, from, to);
+        EscalatorSpeedManager.syncHelpSpeedToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有" + helpEndLabel(in) + "无障碍提示音速率正好是 " + from + " 次/秒的扶梯，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有" + helpEndLabel(in) + "无障碍提示音速率正好是 " + from + " 次/秒的扶梯改成 " + to
+                        + " 次/秒（共 " + changed + " 处）"), false);
+        return 1;
+    }
+
+    /** 提示音音乐 ID 在指令反馈里的显示名。 */
+    private static String helpAudioLabel(String audioId) {
+        if (audioId == null) {
+            return "无（静音）";
+        }
+        if (EscalatorSpeedData.HELP_AUDIO_DEFAULT.equals(audioId)) {
+            return "模组原来的提示音（default，速率见 /futihelpspeed）";
+        }
+        if (EscalatorSpeedData.HELP_AUDIO_OFF.equals(audioId)) {
+            return "不播提示音（off）";
+        }
+        return audioLabel(audioId);
+    }
+
+    /** /futihelpmusic（不带参数）—— 显示这条扶梯**两头**当前用的无障碍提示音。 */
+    private static int futiHelpMusicShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        String defaultIn = EscalatorSpeedManager.getDefaultHelpAudio(level, true);
+        String defaultOut = EscalatorSpeedManager.getDefaultHelpAudio(level, false);
+        ServerPlayer player = source.getPlayer();
+        BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
+        if (pos == null) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有站在扶梯上。默认无障碍提示音：进入扶梯 " + helpAudioLabel(defaultIn)
+                            + "、离开扶梯 " + helpAudioLabel(defaultOut)), false);
+            return 1;
+        }
+        String inId = EscalatorSpeedManager.effectiveHelpAudioId(level, pos, true);
+        String outId = EscalatorSpeedManager.effectiveHelpAudioId(level, pos, false);
+        boolean ownIn = EscalatorSpeedManager.hasIndividualHelpAudio(level, pos, true);
+        boolean ownOut = EscalatorSpeedManager.hasIndividualHelpAudio(level, pos, false);
+        int blocks = EscalatorUtil.countChainSteps(level, pos);
+        source.sendSuccess(() -> Component.literal(
+                "当前扶梯的无障碍提示音：进入扶梯 " + helpAudioLabel(inId)
+                        + "（" + (ownIn ? "单独设置" : "使用默认") + "）、离开扶梯 " + helpAudioLabel(outId)
+                        + "（" + (ownOut ? "单独设置" : "使用默认") + "）（这条扶梯，共 " + blocks + " 格；开关 "
+                        + (EscalatorSpeedManager.isHelpEnabled(level, pos) ? "开" : "关") + "）"), false);
+        return 1;
+    }
+
+    /** /futihelpmusic in|out &lt;名字&gt; —— 设置这一头的**默认**提示音（已单独设置的扶梯不变）。 */
+    private static int futiHelpMusicSet(CommandContext<CommandSourceStack> context, boolean in) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveHelpAudioName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.setDefaultHelpAudio(level, arg.id(), in);
+        EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "默认" + helpEndLabel(in) + "的无障碍提示音已设为 " + helpAudioLabel(arg.id())
+                        + "；没有单独设置过的扶梯都会用它（已单独设置的不受影响）"), false);
+        return 1;
+    }
+
+    /** /futihelpmusic in|out &lt;X&gt; to &lt;Y&gt; —— 这一头默认提示音正好是 X 时才改成 Y（单独设置的按兵不动）。 */
+    private static int futiHelpMusicFromTo(CommandContext<CommandSourceStack> context, boolean in) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveHelpAudioName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveHelpAudioName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        String current = EscalatorSpeedManager.getDefaultHelpAudio(level, in);
+        if (!java.util.Objects.equals(current, from.id())) {
+            source.sendSuccess(() -> Component.literal(
+                    "默认" + helpEndLabel(in) + "的无障碍提示音不是 " + helpAudioLabel(from.id())
+                            + "，未做修改（当前为 " + helpAudioLabel(current)
+                            + "）；已单独设置的扶梯不受本指令影响"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultHelpAudio(level, from.id(), to.id(), in);
+        EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "默认" + helpEndLabel(in) + "的无障碍提示音从 " + helpAudioLabel(from.id()) + " 改为 "
+                        + helpAudioLabel(to.id())), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // /futihelpmusic （无障碍提示音「音乐」，数据模型与 /futimusic 完全对称）
+    //
+    // 与 /futimusic 的唯一语义差别：
+    //   `default` = **模组原来的提示音**（五档「咔啪」素材 + /futihelpspeed 速率），
+    //   而不是内置运行底噪；另外多一个 `off` = 这一头不播提示音。
+    // 导入文件夹与音频库**与运行底噪共用**：导入一次，两边都能选。
+    //
+    // ★【1.41】有 `in`（进入扶梯 / 上客端）与 `out`（离开扶梯 / 落客端）两个子命令，
+    //   各是一套**互不影响**的数据（形状与 /futihelpspeed 的 in|out 完全一致）：
+    //     /futihelpmusic                       -> 显示这条扶梯两头当前的提示音
+    //     /futihelpmusic in|out <名字>         -> 默认提示音 = 名字（已单独设置的扶梯不变）
+    //     /futihelpmusic in|out <X> to <Y>     -> 默认提示音正好是 X 时才改成 Y
+    //     /futihelpmusic -f in|out <名字>      -> 强制所有扶梯这一头都用它（清掉这一头的单独设置）
+    //     /futihelpmusic -f in|out <X> to <Y>  -> 把这一头提示音为 X 的扶梯（含单独设置的）改成 Y
+    //   ★ 所以「进站播一段、出站播另一端」不用改素材：给两头各设一段即可；
+    //     连 `off` 都细到了单头 —— 可以只让某一头不响、另一头照常响。
+    //   ★ 别把 in/out 挪到 -f 之外：与 /futihelpspeed 一样，in/out 在「带 -f」和「不带 -f」
+    //     两层下各有一个，位置对齐才好记。
+    // ------------------------------------------------------------------
+
+    /** 注册 `-f` 分支：`-f in|out <名字>` 与 `-f in|out <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> futiHelpMusicForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.literal("in")
+                        .then(Commands.argument("name", StringArgumentType.string())
+                                .executes(context -> futiHelpMusicForceSet(context, true))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", StringArgumentType.string())
+                                                .executes(context -> futiHelpMusicForceFromTo(context, true))))))
+                .then(Commands.literal("out")
+                        .then(Commands.argument("name", StringArgumentType.string())
+                                .executes(context -> futiHelpMusicForceSet(context, false))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", StringArgumentType.string())
+                                                .executes(context -> futiHelpMusicForceFromTo(context, false))))));
+    }
+
+    /** /futihelpmusic -f in|out &lt;名字&gt; —— 强制游戏内**所有**扶梯这一头的提示音都用这一段。 */
+    private static int futiHelpMusicForceSet(CommandContext<CommandSourceStack> context, boolean in) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveHelpAudioName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        int cleared = EscalatorSpeedManager.forceDefaultHelpAudio(level, arg.id(), in);
+        EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
+        final int clearedCount = cleared;
+        source.sendSuccess(() -> Component.literal(
+                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音为 " + helpAudioLabel(arg.id())
+                        + "（清掉 " + clearedCount + " 处这一头的单独设置）"), false);
+        return 1;
+    }
+
+    /** /futihelpmusic -f in|out &lt;X&gt; to &lt;Y&gt; —— 把这一头提示音为 X 的扶梯（含单独设置的）改成 Y。 */
+    private static int futiHelpMusicForceFromTo(CommandContext<CommandSourceStack> context, boolean in) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveHelpAudioName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveHelpAudioName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.forceReplaceHelpAudioFromTo(level, from.id(), to.id(), in);
+        EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有" + helpEndLabel(in) + "提示音为 " + helpAudioLabel(from.id()) + " 的扶梯，未做修改"), false);
+            return 0;
+        }
+        final int changedCount = changed;
+        source.sendSuccess(() -> Component.literal(
+                "已把所有" + helpEndLabel(in) + "提示音为 " + helpAudioLabel(from.id()) + " 的扶梯换成 "
+                        + helpAudioLabel(to.id()) + "（共 " + changedCount + " 条）"), false);
+        return 1;
+    }
+
+
     /** 玩家进入游戏时同步全部数据（速度 + 音频 + 音量 + 提示音 + 范围），客户端还会主动请求一次。 */
     @SubscribeEvent
     public void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event) {
@@ -655,6 +1048,9 @@ public class SmoothLift {
             EscalatorSpeedManager.syncHelpVolumeToAll(player.getServer());
             EscalatorSpeedManager.syncRoundToAll(player.getServer());
             EscalatorSpeedManager.syncHelpRoundToAll(player.getServer());
+            // 【1.31/1.41】提示音速率 / 提示音音乐（各一只小包）
+            EscalatorSpeedManager.syncHelpSpeedToAll(player.getServer());
+            EscalatorSpeedManager.syncHelpAudioToAll(player.getServer());
         }
     }
 
@@ -677,8 +1073,8 @@ public class SmoothLift {
         if (!EscalatorSpeedManager.removeSpeed(level, event.getPos())) {
             return;
         }
-        // 速度 / 音频绑定 / 音量 / 提示音开关 / 提示音音量 / 两个可闻范围 七类数据都要同步，
-        // 否则客户端会残留旧的速度与声音。
+        // 速度 / 音频绑定 / 底噪音量 / 提示音开关 / 提示音音量 / 两个可闻范围 / 提示音速率
+        // 八类数据都要同步，否则客户端会残留旧的速度与声音。
         EscalatorSpeedManager.syncToAll(level.getServer());
         EscalatorSpeedManager.syncAudioToAll(level.getServer());
         EscalatorSpeedManager.syncVolumeToAll(level.getServer());
@@ -686,6 +1082,7 @@ public class SmoothLift {
         EscalatorSpeedManager.syncHelpVolumeToAll(level.getServer());
         EscalatorSpeedManager.syncRoundToAll(level.getServer());
         EscalatorSpeedManager.syncHelpRoundToAll(level.getServer());
+        EscalatorSpeedManager.syncHelpSpeedToAll(level.getServer());
     }
 
     // ------------------------------------------------------------------
