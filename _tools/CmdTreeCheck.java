@@ -13,7 +13,8 @@ import java.util.List;
 /**
  * 临时校验工具（放在 _tools，不参与打包）：脱离游戏环境把真·指令树（{@link SmoothLift#registerCommands}）
  * 建出来，然后 dump 出各层级的 Tab 补全项，确认 `/futihelp`、`/futihelploud`、`/futiround`、
- * `/futihelpround`、`/futihelpspeed`、`/futihelpmusic`（【1.39】，【1.41】起带 in|out）的每个分支都真的可达。
+ * `/futihelpround`、`/futihelpspeed`、`/futihelpmusic`（【1.39】，【1.41】起带 in|out），
+ * 以及【1.42】直梯的 `/lifthelp`、`/lifthelpspeed` 与【1.43】`/lifthelploud` 的每个分支都真的可达。
  *
  * <p>用法见 _tools/check-command-tree.sh。核心手法是给 {@code dispatcher.parse(input, null)}
  * 传一个 <b>null source</b>：Brigadier 解析与补全只用到指令树本身，不会去碰 source，
@@ -104,8 +105,73 @@ public final class CmdTreeCheck {
         failures += dump(dispatcher, "futihelpmusic -f out default ", "futihelpmusic -f out <名字> 的下一层");
 
         System.out.println();
+        System.out.println("==================== 【1.42】/lifthelp 指令树 ====================");
+        failures += dump(dispatcher, "lifthelp ", "lifthelp 的直接子节点");
+        failures += dump(dispatcher, "lifthelp on ", "lifthelp on 的下一层");
+        failures += dump(dispatcher, "lifthelp on to ", "lifthelp on to 的下一层");
+        failures += dump(dispatcher, "lifthelp off to ", "lifthelp off to 的下一层");
+        failures += dump(dispatcher, "lifthelp -f ", "lifthelp -f 的下一层");
+        failures += dump(dispatcher, "lifthelp -f on to ", "lifthelp -f on to 的下一层");
+        System.out.println("-------------------- 【1.42】/lifthelpspeed 指令树 --------------------");
+        failures += dump(dispatcher, "lifthelpspeed ", "lifthelpspeed 的直接子节点（数值参数，无补全）");
+        failures += dump(dispatcher, "lifthelpspeed 1.5 ", "lifthelpspeed <倍速> 的下一层");
+        failures += dump(dispatcher, "lifthelpspeed 1.5 to ", "lifthelpspeed <X> to 的下一层");
+        failures += dump(dispatcher, "lifthelpspeed -f ", "lifthelpspeed -f 的下一层");
+        System.out.println("-------------------- 【1.43】/lifthelploud 指令树 --------------------");
+        failures += dump(dispatcher, "lifthelploud ", "lifthelploud 的直接子节点");
+        failures += dump(dispatcher, "lifthelploud 200 ", "lifthelploud <音量> 的下一层");
+        failures += dump(dispatcher, "lifthelploud 200 to ", "lifthelploud <X> to 的下一层");
+        failures += dump(dispatcher, "lifthelploud -f ", "lifthelploud -f 的下一层");
+        failures += dump(dispatcher, "lifthelploud -f 200 to ", "lifthelploud -f <X> to 的下一层");
+        // 【1.48】lifthelploud up|down|door：三项提示音各自的音量（door = chime 的别名）
+        for (String liftToneLoud : new String[]{"up", "down", "door"}) {
+            System.out.println("===== lifthelploud " + liftToneLoud + " =====");
+            failures += dump(dispatcher, "lifthelploud " + liftToneLoud + " ",
+                    "lifthelploud " + liftToneLoud + " 的直接子节点（数值参数，无补全）");
+            failures += dump(dispatcher, "lifthelploud " + liftToneLoud + " 200 ",
+                    "lifthelploud " + liftToneLoud + " <音量> 的下一层");
+            failures += dump(dispatcher, "lifthelploud " + liftToneLoud + " 200 to ",
+                    "lifthelploud " + liftToneLoud + " <X> to 的下一层");
+            failures += dump(dispatcher, "lifthelploud -f " + liftToneLoud + " ",
+                    "lifthelploud -f " + liftToneLoud + " 的直接子节点（数值参数，无补全）");
+            failures += dump(dispatcher, "lifthelploud -f " + liftToneLoud + " 200 to ",
+                    "lifthelploud -f " + liftToneLoud + " <X> to 的下一层");
+        }
+
+        System.out.println("-------------------- 【1.47】/lifthelpround 指令树 --------------------");
+        failures += dump(dispatcher, "lifthelpround ", "lifthelpround 的直接子节点（数值参数，无补全）");
+        failures += dump(dispatcher, "lifthelpround 4 ", "lifthelpround <范围> 的下一层");
+        failures += dump(dispatcher, "lifthelpround 4 to ", "lifthelpround <X> to 的下一层");
+        failures += dump(dispatcher, "lifthelpround -f ", "lifthelpround -f 的下一层");
+        failures += dump(dispatcher, "lifthelpround -f 4 to ", "lifthelpround -f <X> to 的下一层");
+        failures += expectNotParsed(dispatcher, "lifthelpround 0", "范围下限是 1");
+        failures += expectNotParsed(dispatcher, "lifthelpround 200", "范围上限是 128");
+
+        System.out.println("-------------------- 【1.46】/lifthelpup|down|chime 指令树（三提示音独立子开关） --------------------");
+        for (String liftToneSwitch : new String[]{"lifthelpup", "lifthelpdown", "lifthelpchime"}) {
+            System.out.println("===== " + liftToneSwitch + " =====");
+            failures += dump(dispatcher, liftToneSwitch + " ", liftToneSwitch + " 的直接子节点");
+            failures += dump(dispatcher, liftToneSwitch + " on ", liftToneSwitch + " on 的下一层");
+            failures += dump(dispatcher, liftToneSwitch + " on to ", liftToneSwitch + " on to 的下一层");
+            failures += dump(dispatcher, liftToneSwitch + " off to ", liftToneSwitch + " off to 的下一层");
+            failures += dump(dispatcher, liftToneSwitch + " -f ", liftToneSwitch + " -f 的下一层");
+            failures += dump(dispatcher, liftToneSwitch + " -f on to ", liftToneSwitch + " -f on to 的下一层");
+        }
+
+        System.out.println();
         System.out.println("==================== 【1.41】/futihelpmusic 与 /futihelpspeed 形状对齐 ====================");
         failures += expectSameShape(dispatcher, "futihelpmusic", "futihelpspeed");
+
+        System.out.println();
+        System.out.println("==================== 【1.48】/lifthelploud 三项分支各自可执行 ====================");
+        // 1.43 时 lifthelploud 与 lifthelpspeed 同构；1.48 加了 up|down|door 三项子分支后不再同构，
+        // 同构断言改由上面的逐分支 dump + 这里的三项可执行守住。
+        for (String liftToneLoud : new String[]{"up", "down", "door"}) {
+            failures += expectExecutable(dispatcher, "lifthelploud " + liftToneLoud + " 200");
+            failures += expectExecutable(dispatcher, "lifthelploud " + liftToneLoud + " 200 to 300");
+            failures += expectExecutable(dispatcher, "lifthelploud -f " + liftToneLoud + " 200");
+            failures += expectExecutable(dispatcher, "lifthelploud -f " + liftToneLoud + " 200 to 300");
+        }
 
         System.out.println();
         System.out.println("==================== 期望的补全项 ====================");
@@ -156,6 +222,31 @@ public final class CmdTreeCheck {
         failures += expect(dispatcher, "futihelpmusic -f in default to ");
         failures += expect(dispatcher, "futihelpmusic -f out default ", "to");
         failures += expect(dispatcher, "futihelpmusic -f out default to ");
+
+        // 【1.42】/lifthelp：与 /futihelp 同形状的 on|off 开关（只是 `-f` 的含义是「所有维度」）。
+        failures += expect(dispatcher, "lifthelp ", "-f", "off", "on");  // Brigadier 补全按字典序
+        failures += expect(dispatcher, "lifthelp on ", "to");
+        failures += expect(dispatcher, "lifthelp on to ", "off");
+        failures += expect(dispatcher, "lifthelp off ", "to");
+        failures += expect(dispatcher, "lifthelp off to ", "on");
+        failures += expect(dispatcher, "lifthelp -f ", "off", "on");
+        failures += expect(dispatcher, "lifthelp -f on to ", "off");
+        // 【1.42】/lifthelpspeed：数值参数不补全，能补出来的只有 -f / to
+        failures += expect(dispatcher, "lifthelpspeed ", "-f");
+        failures += expect(dispatcher, "lifthelpspeed 1.5 ", "to");
+        failures += expect(dispatcher, "lifthelpspeed 1.5 to ");   // 数值参数不给补全项
+        failures += expect(dispatcher, "lifthelpspeed -f ");
+        failures += expect(dispatcher, "lifthelpspeed -f 1.5 ", "to");
+        // 【1.43】/lifthelploud：数值参数不补全，-f 可补全；【1.48】加了 up|down|door 三个子分支
+        failures += expect(dispatcher, "lifthelploud ", "-f", "door", "down", "up");  // Brigadier 按字典序
+        failures += expect(dispatcher, "lifthelploud 200 ", "to");
+        failures += expect(dispatcher, "lifthelploud 200 to ");    // 数值参数不给补全项
+        failures += expect(dispatcher, "lifthelploud -f ", "door", "down", "up");  // 共用音量是数值参数不补全
+        failures += expect(dispatcher, "lifthelploud -f 200 ", "to");
+        failures += expect(dispatcher, "lifthelploud -f 200 to ");
+        failures += expect(dispatcher, "lifthelploud -f up 200 ", "to");
+        failures += expect(dispatcher, "lifthelploud -f down 200 to ");   // 数值参数不给补全项
+        failures += expect(dispatcher, "lifthelploud -f door ");
 
         System.out.println();
         System.out.println("==================== 每条完整指令都可执行 ====================");
@@ -220,6 +311,27 @@ public final class CmdTreeCheck {
         // ★ 旧的「裸名字」写法（1.39 的 /futihelpmusic <名字>）在 1.41 已经**不存在**了；
         //   它现在会停在根节点（不带参数 = 显示当前值），所以只能放对照区 probe，不能写 expectNotParsed。
 
+        // 【1.42】直梯提示音：开关 / 倍速，【1.43】再加音量 —— 三种形状全部可执行
+        failures += expectExecutable(dispatcher, "lifthelp");
+        failures += expectExecutable(dispatcher, "lifthelp on");
+        failures += expectExecutable(dispatcher, "lifthelp off");
+        failures += expectExecutable(dispatcher, "lifthelp on to off");
+        failures += expectExecutable(dispatcher, "lifthelp off to on");
+        failures += expectExecutable(dispatcher, "lifthelp -f on");
+        failures += expectExecutable(dispatcher, "lifthelp -f off");
+        failures += expectExecutable(dispatcher, "lifthelp -f on to off");
+        failures += expectExecutable(dispatcher, "lifthelp -f off to on");
+        failures += expectExecutable(dispatcher, "lifthelpspeed");
+        failures += expectExecutable(dispatcher, "lifthelpspeed 1.5");
+        failures += expectExecutable(dispatcher, "lifthelpspeed 1.5 to 2");
+        failures += expectExecutable(dispatcher, "lifthelpspeed -f 1.5");
+        failures += expectExecutable(dispatcher, "lifthelpspeed -f 1.5 to 2");
+        failures += expectExecutable(dispatcher, "lifthelploud");
+        failures += expectExecutable(dispatcher, "lifthelploud 200");
+        failures += expectExecutable(dispatcher, "lifthelploud 200 to 300");
+        failures += expectExecutable(dispatcher, "lifthelploud -f 200");
+        failures += expectExecutable(dispatcher, "lifthelploud -f 200 to 300");
+
         System.out.println();
         System.out.println("==================== 不该存在的分支 ====================");
         failures += expectNotParsed(dispatcher, "futihelp on to on", "on to on 应无此分支");
@@ -239,6 +351,23 @@ public final class CmdTreeCheck {
         failures += expectNotParsed(dispatcher, "futihelpspeed -f out 51", "-f 分支同样上限 50 Hz");
         failures += expectExecutable(dispatcher, "futihelpspeed out 50");
         failures += expectExecutable(dispatcher, "futihelpspeed -f out 50");
+        // 【1.43】/lifthelploud 音量参数越界（合法区间 1~1000）必须被 Brigadier 直接拒绝。
+        // ★ 探针贴着**两端**（0 / 1001），并各补一条正例守住边界 —— 这样「区间被悄悄放宽/收窄」
+        //   两种回归都能探到（只探上限的话，把下限从 1 改成 0 就漏了）。
+        failures += expectNotParsed(dispatcher, "lifthelploud 0", "音量下限是 1");
+        failures += expectNotParsed(dispatcher, "lifthelploud 1001", "音量上限是 1000");
+        failures += expectNotParsed(dispatcher, "lifthelploud -f 0", "-f 分支同样下限 1");
+        failures += expectNotParsed(dispatcher, "lifthelploud -f 1001", "-f 分支同样上限 1000");
+        failures += expectExecutable(dispatcher, "lifthelploud 1");
+        failures += expectExecutable(dispatcher, "lifthelploud 1000");
+        failures += expectExecutable(dispatcher, "lifthelploud -f 1000");
+        // 【1.42】/lifthelpspeed 倍速越界（合法区间 0.5~2.0）同样当场拒绝
+        failures += expectNotParsed(dispatcher, "lifthelpspeed 0.4", "倍速下限是 0.5");
+        failures += expectNotParsed(dispatcher, "lifthelpspeed 2.1", "倍速上限是 2.0");
+        failures += expectExecutable(dispatcher, "lifthelpspeed 0.5");
+        failures += expectExecutable(dispatcher, "lifthelpspeed 2");
+        // 【1.42】/lifthelp 的 on|off 是字面量，不存在 on to on
+        failures += expectNotParsed(dispatcher, "lifthelp on to on", "on to on 应无此分支");
         // 说明：「futihelp on off」这类「已匹配到可执行节点后再多打一个词」的输入，Brigadier 会停在
         // 已匹配的节点上、不报异常（下面的 probe 对照可以看到 /futispeed 2 3、/futiloud 200 300
         // 这些**既有**指令行为完全一致），所以这里不算失败项，只在对照区打出来看。
@@ -266,6 +395,11 @@ public final class CmdTreeCheck {
         // Brigadier 行为（根节点自带执行器），所以只能放对照区。
         probe(dispatcher, "futihelpmusic default");
         probe(dispatcher, "futihelpmusic default to off");
+        // 【1.42/1.43】直梯三条同样是「根节点自带执行器」（不带参数 = 显示当前值），
+        // 所以多打一个词只会停在根节点、不报异常 —— 只能放对照区。
+        probe(dispatcher, "lifthelp bogus");
+        probe(dispatcher, "lifthelpspeed 5");
+        probe(dispatcher, "lifthelploud 200 300");
 
         System.out.println();
         if (failures == 0) {
@@ -321,7 +455,7 @@ public final class CmdTreeCheck {
      */
     private static int expectSameShape(CommandDispatcher<CommandSourceStack> dispatcher,
                                        String base, String otherBase) {
-        String[][] layers = {
+        return compareShape(dispatcher, base, otherBase, new String[][]{
                 {"", ""},
                 {"in ", "in "},
                 {"in a ", "in 5 "},
@@ -336,7 +470,36 @@ public final class CmdTreeCheck {
                 {"-f out ", "-f out "},
                 {"-f out a ", "-f out 1 "},
                 {"-f out a to ", "-f out 1 to "},
-        };
+        });
+    }
+
+    /**
+     * 【1.43】形状对齐：{@code base}（/lifthelploud）与 {@code otherBase}（/lifthelpspeed）
+     * 在每一层的 Tab 补全结果必须完全一致 —— 这就是需求里「音量指令与倍速指令同构」那条。
+     *
+     * <p>两条指令的参数类型不同（音量是 1~1000 的整数、倍速是 0.5~2.0 的小数），但**都不给补全项**，
+     * 所以能补出来的只有 {@code -f} 与 {@code to} 两个字面量，补全结构恰好可比。
+     * 占位值必须各自合法（{@code 200} / {@code 1.5}），否则那一层解析失败、补全为空 → 假红。
+     *
+     * <p>★ 这里**没有** in|out：直梯提示音只有「维度默认」一层数据，没有端头之分
+     * （见 {@code EscalatorSpeedData} 里 1.42 那一段）。别照抄 /futihelpspeed 的层级表。
+     */
+    private static int expectSameShapeLift(CommandDispatcher<CommandSourceStack> dispatcher,
+                                           String base, String otherBase,
+                                           String volumePlaceholder, String speedPlaceholder) {
+        return compareShape(dispatcher, base, otherBase, new String[][]{
+                {"", ""},
+                {volumePlaceholder + " ", speedPlaceholder + " "},
+                {volumePlaceholder + " to ", speedPlaceholder + " to "},
+                {"-f ", "-f "},
+                {"-f " + volumePlaceholder + " ", "-f " + speedPlaceholder + " "},
+                {"-f " + volumePlaceholder + " to ", "-f " + speedPlaceholder + " to "},
+        });
+    }
+
+    /** 逐层比较两条指令的补全结果（{@code layers} 的每项 = {base 的输入后缀, otherBase 的输入后缀}）。 */
+    private static int compareShape(CommandDispatcher<CommandSourceStack> dispatcher,
+                                    String base, String otherBase, String[][] layers) {
         int bad = 0;
         for (String[] layer : layers) {
             List<String> a = completionNames(dispatcher, dispatcher.parse(base + " " + layer[0], null));
