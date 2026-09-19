@@ -1,5 +1,6 @@
 package smooth.lift;
 
+import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -8,6 +9,7 @@ import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -15,6 +17,7 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -70,10 +73,28 @@ public class SmoothLift {
      *   /futiloud    -f &lt;音量&gt;      -> 强制游戏内所有扶梯都用这个音量（清掉单独设置）
      *   /futiloud    -f &lt;X&gt; to &lt;Y&gt;  -> 把所有音量正好是 X 的扶梯（含单独设置的）改成 Y
      *   （音量范围 1~1000：100 = 原始音量，1000 = 10× 放大）
+     *
+     * <p>Forge 事件入口：本方法只负责转发给 {@link #registerCommands}（便于离线校验，
+     * 见那个方法的注释）。
      */
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
-        event.getDispatcher().register(Commands.literal("futispeed")
+        registerCommands(event.getDispatcher());
+    }
+
+    /**
+     * 注册全部指令到给定 dispatcher（`/futispeed`、`/jietispeed`、`/futimusic`、`/futiloud`、
+     * `/futihelp`、`/futihelploud`、`/futiround`、`/futihelpround`、`/futihelpspeed`、
+     * `/futihelpmusic`，以及【1.42】直梯提示音的 `/lifthelp`、`/lifthelpspeed`、【1.43】`/lifthelploud`、
+     * 【1.47】`/lifthelpround`、【1.46】`/lifthelpup|down|chime`）。
+     *
+     * <p>单独抽成一个方法是为了能**脱离游戏环境**直接建一棵 Brigadier 指令树来校验：
+     * {@code _tools/CmdTreeCheck.java} 会把整棵树的补全项 dump 出来，确认
+     * {@code /lifthelp on to off}、{@code /lifthelploud -f up 200} 这类分支真的可达、Tab 补得全能补得出来。
+     * （与 Fabric 参考工程的同名方法同一用途。）
+     */
+    static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+        dispatcher.register(Commands.literal("futispeed")
                 .executes(SmoothLift::futiShow)
                 .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
                         .executes(SmoothLift::futiGlobal)
@@ -83,7 +104,7 @@ public class SmoothLift {
                 .then(futiForce("-f"))
         );
 
-        event.getDispatcher().register(Commands.literal("jietispeed")
+        dispatcher.register(Commands.literal("jietispeed")
                 .executes(SmoothLift::jietiShow)
                 .then(Commands.argument("speed", FloatArgumentType.floatArg(0.0f))
                         .executes(SmoothLift::jietiGlobal)
@@ -94,7 +115,7 @@ public class SmoothLift {
         );
 
         // 【1.7】/futimusic：扶梯音频（数据模型与 futispeed 完全对称）
-        event.getDispatcher().register(Commands.literal("futimusic")
+        dispatcher.register(Commands.literal("futimusic")
                 .executes(SmoothLift::futiMusicShow)
                 .then(Commands.argument("name", StringArgumentType.string())
                         .executes(SmoothLift::futiMusicSet)
@@ -105,7 +126,7 @@ public class SmoothLift {
         );
 
         // 【1.12】/futiloud：扶梯音量（数据模型与 futispeed、futimusic 完全对称）
-        event.getDispatcher().register(Commands.literal("futiloud")
+        dispatcher.register(Commands.literal("futiloud")
                 .executes(SmoothLift::futiLoudShow)
                 .then(Commands.argument("volume", volumeArg())
                         .executes(SmoothLift::futiLoudGlobal)
@@ -114,7 +135,7 @@ public class SmoothLift {
                                         .executes(SmoothLift::futiLoudFromTo))))
                 .then(futiLoudForce("-f"))
         );
-        event.getDispatcher().register(Commands.literal("futihelp")
+        dispatcher.register(Commands.literal("futihelp")
             .executes(SmoothLift::futiHelpShow)
             .then(Commands.literal("on")
                 .executes(context -> futiHelpGlobal(context, true))
@@ -138,7 +159,7 @@ public class SmoothLift {
         // 音量范围 1~1000：100 = 原始音量，1000 = 10× 放大。
         // ★ 这与 /futiloud 是两件事：/futiloud = 扶梯**运行底噪**（整条扶梯、射程 16 格）的音量，
         //   本指令 = 无障碍**提示音**（端头单块、射程 4 格）的音量。数据与指令互不影响。
-        event.getDispatcher().register(Commands.literal("futihelploud")
+        dispatcher.register(Commands.literal("futihelploud")
             .executes(SmoothLift::futiHelpLoudShow)
             .then(Commands.argument("volume", volumeArg())
                 .executes(SmoothLift::futiHelpLoudGlobal)
@@ -156,7 +177,7 @@ public class SmoothLift {
         //   -f <X> to <Y>  -> 把所有范围正好是 X 的扶梯（含单独设置的）改成 Y
         // 范围 1~128 格。★ 这与 /futihelpround 是两件事：本指令管**整条扶梯**的运行底噪（默认 16 格），
         //   /futihelpround 管端头**单块**的无障碍提示音（默认 4 格）。数据与指令互不影响。
-        event.getDispatcher().register(Commands.literal("futiround")
+        dispatcher.register(Commands.literal("futiround")
             .executes(SmoothLift::futiRoundShow)
             .then(Commands.argument("round", roundArg())
                 .executes(SmoothLift::futiRoundGlobal)
@@ -173,7 +194,7 @@ public class SmoothLift {
         //   -f <范围>      -> 强制游戏内所有扶梯提示音都用这个范围（清掉单独设置）
         //   -f <X> to <Y>  -> 把所有范围正好是 X 的扶梯（含单独设置的）改成 Y
         // 范围 1~128 格。★ 与 /futiround 是两件事（见上）。
-        event.getDispatcher().register(Commands.literal("futihelpround")
+        dispatcher.register(Commands.literal("futihelpround")
             .executes(SmoothLift::futiHelpRoundShow)
             .then(Commands.argument("round", roundArg())
                 .executes(SmoothLift::futiHelpRoundGlobal)
@@ -191,7 +212,7 @@ public class SmoothLift {
         //   -f in|out <X> to <Y>  -> 把所有该端速率正好是 X 的扶梯改成 Y
         // ★ 进 / 出是**两套独立数据**，所以子命令写在 in|out 里（与 /futihelpmusic 完全同形）。
         // 速率范围与素材分档见 EscalatorSpeedData.HELP_SPEED_MIN/MAX 与 EscalatorChimePlayer。
-        event.getDispatcher().register(Commands.literal("futihelpspeed")
+        dispatcher.register(Commands.literal("futihelpspeed")
             .executes(SmoothLift::futiHelpSpeedShow)
             .then(Commands.literal("in")
                 .then(Commands.argument("hz", helpSpeedArg())
@@ -216,7 +237,7 @@ public class SmoothLift {
         //   -f in|out <X> to <Y>      -> 把所有该端提示音为 X 的扶梯改成 Y
         // 名字：default = 模组原来的提示音（速率见 /futihelpspeed）、off = 这一头不播、
         //       其它 = 音频库里的文件名（与 /futimusic 共用同一个导入文件夹，导入一次两边都能选）。
-        event.getDispatcher().register(Commands.literal("futihelpmusic")
+        dispatcher.register(Commands.literal("futihelpmusic")
             .executes(SmoothLift::futiHelpMusicShow)
             .then(Commands.literal("in")
                 .then(Commands.argument("name", StringArgumentType.string())
@@ -232,7 +253,119 @@ public class SmoothLift {
                             .executes(context -> futiHelpMusicFromTo(context, false))))))
             .then(futiHelpMusicForce("-f"))
         );
-    }
+
+        // 【1.42】/lifthelp：**直梯（Lift）**开关门提示音（liftmusic.ogg）开关。
+        //   （无参数）       -> 显示当前维度的开关
+        //   on | off         -> 本维度开关 = on/off
+        //   on to off        -> 本维度开关正好是 on 时才改成 off
+        //   -f on | off      -> 强制**所有维度** = on/off
+        //   -f on to off     -> 所有维度里开关正好是 on 的改成 off
+        // ★ 与 /futihelp 是两件事：那条管的是**扶梯**的无障碍提示音（进/出口「咔啪」声），
+        //   本指令管的是**直梯**关门/开门时连播 liftmusic.ogg（关门 4 次、开门 2 次）。
+        // ★ 直梯提示音只有「维度默认」一层数据，所以 -f 的含义是「对所有维度」而不是
+        //   「对所有直梯」—— 见 EscalatorSpeedManager 里 1.42 那一段。
+        // ★ 命令结构：`on`/`off` 在「不带 -f」和「带 -f」两层下面各有一套（与 /futihelp 完全一致）。
+        dispatcher.register(Commands.literal("lifthelp")
+            .executes(SmoothLift::liftHelpShow)
+            .then(Commands.literal("on")
+                .executes(context -> liftHelpGlobal(context, true))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("off")
+                        .executes(context -> liftHelpFromTo(context, true, false)))))
+            .then(Commands.literal("off")
+                .executes(context -> liftHelpGlobal(context, false))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("on")
+                        .executes(context -> liftHelpFromTo(context, false, true)))))
+            .then(liftHelpForce("-f"))
+        );
+
+        // 【1.46】三提示音独立子开关：形状与 /lifthelp 一致，但分别管 up / down / chime。
+        //   /lifthelpup 上楼提示音 / /lifthelpdown 下楼提示音 / /lifthelpchime 开关门提示音
+        dispatcher.register(liftToneSwitchCommand("up"));
+        dispatcher.register(liftToneSwitchCommand("down"));
+        dispatcher.register(liftToneSwitchCommand("chime"));
+
+        // 【1.42】/lifthelpspeed：**直梯**开关门提示音的**倍速**（允许小数，0.5~2.0）。
+        //   （无参数）       -> 显示当前维度的倍速
+        //   <倍速>           -> 本维度倍速 = 倍速
+        //   <X> to <Y>       -> 本维度倍速正好是 X 时才改成 Y
+        //   -f <倍速>        -> 强制**所有维度** = 倍速
+        //   -f <X> to <Y>    -> 所有维度里倍速正好是 X 的改成 Y
+        // 1 = 原速。上限 2 / 下限 0.5 是**原版 SoundEngine.calculatePitch 对 pitch 的硬夹取**
+        // （Mth.clamp(pitch, 0.5F, 2.0F)），超出这一段的取值会被悄悄压回去，
+        // 所以参数类型直接夹住，玩家填 3 会当场看到「必须在 0.5 和 2.0 之间」而不是「填了没用」。
+        // ★ 与 /futihelpspeed（扶梯提示音速率，单位 Hz）是两件完全不同的事。
+        dispatcher.register(Commands.literal("lifthelpspeed")
+            .executes(SmoothLift::liftHelpSpeedShow)
+            .then(Commands.argument("speed", liftHelpSpeedArg())
+                .executes(SmoothLift::liftHelpSpeedGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", liftHelpSpeedArg())
+                        .executes(SmoothLift::liftHelpSpeedFromTo))))
+            .then(liftHelpSpeedForce("-f"))
+        );
+
+        // 【1.43】/lifthelploud：**直梯**开关门提示音的**音量**（1~1000，100 = 原始音量，
+        //   1000 = 10× 放大，与扶梯那两套音量的区间完全一致）。
+        //   （无参数）       -> 显示当前维度的音量
+        //   <音量>           -> 本维度音量 = 音量
+        //   <X> to <Y>       -> 本维度音量正好是 X 时才改成 Y
+        //   -f <音量>        -> 强制**所有维度** = 音量
+        //   -f <X> to <Y>    -> 所有维度里音量正好是 X 的改成 Y
+        // 命令结构与 /lifthelpspeed 完全一致（只有参数类型不同：整数 vs 小数）。
+        // ★ 这是**第三套**互不影响的音量：/futiloud = 扶梯运行底噪（整条、射程 16 格）、
+        //   /futihelploud = 扶梯无障碍提示音（端头单块、射程 4 格）、本指令 = 直梯开关门提示音。
+        //   三者各存各的，改一个不影响另外两个。
+        dispatcher.register(Commands.literal("lifthelploud")
+            .executes(SmoothLift::liftHelpLoudShow)
+            .then(Commands.argument("volume", volumeArg())
+                .executes(SmoothLift::liftHelpLoudGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(SmoothLift::liftHelpLoudFromTo))))
+            // 【1.48】三项提示音各自的音量（不带 -f 的主分支）：
+            //   /lifthelploud up 200           本维度上楼提示音音量 = 200
+            //   /lifthelploud up 200 to 300    本维度上楼提示音音量正好是 200 时才改成 300
+            //   （down = 下楼、door = 开关门即 chime 的别名；没单独调过的项跟随共用默认）
+            .then(liftToneLoudCommand("up", "up"))
+            .then(liftToneLoudCommand("down", "down"))
+            .then(liftToneLoudCommand("door", "chime"))
+            // 【1.48】-f 合并成**一个**节点：下面既有共用音量（<音量>），也有三项分支（up|down|door）。
+            //   /lifthelploud -f 200        所有维度共用默认音量 = 200
+            //   /lifthelploud -f up 200     所有维度上楼提示音音量 = 200
+            //   /lifthelploud -f up 200 to 300
+            //   （door = chime 的别名，开关门提示音）
+            .then(Commands.literal("-f")
+                .then(Commands.argument("volume", volumeArg())
+                    .executes(SmoothLift::liftHelpLoudForceAll)
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", volumeArg())
+                            .executes(SmoothLift::liftHelpLoudForceFromTo))))
+                .then(liftToneLoudForceBranch("up", "up"))
+                .then(liftToneLoudForceBranch("down", "down"))
+                .then(liftToneLoudForceBranch("door", "chime")))
+        );
+
+        // 【1.47】/lifthelpround：直梯提示音（上楼 / 下楼 / 开关门，**三项共用一份**）的
+        //   淡入淡出范围（格）。首次载入模组默认 4 格。
+        //   （无参数）      -> 显示当前维度的范围
+        //   <范围>          -> 本维度范围 = 范围（1~128，复用扶梯那组范围常量）
+        //   <X> to <Y>      -> 本维度范围正好是 X 时才改成 Y
+        //   -f <范围>       -> 强制**所有维度** = 范围
+        //   -f <X> to <Y>   -> 所有维度里范围正好是 X 的改成 Y
+        // 与 /futiround / /futihelpround（扶梯）是**互不影响**的两件事：这里是直梯那一路。
+        dispatcher.register(Commands.literal("lifthelpround")
+            .executes(SmoothLift::liftHelpRoundShow)
+            .then(Commands.argument("round", roundArg())
+                .executes(SmoothLift::liftHelpRoundGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", roundArg())
+                        .executes(SmoothLift::liftHelpRoundFromTo))))
+            .then(liftHelpRoundForce("-f"))
+        );
+        }
+
 
 
 
@@ -1051,6 +1184,11 @@ public class SmoothLift {
             // 【1.31/1.41】提示音速率 / 提示音音乐（各一只小包）
             EscalatorSpeedManager.syncHelpSpeedToAll(player.getServer());
             EscalatorSpeedManager.syncHelpAudioToAll(player.getServer());
+            // 【1.42/1.43/1.46/1.47/1.48】直梯开关门提示音（开关 + 倍速 + 音量 + 三子开关
+            //   + 淡入淡出范围 + 三项各自音量）—— 同样要补发，否则刚进世界按默认值响。
+            EscalatorSpeedManager.syncLiftChimeToAll(player.getServer());
+            // 【1.45】直梯楼层轨道提示音（石斧右键楼层轨道设置的三列表）
+            EscalatorSpeedManager.syncLiftToneToAll(player.getServer());
         }
     }
 
@@ -1572,4 +1710,636 @@ public class SmoothLift {
                 "已把所有音量正好是 " + from + " 的扶梯改成 " + to + "（共 " + changed + " 处）"), false);
         return 1;
     }
+    // ==================================================================
+    // 【1.45】直梯提示音的两端共用判据 / 文案工具
+    //
+    //   ★ 这些必须是 public static：不仅指令用，{@code smooth.lift.network} 里那几只
+    //     直梯提示音数据包（SetLiftTonePacket / ImportFolderLiftTonePacket）也要用
+    //     —— 判据/文案只此一份，别在数据包里再抄一遍（抄一份就有走样的风险）。
+    // ==================================================================
+
+    /**
+     * 【1.45】判定：方块注册名以 {@code lift_track_floor} 开头（MTR3 / MTR4 的「楼层轨道」
+     * 注册名都是这个前缀，竖轨 {@code lift_track_vertical_*} 不会误命中）。
+     * 服务端和客户端共用这一个判据（石斧右键时两侧都要拦默认交互）。
+     */
+    public static boolean isLiftTrackFloor(BlockState state) {
+        String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        return path.startsWith("lift_track_floor");
+    }
+
+    /**
+     * 【1.45】直梯提示音三项的中文名（石斧界面 / 指令反馈共用同一套词）。
+     * {@code which} 不是 up/down/chime → 返回「提示音」兜底。
+     */
+    public static String liftToneLabel(String which, String audioId) {
+        return switch (which) {
+            case "up" -> "上楼提示音";
+            case "down" -> "下楼提示音";
+            case "chime" -> "开关门提示音";
+            default -> "提示音";
+        };
+    }
+
+    /** 【1.45】反馈文案里的名字截断（界面 / 指令都用 20 字符上限），过长直接截。 */
+    public static String truncateForMsg(String s, int limit) {
+        if (s == null) {
+            return "";
+        }
+        return s.length() <= limit ? s : s.substring(0, limit) + "…";
+    }
+
+    // ==================================================================
+    // 【1.42】直梯（Lift）开关门提示音 liftmusic.ogg
+    //
+    //   /lifthelp        显示 / on|off / on to off / -f on|off / -f on to off
+    //   /lifthelpspeed   显示 / <倍速> / <X> to <Y> / -f <倍速> / -f <X> to <Y>
+    //
+    //   ★ 为什么是 lifthelp / lifthelpspeed 而不是需求原文里的 futihelp / futihelpspeed：
+    //     那两条指令**早就存在**、管的是**扶梯**的无障碍提示音（进/出口「咔啪」声），
+    //     直接复用会把扶梯那套设置顶掉。直梯提示音是完全另一件事，所以另开两条指令，
+    //     扶梯的 futihelp / futihelpspeed 一个字节都不动。
+    //
+    //   ★ 直梯提示音只有「维度默认」一层数据（没有单条直梯的单独设置），所以 `-f`
+    //     取「**对所有维度**强制」的含义 —— 见 EscalatorSpeedManager 里那一段的说明。
+    // ==================================================================
+
+    /** 直梯提示音倍速的取值参数（0.5~2.0，允许小数；上限来自原版 pitch 夹取，见 EscalatorSpeedData）。 */
+    private static FloatArgumentType liftHelpSpeedArg() {
+        return FloatArgumentType.floatArg(
+                EscalatorSpeedData.LIFT_HELP_SPEED_MIN, EscalatorSpeedData.LIFT_HELP_SPEED_MAX);
+    }
+
+    /** 倍速在指令反馈里的显示（两位小数就够，1.0 显示成 1）。 */
+    private static String liftSpeedLabel(float speed) {
+        if (speed == Math.round(speed)) {
+            return String.valueOf((int) Math.round(speed));
+        }
+        return String.format(Locale.ROOT, "%.2f", speed);
+    }
+
+    /** /lifthelp（不带参数）—— 显示当前维度生效的直梯提示音开关。 */
+    private static int liftHelpShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
+        float speed = EscalatorSpeedManager.getLiftHelpSpeed(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度直梯开关门提示音：" + helpLabel(enabled) + "，倍速 " + liftSpeedLabel(speed)
+                        + "（关门连播 " + EscalatorSpeedData.LIFT_HELP_CLOSE_REPEATS + " 次、开门连播 "
+                        + EscalatorSpeedData.LIFT_HELP_OPEN_REPEATS + " 次；倍速范围 "
+                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MIN) + "~"
+                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MAX) + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelp &lt;on|off&gt; —— 设置**本维度**的开关。 */
+    private static int liftHelpGlobal(CommandContext<CommandSourceStack> context, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftHelp(level, enabled);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯开关门提示音已设为 " + helpLabel(enabled)
+                        + "；其它维度不变（要对所有维度生效用 /lifthelp -f " + (enabled ? "on" : "off") + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelp &lt;X&gt; to &lt;Y&gt; —— 本维度开关正好是 X 时才改成 Y。 */
+    private static int liftHelpFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultLiftHelp(level, from, to)) {
+            boolean current = EscalatorSpeedManager.isLiftHelpEnabled(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯开关门提示音不是 " + helpLabel(from) + "（当前为 " + helpLabel(current)
+                            + "），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯开关门提示音从 " + helpLabel(from) + " 改为 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    /** /lifthelp -f &lt;on|off&gt; —— **所有维度**都设成该开关。 */
+    private static int liftHelpForceAll(CommandContext<CommandSourceStack> context, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftHelpAll(source.getServer(), enabled);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯开关门提示音 = " + helpLabel(enabled) + "（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelp -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里开关正好是 X 的那些改成 Y。 */
+    private static int liftHelpForceFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftHelpAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯开关门提示音是 " + helpLabel(from) + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯开关门提示音为 " + helpLabel(from) + " 的维度改成 " + helpLabel(to)
+                        + "（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelpspeed（不带参数）—— 显示当前维度生效的倍速。 */
+    private static int liftHelpSpeedShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        float speed = EscalatorSpeedManager.getLiftHelpSpeed(level);
+        boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度直梯提示音倍速：" + liftSpeedLabel(speed) + "（提示音：" + helpLabel(enabled)
+                        + "；范围 " + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MIN) + "~"
+                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MAX)
+                        + "，1 = 原速。上限 2 是原版对播放速率的硬夹取）"), false);
+        return 1;
+    }
+
+    /** /lifthelpspeed &lt;倍速&gt; —— 设置**本维度**的倍速。 */
+    private static int liftHelpSpeedGlobal(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftHelpSpeed(level, speed);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        float applied = EscalatorSpeedManager.getLiftHelpSpeed(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯提示音倍速已设为 "
+                        + liftSpeedLabel(applied) + "；其它维度不变"), false);
+        return 1;
+    }
+
+    /** /lifthelpspeed &lt;X&gt; to &lt;Y&gt; —— 本维度倍速正好是 X 时才改成 Y。 */
+    private static int liftHelpSpeedFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultLiftHelpSpeed(level, from, to)) {
+            float current = EscalatorSpeedManager.getLiftHelpSpeed(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯提示音倍速不是 " + liftSpeedLabel(from) + "（当前为 "
+                            + liftSpeedLabel(current) + "），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        float applied = EscalatorSpeedManager.getLiftHelpSpeed(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯提示音倍速从 " + liftSpeedLabel(from) + " 改为 "
+                        + liftSpeedLabel(applied)), false);
+        return 1;
+    }
+
+    /** /lifthelpspeed -f &lt;倍速&gt; —— **所有维度**都设成该倍速。 */
+    private static int liftHelpSpeedForceAll(CommandContext<CommandSourceStack> context) {
+        float speed = FloatArgumentType.getFloat(context, "speed");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftHelpSpeedAll(source.getServer(), speed);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        float applied = EscalatorSpeedData.clampLiftHelpSpeed(speed);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯提示音倍速 = " + liftSpeedLabel(applied)
+                        + "（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelpspeed -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里倍速正好是 X 的那些改成 Y。 */
+    private static int liftHelpSpeedForceFromTo(CommandContext<CommandSourceStack> context) {
+        float from = FloatArgumentType.getFloat(context, "speed");
+        float to = FloatArgumentType.getFloat(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftHelpSpeedAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯提示音倍速是 " + liftSpeedLabel(from) + "，未做修改"), false);
+            return 0;
+        }
+        float applied = EscalatorSpeedData.clampLiftHelpSpeed(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯提示音倍速为 " + liftSpeedLabel(from) + " 的维度改成 " + liftSpeedLabel(applied)
+                        + "（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud（不带参数）—— 显示当前维度生效的直梯提示音音量。 */
+    private static int liftHelpLoudShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int volume = EscalatorSpeedManager.getLiftHelpVolume(level);
+        boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度直梯提示音音量：" + volume + "（提示音：" + helpLabel(enabled)
+                        + "；范围 " + EscalatorSpeedData.HELP_VOLUME_MIN + "~"
+                        + EscalatorSpeedData.HELP_VOLUME_MAX
+                        + "，100 = 原始音量、1000 = 10× 放大）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud &lt;音量&gt; —— 设置**本维度**的音量。 */
+    private static int liftHelpLoudGlobal(CommandContext<CommandSourceStack> context) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftHelpVolume(level, volume);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftHelpVolume(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯提示音音量已设为 " + applied
+                        + "（100 = 原始音量）；其它维度不变（要对所有维度生效用 /lifthelploud -f "
+                        + applied + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud &lt;X&gt; to &lt;Y&gt; —— 本维度音量正好是 X 时才改成 Y。 */
+    private static int liftHelpLoudFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultLiftHelpVolume(level, from, to)) {
+            int current = EscalatorSpeedManager.getLiftHelpVolume(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯提示音音量不是 " + from + "（当前为 " + current + "），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftHelpVolume(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯提示音音量从 " + from + " 改为 " + applied), false);
+        return 1;
+    }
+
+    /** /lifthelploud -f &lt;音量&gt; —— **所有维度**都设成该音量。 */
+    private static int liftHelpLoudForceAll(CommandContext<CommandSourceStack> context) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftHelpVolumeAll(source.getServer(), volume);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯提示音音量 = " + applied + "（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里音量正好是 X 的那些改成 Y。 */
+    private static int liftHelpLoudForceFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftHelpVolumeAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯提示音音量是 " + from + "，未做修改"), false);
+            return 0;
+        }
+        int applied = EscalatorSpeedData.clampLiftHelpVolume(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯提示音音量为 " + from + " 的维度改成 " + applied
+                        + "（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** 注册 `/lifthelploud` 的 `-f` 分支：`-f <音量>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftHelpLoudForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(SmoothLift::liftHelpLoudForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(SmoothLift::liftHelpLoudForceFromTo))));
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.48】/lifthelploud up|down|door：三项提示音**各自的**音量
+    //   up = 上楼 / down = 下楼 / door = 开关门（chime 的别名）。
+    //   形状与「共用默认音量」一致（<音量> / <X> to <Y> / -f <音量> / -f <X> to <Y>），
+    //   只是改的是对应那一项；没单独调过的项跟随共用默认。
+    // ------------------------------------------------------------------
+
+    /** 注册某一项（up/down/chime）的音量子命令树。{@code literal} = 界面用名，{@code which} = 数据用名。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftToneLoudCommand(String literal, String which) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(context -> liftToneLoudGlobal(context, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(context -> liftToneLoudFromTo(context, which)))));
+    }
+
+    /** 【1.48】`-f` 节点下的单项分支：{@code up|down|door <音量>} 与 {@code up|down|door <X> to <Y>}。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftToneLoudForceBranch(String literal, String which) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(context -> liftToneLoudForceAll(context, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(context -> liftToneLoudForceFromTo(context, which)))));
+    }
+
+    /** /lifthelploud up|down|door &lt;音量&gt; —— 设置**本维度**这一项的音量。 */
+    private static int liftToneLoudGlobal(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftToneVolume(level, which, volume);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftToneVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯"
+                        + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量已设为 " + applied
+                        + "（100 = 原始音量；其它维度不变，要对所有维度生效用 /lifthelploud "
+                        + literalName(which) + " -f " + applied + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud up|down|door &lt;X&gt; to &lt;Y&gt; —— 本维度这一项音量正好是 X 时才改成 Y。 */
+    private static int liftToneLoudFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getLiftToneVolume(level, which);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量不是 " + from
+                            + "（当前为 " + current + "），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultLiftToneVolume(level, which, from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftToneVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量从 " + from
+                        + " 改为 " + applied), false);
+        return 1;
+    }
+
+    /** /lifthelploud -f up|down|door &lt;音量&gt; —— **所有维度**这一项都设成该音量。 */
+    private static int liftToneLoudForceAll(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftToneVolumeAll(source.getServer(), which, volume);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedData.clampLiftToneVolume(volume);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量 = "
+                        + applied + "（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelploud -f up|down|door &lt;X&gt; to &lt;Y&gt; —— 所有维度里这一项音量正好是 X 的改成 Y。 */
+    private static int liftToneLoudForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftToneVolumeAll(source.getServer(), which, from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量是 "
+                            + from + "，未做修改"), false);
+            return 0;
+        }
+        int applied = EscalatorSpeedData.clampLiftToneVolume(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量为 " + from
+                        + " 的维度改成 " + applied + "（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** 【1.48】数据用名（up/down/chime）→ 指令里的字面名（door 是 chime 的别名）。 */
+    private static String literalName(String which) {
+        return switch (which) {
+            case "chime" -> "door";
+            default -> which;
+        };
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.47】/lifthelpround：直梯提示音（三项共用）淡入淡出范围
+    // ------------------------------------------------------------------
+
+    /** 注册 `/lifthelpround` 的 `-f` 分支：`-f <范围>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftHelpRoundForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("round", roundArg())
+                        .executes(SmoothLift::liftHelpRoundForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", roundArg())
+                                        .executes(SmoothLift::liftHelpRoundForceFromTo))));
+    }
+
+    /** /lifthelpround（不带参数）—— 显示当前维度生效的淡入淡出范围。 */
+    private static int liftHelpRoundShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int round = EscalatorSpeedManager.getLiftHelpRound(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度直梯提示音（上楼 / 下楼 / 开关门共用）淡入淡出范围：" + round + " 格"
+                        + "（范围 "
+                        + EscalatorSpeedData.LIFT_HELP_ROUND_MIN + "~"
+                        + EscalatorSpeedData.LIFT_HELP_ROUND_MAX + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelpround &lt;范围&gt; —— 设置**本维度**的范围。 */
+    private static int liftHelpRoundGlobal(CommandContext<CommandSourceStack> context) {
+        int round = IntegerArgumentType.getInteger(context, "round");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftHelpRound(level, round);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftHelpRound(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯提示音淡入淡出范围已设为 " + applied + " 格；"
+                        + "其它维度不变（要对所有维度生效用 /lifthelpround -f " + applied + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelpround &lt;X&gt; to &lt;Y&gt; —— 本维度范围正好是 X 时才改成 Y。 */
+    private static int liftHelpRoundFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "round");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getLiftHelpRound(level);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯提示音淡入淡出范围不是 " + from + " 格（当前为 " + current + " 格），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultLiftHelpRound(level, from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftHelpRound(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯提示音淡入淡出范围从 " + from + " 格改为 " + applied + " 格"), false);
+        return 1;
+    }
+
+    /** /lifthelpround -f &lt;范围&gt; —— **所有维度**都设成该范围。 */
+    private static int liftHelpRoundForceAll(CommandContext<CommandSourceStack> context) {
+        int round = IntegerArgumentType.getInteger(context, "round");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftHelpRoundAll(source.getServer(), round);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getLiftHelpRound(source.getLevel());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯提示音淡入淡出范围 = " + applied + " 格（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelpround -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里范围正好是 X 的那些改成 Y。 */
+    private static int liftHelpRoundForceFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "round");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftHelpRoundAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯提示音淡入淡出范围是 " + from + " 格，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯提示音淡入淡出范围为 " + from + " 格的维度改成 " + to + " 格（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** 注册 `/lifthelp` 的 `-f` 分支：`-f on|off` 与 `-f on to off` / `-f off to on`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftHelpForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.literal("on")
+                        .executes(context -> liftHelpForceAll(context, true))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("off")
+                                        .executes(context -> liftHelpForceFromTo(context, true, false)))))
+                .then(Commands.literal("off")
+                        .executes(context -> liftHelpForceAll(context, false))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("on")
+                                        .executes(context -> liftHelpForceFromTo(context, false, true)))));
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.46】三提示音独立子开关：/lifthelpup / /lifthelpdown / /lifthelpchime
+    //   形状与 /lifthelp 完全一致（无参显示 / on|off / X to Y / -f 全维度），
+    //   只是把「总开关」换成「up / down / chime 各自的子开关」。总开关与子开关是「与」的关系。
+    // ------------------------------------------------------------------
+
+    /** /lifthelpup|down|chime（不带参数）—— 显示当前维度这项子开关。 */
+    private static int liftToneSwitchShow(CommandContext<CommandSourceStack> context, String which) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        boolean enabled = EscalatorSpeedManager.isLiftToneEnabled(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "：" + helpLabel(enabled)),
+                false);
+        return 1;
+    }
+
+    /** /lifthelpup|down|chime &lt;on|off&gt; —— 设置**本维度**这项子开关。 */
+    private static int liftToneSwitchGlobal(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultLiftToneEnabled(level, which, enabled);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度（" + level.dimension().location() + "）直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which)
+                        + "已设为 " + helpLabel(enabled)
+                        + "；其它维度不变（要对所有维度生效用 /lifthelp" + which + " -f " + (enabled ? "on" : "off") + "）"), false);
+        return 1;
+    }
+
+    /** /lifthelpup|down|chime &lt;X&gt; to &lt;Y&gt; —— 本维度这项子开关正好是 X 时才改成 Y。 */
+    private static int liftToneSwitchFromTo(CommandContext<CommandSourceStack> context, String which, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultLiftToneEnabled(level, which, from, to)) {
+            boolean current = EscalatorSpeedManager.isLiftToneEnabled(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "不是 " + helpLabel(from)
+                            + "（当前为 " + helpLabel(current) + "），未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "从 " + helpLabel(from)
+                        + " 改为 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    /** /lifthelpup|down|chime -f &lt;on|off&gt; —— **所有维度**这项子开关都设成该值。 */
+    private static int liftToneSwitchForceAll(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultLiftToneEnabledAll(source.getServer(), which, enabled);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + " = " + helpLabel(enabled)
+                        + "（改动 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** /lifthelpup|down|chime -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里这项子开关正好是 X 的那些改成 Y。 */
+    private static int liftToneSwitchForceFromTo(CommandContext<CommandSourceStack> context, String which, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultLiftToneEnabledAll(source.getServer(), which, from, to);
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "是 " + helpLabel(from)
+                            + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "为 " + helpLabel(from)
+                        + " 的维度改成 " + helpLabel(to) + "（共 " + changed + " 个维度）"), false);
+        return 1;
+    }
+
+    /** 注册某条子开关指令的完整树（含 `-f` 分支）。{@code which} ∈ {"up","down","chime"}。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftToneSwitchCommand(String which) {
+        return Commands.literal("lifthelp" + which)
+                .executes(context -> liftToneSwitchShow(context, which))
+                .then(Commands.literal("on")
+                        .executes(context -> liftToneSwitchGlobal(context, which, true))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("off")
+                                        .executes(context -> liftToneSwitchFromTo(context, which, true, false)))))
+                .then(Commands.literal("off")
+                        .executes(context -> liftToneSwitchGlobal(context, which, false))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("on")
+                                        .executes(context -> liftToneSwitchFromTo(context, which, false, true)))))
+                .then(Commands.literal("-f")
+                        .then(Commands.literal("on")
+                                .executes(context -> liftToneSwitchForceAll(context, which, true))
+                                .then(Commands.literal("to")
+                                        .then(Commands.literal("off")
+                                                .executes(context -> liftToneSwitchForceFromTo(context, which, true, false)))))
+                        .then(Commands.literal("off")
+                                .executes(context -> liftToneSwitchForceAll(context, which, false))
+                                .then(Commands.literal("to")
+                                        .then(Commands.literal("on")
+                                                .executes(context -> liftToneSwitchForceFromTo(context, which, false, true))))));
+    }
+
+    /** 注册 `/lifthelpspeed` 的 `-f` 分支：`-f <倍速>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftHelpSpeedForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("speed", liftHelpSpeedArg())
+                        .executes(SmoothLift::liftHelpSpeedForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", liftHelpSpeedArg())
+                                        .executes(SmoothLift::liftHelpSpeedForceFromTo))));
+    }
+
 }

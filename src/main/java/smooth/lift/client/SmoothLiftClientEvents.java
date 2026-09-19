@@ -41,7 +41,10 @@ public class SmoothLiftClientEvents {
     /** 【1.7】服务端音频同步分块拼接缓冲：维度ID → (块索引 → 数据)。 */
     private static final Map<String, Map<Integer, byte[]>> PENDING_SYNC_CHUNKS = new HashMap<>();
 
-    /** 拿着石斧右键扶梯 -> 打开速度输入界面（客户端拦截）。 */
+    /**
+     * 拿着石斧右键扶梯 -> 打开速度输入界面；
+     * 【1.45】拿着石斧右键**直梯楼层轨道** -> 打开直梯提示音三列表界面（客户端拦截）。
+     */
     @SubscribeEvent
     public static void onRightClickBlock(PlayerInteractEvent.RightClickBlock event) {
         Level level = event.getLevel();
@@ -51,12 +54,20 @@ public class SmoothLiftClientEvents {
         if (!event.getEntity().getMainHandItem().is(Items.STONE_AXE)) {
             return;
         }
-        if (!EscalatorUtil.isEscalator(level.getBlockState(event.getPos()))) {
+        if (EscalatorUtil.isEscalator(level.getBlockState(event.getPos()))) {
+            Minecraft.getInstance().setScreen(new EscalatorSpeedScreen(event.getPos()));
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.FAIL);
             return;
         }
-        Minecraft.getInstance().setScreen(new EscalatorSpeedScreen(event.getPos()));
-        event.setCanceled(true);
-        event.setCancellationResult(InteractionResult.FAIL);
+        // 【1.45】「是楼层轨道」按注册名判（lift_track_floor_*），不依赖 MTR 编译期。
+        //   直梯没有稳定 ID，所以把右键到的这格的「竖井列 key (X, Z)」传进界面，
+        //   同一条直梯的所有楼层轨道共享同一个 key。
+        if (SmoothLift.isLiftTrackFloor(level.getBlockState(event.getPos()))) {
+            Minecraft.getInstance().setScreen(new LiftToneSetupScreen(event.getPos()));
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.FAIL);
+        }
     }
 
     /** 客户端完全进世界后主动向服务端请求速度 + 音频 + 音量数据。 */
@@ -89,6 +100,9 @@ public class SmoothLiftClientEvents {
         EscalatorAudioPlayer.onClientTick(mc);
         // 【1.15】香港式无障碍提示音播放器：每 tick 找最近扶梯、按两端距离起停两路提示音。
         EscalatorChimePlayer.onClientTick(mc);
+        // 【1.42】直梯（MTR Lift）开关门提示音：关门连播 4 次 liftmusic.ogg、开门连播 2 次。
+        //   与上面两个播放器互不影响：那两个只认「扶梯阶梯方块」，本播放器只认 MTR 的直梯对象。
+        LiftChimePlayer.onClientTick(mc);
     }
 
     /** 世界渲染到 AFTER_ENTITIES 阶段时逐条绘制阶梯面。 */

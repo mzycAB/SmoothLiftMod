@@ -1,0 +1,364 @@
+########## 1/4 å­—èŠ‚ç  + èµ„æºæ ¡éªŒï¼ˆjarï¼‰ ##########
+é€šè¿‡ 165 é¡¹ï¼Œå¤±è´¥ 0 é¡¹
+  å…¨éƒ¨é€šè¿‡ âœ“
+
+########## 2/4 Mixin é…ç½®æ’ä»¶å®‰å…¨æ ¡éªŒï¼ˆç¦æ­¢å‡†å¤‡æœŸåŠ è½½ç±»ï¼‰ ##########
+[PASS] å¯¹ç…§ Aï¼šæ­£æ–‡é‡Œçš„ Class.forName ä¼šè¢«åˆ¤å®šä¸ºè¿è§„  -- å¯¹ç…§æ ·æœ¬å‘½ä¸­
+[PASS] å¯¹ç…§ Bï¼šåªåœ¨æ³¨é‡Šé‡Œå‡ºç° Class.forName ä¸ä¼šè¯¯åˆ¤  -- å¯¹ç…§æ ·æœ¬æœªå‘½ä¸­
+
+[PASS] æ‰¾åˆ° Mixin é…ç½®æ’ä»¶ï¼ˆIMixinConfigPlugin å®ç°ï¼‰  -- src\main\java\smooth\lift\mixin\mtr\Mtr3LiftMixinPlugin.java
+
+[PASS] src\main\java\smooth\lift\mixin\mtr\Mtr3LiftMixinPlugin.javaï¼šæ­£æ–‡é‡Œæ²¡æœ‰ä»»ä½• Class.forName / loadClass è°ƒç”¨  -- å‘½ä¸­ 0 å¤„ï¼Œå®‰å…¨
+[PASS] src\main\java\smooth\lift\mixin\mtr\Mtr3LiftMixinPlugin.javaï¼šç±»å­˜åœ¨æ€§æ¢æµ‹ç”¨çš„æ˜¯ getResourceï¼ˆä¸åŠ è½½ç±»ï¼‰  -- æ­£æ–‡ä¸­å‡ºç° getResource(ï¼ŒæœªåŠ è½½ä»»ä½•ç±»
+
+== å…¨éƒ¨é€šè¿‡ ==
+
+########## 3/4 MTR3/MTR4 å¥‘çº¦ + åŒä¸€å±‚é‡å¼€é—¨åˆ¤å®šè¡¨/å¯è¾¾æ€§ ##########
+ç»Ÿè®¡ï¼šMTR3 å¯è¾¾çŠ¶æ€ 1607 ä¸ªï¼ˆåŸç‰ˆè‡ªå·±å‡ºå‘ï¼‰â†’ éœ€è¦æœ¬ä¿®å¤çš„ 0 ä¸ªï¼›å…ˆåšä¸€æ¬¡è‡ªåŠ¨å…³é—¨å 1852 ä¸ª â†’ éœ€è¦æœ¬ä¿®å¤çš„ 245 ä¸ª
+é€šè¿‡ 78 é¡¹ï¼Œå¤±è´¥ 0 é¡¹
+  å…¨éƒ¨é€šè¿‡ âœ“
+
+########## 4/4 ç¦»çº¿ Brigadier æŒ‡ä»¤æ ‘æ ¡éªŒ ##########
+2026-09-20 00:14:16,655 main WARN Advanced terminal features are not available in this environment
+==================== /futihelp Ö¸ÁîÊ÷ ====================
+¸ù£¨È«²¿Ö¸Áî£©                    ¡¸/¡¹ -> []
+futihelp µÄÖ±½Ó×Ó½Úµã            ¡¸futihelp ¡¹ -> [-f, off, on]
+futihelp on µÄÏÂÒ»²ã           ¡¸futihelp on ¡¹ -> [to]
+futihelp on to µÄÏÂÒ»²ã        ¡¸futihelp on to ¡¹ -> [off]
+futihelp off µÄÏÂÒ»²ã          ¡¸futihelp off ¡¹ -> [to]
+futihelp off to µÄÏÂÒ»²ã       ¡¸futihelp off to ¡¹ -> [on]
+futihelp -f µÄÏÂÒ»²ã           ¡¸futihelp -f ¡¹ -> [off, on]
+futihelp -f on µÄÏÂÒ»²ã        ¡¸futihelp -f on ¡¹ -> [to]
+futihelp -f on to µÄÏÂÒ»²ã     ¡¸futihelp -f on to ¡¹ -> [off]
+futihelp -f off µÄÏÂÒ»²ã       ¡¸futihelp -f off ¡¹ -> [to]
+futihelp -f off to µÄÏÂÒ»²ã    ¡¸futihelp -f off to ¡¹ -> [on]
+-------------------- /futihelploud Ö¸ÁîÊ÷ --------------------
+futihelploud µÄÖ±½Ó×Ó½Úµã        ¡¸futihelploud ¡¹ -> [-f]
+futihelploud <ÒôÁ¿> µÄÏÂÒ»²ã     ¡¸futihelploud 200 ¡¹ -> [to]
+futihelploud <X> to µÄÏÂÒ»²ã   ¡¸futihelploud 200 to ¡¹ -> []
+futihelploud -f µÄÏÂÒ»²ã       ¡¸futihelploud -f ¡¹ -> []
+futihelploud -f <ÒôÁ¿> µÄÏÂÒ»²ã  ¡¸futihelploud -f 200 ¡¹ -> [to]
+futihelploud -f <X> to µÄÏÂÒ»²ã ¡¸futihelploud -f 200 to ¡¹ -> []
+-------------------- /futiround Ö¸ÁîÊ÷ --------------------
+futiround µÄÖ±½Ó×Ó½Úµã           ¡¸futiround ¡¹ -> [-f]
+futiround <·¶Î§> µÄÏÂÒ»²ã        ¡¸futiround 20 ¡¹ -> [to]
+futiround <X> to µÄÏÂÒ»²ã      ¡¸futiround 20 to ¡¹ -> []
+futiround -f µÄÏÂÒ»²ã          ¡¸futiround -f ¡¹ -> []
+futiround -f <·¶Î§> µÄÏÂÒ»²ã     ¡¸futiround -f 20 ¡¹ -> [to]
+futiround -f <X> to µÄÏÂÒ»²ã   ¡¸futiround -f 20 to ¡¹ -> []
+-------------------- /futihelpround Ö¸ÁîÊ÷ --------------------
+futihelpround µÄÖ±½Ó×Ó½Úµã       ¡¸futihelpround ¡¹ -> [-f]
+futihelpround <·¶Î§> µÄÏÂÒ»²ã    ¡¸futihelpround 4 ¡¹ -> [to]
+futihelpround <X> to µÄÏÂÒ»²ã  ¡¸futihelpround 4 to ¡¹ -> []
+futihelpround -f µÄÏÂÒ»²ã      ¡¸futihelpround -f ¡¹ -> []
+futihelpround -f <·¶Î§> µÄÏÂÒ»²ã ¡¸futihelpround -f 4 ¡¹ -> [to]
+futihelpround -f <X> to µÄÏÂÒ»²ã ¡¸futihelpround -f 4 to ¡¹ -> []
+-------------------- /futihelpspeed Ö¸ÁîÊ÷ --------------------
+futihelpspeed µÄÖ±½Ó×Ó½Úµã£¨Ó¦ÓĞ -f / in / out£© ¡¸futihelpspeed ¡¹ -> [-f, in, out]
+futihelpspeed in µÄÏÂÒ»²ã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸futihelpspeed in ¡¹ -> []
+futihelpspeed in <Hz> µÄÏÂÒ»²ã ¡¸futihelpspeed in 5 ¡¹ -> [to]
+futihelpspeed in <X> to µÄÏÂÒ»²ã ¡¸futihelpspeed in 5 to ¡¹ -> []
+futihelpspeed out µÄÏÂÒ»²ã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸futihelpspeed out ¡¹ -> []
+futihelpspeed out <Hz> µÄÏÂÒ»²ã ¡¸futihelpspeed out 1 ¡¹ -> [to]
+futihelpspeed -f µÄÏÂÒ»²ã£¨Ó¦ÓĞ in / out£© ¡¸futihelpspeed -f ¡¹ -> [in, out]
+futihelpspeed -f in <Hz> µÄÏÂÒ»²ã ¡¸futihelpspeed -f in 5 ¡¹ -> [to]
+futihelpspeed -f in <X> to µÄÏÂÒ»²ã ¡¸futihelpspeed -f in 5 to ¡¹ -> []
+futihelpspeed -f out <Hz> µÄÏÂÒ»²ã ¡¸futihelpspeed -f out 1 ¡¹ -> [to]
+
+==================== /futihelpmusic Ö¸ÁîÊ÷£¨¡¾1.41¡¿Óë /futihelpspeed µÄ in|out ¶ÔÆë£© ====================
+futihelpmusic µÄÖ±½Ó×Ó½Úµã£¨Ó¦ÓĞ -f / in / out£© ¡¸futihelpmusic ¡¹ -> [-f, in, out]
+futihelpmusic in µÄÏÂÒ»²ã£¨×Ö·û´®²ÎÊı²»²¹È«£© ¡¸futihelpmusic in ¡¹ -> []
+futihelpmusic in <Ãû×Ö> µÄÏÂÒ»²ã ¡¸futihelpmusic in default ¡¹ -> [to]
+futihelpmusic in <X> to µÄÏÂÒ»²ã ¡¸futihelpmusic in default to ¡¹ -> []
+futihelpmusic out <Ãû×Ö> µÄÏÂÒ»²ã ¡¸futihelpmusic out default ¡¹ -> [to]
+futihelpmusic out <X> to µÄÏÂÒ»²ã ¡¸futihelpmusic out default to ¡¹ -> []
+futihelpmusic -f µÄÏÂÒ»²ã£¨Ó¦ÓĞ in / out£© ¡¸futihelpmusic -f ¡¹ -> [in, out]
+futihelpmusic -f in µÄÏÂÒ»²ã£¨×Ö·û´®²ÎÊı²»²¹È«£© ¡¸futihelpmusic -f in ¡¹ -> []
+futihelpmusic -f in <Ãû×Ö> µÄÏÂÒ»²ã ¡¸futihelpmusic -f in default ¡¹ -> [to]
+futihelpmusic -f in <X> to µÄÏÂÒ»²ã ¡¸futihelpmusic -f in default to ¡¹ -> []
+futihelpmusic -f out <Ãû×Ö> µÄÏÂÒ»²ã ¡¸futihelpmusic -f out default ¡¹ -> [to]
+
+==================== ¡¾1.42¡¿/lifthelp Ö¸ÁîÊ÷ ====================
+lifthelp µÄÖ±½Ó×Ó½Úµã            ¡¸lifthelp ¡¹ -> [-f, off, on]
+lifthelp on µÄÏÂÒ»²ã           ¡¸lifthelp on ¡¹ -> [to]
+lifthelp on to µÄÏÂÒ»²ã        ¡¸lifthelp on to ¡¹ -> [off]
+lifthelp off to µÄÏÂÒ»²ã       ¡¸lifthelp off to ¡¹ -> [on]
+lifthelp -f µÄÏÂÒ»²ã           ¡¸lifthelp -f ¡¹ -> [off, on]
+lifthelp -f on to µÄÏÂÒ»²ã     ¡¸lifthelp -f on to ¡¹ -> [off]
+-------------------- ¡¾1.42¡¿/lifthelpspeed Ö¸ÁîÊ÷ --------------------
+lifthelpspeed µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelpspeed ¡¹ -> [-f]
+lifthelpspeed <±¶ËÙ> µÄÏÂÒ»²ã    ¡¸lifthelpspeed 1.5 ¡¹ -> [to]
+lifthelpspeed <X> to µÄÏÂÒ»²ã  ¡¸lifthelpspeed 1.5 to ¡¹ -> []
+lifthelpspeed -f µÄÏÂÒ»²ã      ¡¸lifthelpspeed -f ¡¹ -> []
+-------------------- ¡¾1.43¡¿/lifthelploud Ö¸ÁîÊ÷ --------------------
+lifthelploud µÄÖ±½Ó×Ó½Úµã        ¡¸lifthelploud ¡¹ -> [-f, door, down, up]
+lifthelploud <ÒôÁ¿> µÄÏÂÒ»²ã     ¡¸lifthelploud 200 ¡¹ -> [to]
+lifthelploud <X> to µÄÏÂÒ»²ã   ¡¸lifthelploud 200 to ¡¹ -> []
+lifthelploud -f µÄÏÂÒ»²ã       ¡¸lifthelploud -f ¡¹ -> [door, down, up]
+lifthelploud -f <X> to µÄÏÂÒ»²ã ¡¸lifthelploud -f 200 to ¡¹ -> []
+===== lifthelploud up =====
+lifthelploud up µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud up ¡¹ -> []
+lifthelploud up <ÒôÁ¿> µÄÏÂÒ»²ã  ¡¸lifthelploud up 200 ¡¹ -> [to]
+lifthelploud up <X> to µÄÏÂÒ»²ã ¡¸lifthelploud up 200 to ¡¹ -> []
+lifthelploud -f up µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud -f up ¡¹ -> []
+lifthelploud -f up <X> to µÄÏÂÒ»²ã ¡¸lifthelploud -f up 200 to ¡¹ -> []
+===== lifthelploud down =====
+lifthelploud down µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud down ¡¹ -> []
+lifthelploud down <ÒôÁ¿> µÄÏÂÒ»²ã ¡¸lifthelploud down 200 ¡¹ -> [to]
+lifthelploud down <X> to µÄÏÂÒ»²ã ¡¸lifthelploud down 200 to ¡¹ -> []
+lifthelploud -f down µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud -f down ¡¹ -> []
+lifthelploud -f down <X> to µÄÏÂÒ»²ã ¡¸lifthelploud -f down 200 to ¡¹ -> []
+===== lifthelploud door =====
+lifthelploud door µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud door ¡¹ -> []
+lifthelploud door <ÒôÁ¿> µÄÏÂÒ»²ã ¡¸lifthelploud door 200 ¡¹ -> [to]
+lifthelploud door <X> to µÄÏÂÒ»²ã ¡¸lifthelploud door 200 to ¡¹ -> []
+lifthelploud -f door µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelploud -f door ¡¹ -> []
+lifthelploud -f door <X> to µÄÏÂÒ»²ã ¡¸lifthelploud -f door 200 to ¡¹ -> []
+-------------------- ¡¾1.47¡¿/lifthelpround Ö¸ÁîÊ÷ --------------------
+lifthelpround µÄÖ±½Ó×Ó½Úµã£¨ÊıÖµ²ÎÊı£¬ÎŞ²¹È«£© ¡¸lifthelpround ¡¹ -> [-f]
+lifthelpround <·¶Î§> µÄÏÂÒ»²ã    ¡¸lifthelpround 4 ¡¹ -> [to]
+lifthelpround <X> to µÄÏÂÒ»²ã  ¡¸lifthelpround 4 to ¡¹ -> []
+lifthelpround -f µÄÏÂÒ»²ã      ¡¸lifthelpround -f ¡¹ -> []
+lifthelpround -f <X> to µÄÏÂÒ»²ã ¡¸lifthelpround -f 4 to ¡¹ -> []
+  OK   ¡¸lifthelpround 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÏÂÏŞÊÇ 1£©
+  OK   ¡¸lifthelpround 200¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÉÏÏŞÊÇ 128£©
+-------------------- ¡¾1.46¡¿/lifthelpup|down|chime Ö¸ÁîÊ÷£¨ÈıÌáÊ¾Òô¶ÀÁ¢×Ó¿ª¹Ø£© --------------------
+===== lifthelpup =====
+lifthelpup µÄÖ±½Ó×Ó½Úµã          ¡¸lifthelpup ¡¹ -> [-f, off, on]
+lifthelpup on µÄÏÂÒ»²ã         ¡¸lifthelpup on ¡¹ -> [to]
+lifthelpup on to µÄÏÂÒ»²ã      ¡¸lifthelpup on to ¡¹ -> [off]
+lifthelpup off to µÄÏÂÒ»²ã     ¡¸lifthelpup off to ¡¹ -> [on]
+lifthelpup -f µÄÏÂÒ»²ã         ¡¸lifthelpup -f ¡¹ -> [off, on]
+lifthelpup -f on to µÄÏÂÒ»²ã   ¡¸lifthelpup -f on to ¡¹ -> [off]
+===== lifthelpdown =====
+lifthelpdown µÄÖ±½Ó×Ó½Úµã        ¡¸lifthelpdown ¡¹ -> [-f, off, on]
+lifthelpdown on µÄÏÂÒ»²ã       ¡¸lifthelpdown on ¡¹ -> [to]
+lifthelpdown on to µÄÏÂÒ»²ã    ¡¸lifthelpdown on to ¡¹ -> [off]
+lifthelpdown off to µÄÏÂÒ»²ã   ¡¸lifthelpdown off to ¡¹ -> [on]
+lifthelpdown -f µÄÏÂÒ»²ã       ¡¸lifthelpdown -f ¡¹ -> [off, on]
+lifthelpdown -f on to µÄÏÂÒ»²ã ¡¸lifthelpdown -f on to ¡¹ -> [off]
+===== lifthelpchime =====
+lifthelpchime µÄÖ±½Ó×Ó½Úµã       ¡¸lifthelpchime ¡¹ -> [-f, off, on]
+lifthelpchime on µÄÏÂÒ»²ã      ¡¸lifthelpchime on ¡¹ -> [to]
+lifthelpchime on to µÄÏÂÒ»²ã   ¡¸lifthelpchime on to ¡¹ -> [off]
+lifthelpchime off to µÄÏÂÒ»²ã  ¡¸lifthelpchime off to ¡¹ -> [on]
+lifthelpchime -f µÄÏÂÒ»²ã      ¡¸lifthelpchime -f ¡¹ -> [off, on]
+lifthelpchime -f on to µÄÏÂÒ»²ã ¡¸lifthelpchime -f on to ¡¹ -> [off]
+
+==================== ¡¾1.41¡¿/futihelpmusic Óë /futihelpspeed ĞÎ×´¶ÔÆë ====================
+  OK   ĞÎ×´¡¸(¶¥²ã)¡¹ futihelpmusic=[-f, in, out] / futihelpspeed=[-f, in, out]
+  OK   ĞÎ×´¡¸in ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸in a ¡¹ futihelpmusic=[to] / futihelpspeed=[to]
+  OK   ĞÎ×´¡¸in a to ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸out ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸out a ¡¹ futihelpmusic=[to] / futihelpspeed=[to]
+  OK   ĞÎ×´¡¸out a to ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸-f ¡¹ futihelpmusic=[in, out] / futihelpspeed=[in, out]
+  OK   ĞÎ×´¡¸-f in ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸-f in a ¡¹ futihelpmusic=[to] / futihelpspeed=[to]
+  OK   ĞÎ×´¡¸-f in a to ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸-f out ¡¹ futihelpmusic=[] / futihelpspeed=[]
+  OK   ĞÎ×´¡¸-f out a ¡¹ futihelpmusic=[to] / futihelpspeed=[to]
+  OK   ĞÎ×´¡¸-f out a to ¡¹ futihelpmusic=[] / futihelpspeed=[]
+
+==================== ¡¾1.48¡¿/lifthelploud ÈıÏî·ÖÖ§¸÷×Ô¿ÉÖ´ĞĞ ====================
+  OK   ¡¸lifthelploud up 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud up 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f up 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f up 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud down 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud down 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f down 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f down 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud door 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud door 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f door 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f door 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+
+==================== ÆÚÍûµÄ²¹È«Ïî ====================
+  OK   ¡¸futihelp ¡¹ ÆÚÍû [-f, off, on] Êµ¼Ê [-f, off, on]
+  OK   ¡¸futihelp on ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelp on to ¡¹ ÆÚÍû [off] Êµ¼Ê [off]
+  OK   ¡¸futihelp off ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelp off to ¡¹ ÆÚÍû [on] Êµ¼Ê [on]
+  OK   ¡¸futihelp -f ¡¹ ÆÚÍû [off, on] Êµ¼Ê [off, on]
+  OK   ¡¸futihelp -f on ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelp -f on to ¡¹ ÆÚÍû [off] Êµ¼Ê [off]
+  OK   ¡¸futihelp -f off ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelp -f off to ¡¹ ÆÚÍû [on] Êµ¼Ê [on]
+  OK   ¡¸jietispeed ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸futiloud ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸futihelploud ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸futiround ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸futiround 20 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futiround 20 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpround ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸futihelpround 4 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpround 4 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpround -f 4 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpspeed ¡¹ ÆÚÍû [-f, in, out] Êµ¼Ê [-f, in, out]
+  OK   ¡¸futihelpspeed in ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpspeed in 5 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpspeed in 5 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpspeed out 1 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpspeed -f ¡¹ ÆÚÍû [in, out] Êµ¼Ê [in, out]
+  OK   ¡¸futihelpspeed -f in 5 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpspeed -f in 5 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpspeed -f out 1 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpmusic ¡¹ ÆÚÍû [-f, in, out] Êµ¼Ê [-f, in, out]
+  OK   ¡¸futihelpmusic in ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpmusic in default ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpmusic in default to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpmusic out default ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpmusic out default to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpmusic -f ¡¹ ÆÚÍû [in, out] Êµ¼Ê [in, out]
+  OK   ¡¸futihelpmusic -f in ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpmusic -f in default ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpmusic -f in default to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸futihelpmusic -f out default ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸futihelpmusic -f out default to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelp ¡¹ ÆÚÍû [-f, off, on] Êµ¼Ê [-f, off, on]
+  OK   ¡¸lifthelp on ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelp on to ¡¹ ÆÚÍû [off] Êµ¼Ê [off]
+  OK   ¡¸lifthelp off ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelp off to ¡¹ ÆÚÍû [on] Êµ¼Ê [on]
+  OK   ¡¸lifthelp -f ¡¹ ÆÚÍû [off, on] Êµ¼Ê [off, on]
+  OK   ¡¸lifthelp -f on to ¡¹ ÆÚÍû [off] Êµ¼Ê [off]
+  OK   ¡¸lifthelpspeed ¡¹ ÆÚÍû [-f] Êµ¼Ê [-f]
+  OK   ¡¸lifthelpspeed 1.5 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelpspeed 1.5 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelpspeed -f ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelpspeed -f 1.5 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelploud ¡¹ ÆÚÍû [-f, door, down, up] Êµ¼Ê [-f, door, down, up]
+  OK   ¡¸lifthelploud 200 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelploud 200 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelploud -f ¡¹ ÆÚÍû [door, down, up] Êµ¼Ê [door, down, up]
+  OK   ¡¸lifthelploud -f 200 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelploud -f 200 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelploud -f up 200 ¡¹ ÆÚÍû [to] Êµ¼Ê [to]
+  OK   ¡¸lifthelploud -f down 200 to ¡¹ ÆÚÍû [] Êµ¼Ê []
+  OK   ¡¸lifthelploud -f door ¡¹ ÆÚÍû [] Êµ¼Ê []
+
+==================== Ã¿ÌõÍêÕûÖ¸Áî¶¼¿ÉÖ´ĞĞ ====================
+  OK   ¡¸futihelp¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp on to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp off to on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp -f on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp -f off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp -f on to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelp -f off to on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futispeed¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futispeed -f 2¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futispeed -f 2 to 3¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸jietispeed¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiloud¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiloud -f 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiloud -f 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelploud¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelploud 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelploud 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelploud -f 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelploud -f 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futimusic¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiround¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiround 20¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiround 20 to 30¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiround -f 20¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futiround -f 20 to 30¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpround¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpround 4¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpround 4 to 6¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpround -f 6¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpround -f 6 to 8¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed in 5¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed in 5 to 8¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed out 3¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed out 3 to 4¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed -f in 5¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed -f in 5 to 8¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed -f out 1¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed -f out 1 to 2¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic in default¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic in off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic in example.ogg¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic out default¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic out off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic out example.ogg¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic in default to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic out example.ogg to default¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic -f in default¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic -f in off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic -f in default to example.ogg¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic -f out default¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpmusic -f out example.ogg to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp on to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp off to on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp -f on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp -f off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp -f on to off¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp -f off to on¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed 1.5¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed 1.5 to 2¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed -f 1.5¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed -f 1.5 to 2¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f 200¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f 200 to 300¡¹ ¿ÉÖ´ĞĞ = true
+
+==================== ²»¸Ã´æÔÚµÄ·ÖÖ§ ====================
+  OK   ¡¸futihelp on to on¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨on to on Ó¦ÎŞ´Ë·ÖÖ§£©
+  OK   ¡¸futihelp off to off¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨off to off Ó¦ÎŞ´Ë·ÖÖ§£©
+  OK   ¡¸futihelp -f on to on¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨-f on to on Ó¦ÎŞ´Ë·ÖÖ§£©
+  OK   ¡¸futiround 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÏÂÏŞÊÇ 1£©
+  OK   ¡¸futiround 200¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÉÏÏŞÊÇ 128£©
+  OK   ¡¸futihelpround 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÏÂÏŞÊÇ 1£©
+  OK   ¡¸futihelpround 999¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨·¶Î§ÉÏÏŞÊÇ 128£©
+  OK   ¡¸futihelpspeed in 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨ËÙÂÊÏÂÏŞÊÇ 1 Hz£©
+  OK   ¡¸futihelpspeed out 51¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨ËÙÂÊÉÏÏŞÊÇ 50 Hz£©
+  OK   ¡¸futihelpspeed -f in 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨-f ·ÖÖ§Í¬ÑùÏÂÏŞ 1 Hz£©
+  OK   ¡¸futihelpspeed -f out 51¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨-f ·ÖÖ§Í¬ÑùÉÏÏŞ 50 Hz£©
+  OK   ¡¸futihelpspeed out 50¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸futihelpspeed -f out 50¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨ÒôÁ¿ÏÂÏŞÊÇ 1£©
+  OK   ¡¸lifthelploud 1001¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨ÒôÁ¿ÉÏÏŞÊÇ 1000£©
+  OK   ¡¸lifthelploud -f 0¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨-f ·ÖÖ§Í¬ÑùÏÂÏŞ 1£©
+  OK   ¡¸lifthelploud -f 1001¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨-f ·ÖÖ§Í¬ÑùÉÏÏŞ 1000£©
+  OK   ¡¸lifthelploud 1¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud 1000¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelploud -f 1000¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed 0.4¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨±¶ËÙÏÂÏŞÊÇ 0.5£©
+  OK   ¡¸lifthelpspeed 2.1¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨±¶ËÙÉÏÏŞÊÇ 2.0£©
+  OK   ¡¸lifthelpspeed 0.5¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelpspeed 2¡¹ ¿ÉÖ´ĞĞ = true
+  OK   ¡¸lifthelp on to on¡¹ Ó¦µ±ÎŞ·¨Ö´ĞĞ£¨on to on Ó¦ÎŞ´Ë·ÖÖ§£©
+
+==================== Î²²¿¶àÓàÊäÈëµÄ¶ÔÕÕ£¨¶ÔÕÕ¼ÈÓĞÖ¸Áî£¬ÅĞ¶ÏÊÇ²»ÊÇ Brigadier ¹ÌÓĞĞĞÎª£© ====================
+  ¡¸futihelp on off¡¹ ×îºó½Úµã=on ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=12/15 Òì³£=[]
+  ¡¸futispeed 2 3¡¹ ×îºó½Úµã=speed ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=12/13 Òì³£=[]
+  ¡¸jietispeed 2 3¡¹ ×îºó½Úµã=speed ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=13/14 Òì³£=[]
+  ¡¸futiloud 200 300¡¹ ×îºó½Úµã=volume ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=13/16 Òì³£=[]
+  ¡¸futihelploud 200 300¡¹ ×îºó½Úµã=volume ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=17/20 Òì³£=[]
+  ¡¸futihelp bogus¡¹ ×îºó½Úµã=futihelp ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=9/14 Òì³£=[]
+  ¡¸futihelpspeed 5¡¹ ×îºó½Úµã=futihelpspeed ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/15 Òì³£=[]
+  ¡¸futihelpspeed bogus¡¹ ×îºó½Úµã=futihelpspeed ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/19 Òì³£=[]
+  ¡¸futihelpmusic bogus¡¹ ×îºó½Úµã=futihelpmusic ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/19 Òì³£=[]
+  ¡¸futihelpmusic -f¡¹ ×îºó½Úµã=-f ÓĞÖ´ĞĞÆ÷=false ÒÑÏû·Ñµ½=16/16 Òì³£=[]
+  ¡¸futihelpmusic in¡¹ ×îºó½Úµã=in ÓĞÖ´ĞĞÆ÷=false ÒÑÏû·Ñµ½=16/16 Òì³£=[]
+  ¡¸futihelpmusic in default to¡¹ ×îºó½Úµã=to ÓĞÖ´ĞĞÆ÷=false ÒÑÏû·Ñµ½=27/27 Òì³£=[]
+  ¡¸futihelpmusic default¡¹ ×îºó½Úµã=futihelpmusic ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/21 Òì³£=[]
+  ¡¸futihelpmusic default to off¡¹ ×îºó½Úµã=futihelpmusic ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/28 Òì³£=[]
+  ¡¸lifthelp bogus¡¹ ×îºó½Úµã=lifthelp ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=9/14 Òì³£=[]
+  ¡¸lifthelpspeed 5¡¹ ×îºó½Úµã=lifthelpspeed ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=14/15 Òì³£=[<argument speed:float(0.5, 2.0)>]
+  ¡¸lifthelploud 200 300¡¹ ×îºó½Úµã=volume ÓĞÖ´ĞĞÆ÷=true ÒÑÏû·Ñµ½=17/20 Òì³£=[]
+
+½á¹û£ºÈ«²¿Í¨¹ı ?

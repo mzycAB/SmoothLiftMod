@@ -1,0 +1,343 @@
+2026-09-19 23:43:51,674 main WARN Advanced terminal features are not available in this environment
+==================== /futihelp 指令树 ====================
+根（全部指令）                    「/」 -> []
+futihelp 的直接子节点            「futihelp 」 -> [-f, off, on]
+futihelp on 的下一层           「futihelp on 」 -> [to]
+futihelp on to 的下一层        「futihelp on to 」 -> [off]
+futihelp off 的下一层          「futihelp off 」 -> [to]
+futihelp off to 的下一层       「futihelp off to 」 -> [on]
+futihelp -f 的下一层           「futihelp -f 」 -> [off, on]
+futihelp -f on 的下一层        「futihelp -f on 」 -> [to]
+futihelp -f on to 的下一层     「futihelp -f on to 」 -> [off]
+futihelp -f off 的下一层       「futihelp -f off 」 -> [to]
+futihelp -f off to 的下一层    「futihelp -f off to 」 -> [on]
+-------------------- /futihelploud 指令树 --------------------
+futihelploud 的直接子节点        「futihelploud 」 -> [-f]
+futihelploud <音量> 的下一层     「futihelploud 200 」 -> [to]
+futihelploud <X> to 的下一层   「futihelploud 200 to 」 -> []
+futihelploud -f 的下一层       「futihelploud -f 」 -> []
+futihelploud -f <音量> 的下一层  「futihelploud -f 200 」 -> [to]
+futihelploud -f <X> to 的下一层 「futihelploud -f 200 to 」 -> []
+-------------------- /futiround 指令树 --------------------
+futiround 的直接子节点           「futiround 」 -> [-f]
+futiround <范围> 的下一层        「futiround 20 」 -> [to]
+futiround <X> to 的下一层      「futiround 20 to 」 -> []
+futiround -f 的下一层          「futiround -f 」 -> []
+futiround -f <范围> 的下一层     「futiround -f 20 」 -> [to]
+futiround -f <X> to 的下一层   「futiround -f 20 to 」 -> []
+-------------------- /futihelpround 指令树 --------------------
+futihelpround 的直接子节点       「futihelpround 」 -> [-f]
+futihelpround <范围> 的下一层    「futihelpround 4 」 -> [to]
+futihelpround <X> to 的下一层  「futihelpround 4 to 」 -> []
+futihelpround -f 的下一层      「futihelpround -f 」 -> []
+futihelpround -f <范围> 的下一层 「futihelpround -f 4 」 -> [to]
+futihelpround -f <X> to 的下一层 「futihelpround -f 4 to 」 -> []
+-------------------- /futihelpspeed 指令树 --------------------
+futihelpspeed 的直接子节点（应有 -f / in / out） 「futihelpspeed 」 -> [-f, in, out]
+futihelpspeed in 的下一层（数值参数，无补全） 「futihelpspeed in 」 -> []
+futihelpspeed in <Hz> 的下一层 「futihelpspeed in 5 」 -> [to]
+futihelpspeed in <X> to 的下一层 「futihelpspeed in 5 to 」 -> []
+futihelpspeed out 的下一层（数值参数，无补全） 「futihelpspeed out 」 -> []
+futihelpspeed out <Hz> 的下一层 「futihelpspeed out 1 」 -> [to]
+futihelpspeed -f 的下一层（应有 in / out） 「futihelpspeed -f 」 -> [in, out]
+futihelpspeed -f in <Hz> 的下一层 「futihelpspeed -f in 5 」 -> [to]
+futihelpspeed -f in <X> to 的下一层 「futihelpspeed -f in 5 to 」 -> []
+futihelpspeed -f out <Hz> 的下一层 「futihelpspeed -f out 1 」 -> [to]
+
+==================== /futihelpmusic 指令树（【1.41】与 /futihelpspeed 的 in|out 对齐） ====================
+futihelpmusic 的直接子节点（应有 -f / in / out） 「futihelpmusic 」 -> [-f, in, out]
+futihelpmusic in 的下一层（字符串参数不补全） 「futihelpmusic in 」 -> []
+futihelpmusic in <名字> 的下一层 「futihelpmusic in default 」 -> [to]
+futihelpmusic in <X> to 的下一层 「futihelpmusic in default to 」 -> []
+futihelpmusic out <名字> 的下一层 「futihelpmusic out default 」 -> [to]
+futihelpmusic out <X> to 的下一层 「futihelpmusic out default to 」 -> []
+futihelpmusic -f 的下一层（应有 in / out） 「futihelpmusic -f 」 -> [in, out]
+futihelpmusic -f in 的下一层（字符串参数不补全） 「futihelpmusic -f in 」 -> []
+futihelpmusic -f in <名字> 的下一层 「futihelpmusic -f in default 」 -> [to]
+futihelpmusic -f in <X> to 的下一层 「futihelpmusic -f in default to 」 -> []
+futihelpmusic -f out <名字> 的下一层 「futihelpmusic -f out default 」 -> [to]
+
+==================== 【1.42】/lifthelp 指令树 ====================
+lifthelp 的直接子节点            「lifthelp 」 -> [-f, off, on]
+lifthelp on 的下一层           「lifthelp on 」 -> [to]
+lifthelp on to 的下一层        「lifthelp on to 」 -> [off]
+lifthelp off to 的下一层       「lifthelp off to 」 -> [on]
+lifthelp -f 的下一层           「lifthelp -f 」 -> [off, on]
+lifthelp -f on to 的下一层     「lifthelp -f on to 」 -> [off]
+-------------------- 【1.42】/lifthelpspeed 指令树 --------------------
+lifthelpspeed 的直接子节点（数值参数，无补全） 「lifthelpspeed 」 -> [-f]
+lifthelpspeed <倍速> 的下一层    「lifthelpspeed 1.5 」 -> [to]
+lifthelpspeed <X> to 的下一层  「lifthelpspeed 1.5 to 」 -> []
+lifthelpspeed -f 的下一层      「lifthelpspeed -f 」 -> []
+-------------------- 【1.43】/lifthelploud 指令树 --------------------
+lifthelploud 的直接子节点        「lifthelploud 」 -> [-f, door, down, up]
+lifthelploud <音量> 的下一层     「lifthelploud 200 」 -> [to]
+lifthelploud <X> to 的下一层   「lifthelploud 200 to 」 -> []
+lifthelploud -f 的下一层       「lifthelploud -f 」 -> [door, down, up]
+lifthelploud -f <X> to 的下一层 「lifthelploud -f 200 to 」 -> []
+===== lifthelploud up =====
+lifthelploud up 的直接子节点（数值参数，无补全） 「lifthelploud up 」 -> []
+lifthelploud up <音量> 的下一层  「lifthelploud up 200 」 -> [to]
+lifthelploud up <X> to 的下一层 「lifthelploud up 200 to 」 -> []
+lifthelploud -f up 的直接子节点（数值参数，无补全） 「lifthelploud -f up 」 -> []
+lifthelploud -f up <X> to 的下一层 「lifthelploud -f up 200 to 」 -> []
+===== lifthelploud down =====
+lifthelploud down 的直接子节点（数值参数，无补全） 「lifthelploud down 」 -> []
+lifthelploud down <音量> 的下一层 「lifthelploud down 200 」 -> [to]
+lifthelploud down <X> to 的下一层 「lifthelploud down 200 to 」 -> []
+lifthelploud -f down 的直接子节点（数值参数，无补全） 「lifthelploud -f down 」 -> []
+lifthelploud -f down <X> to 的下一层 「lifthelploud -f down 200 to 」 -> []
+===== lifthelploud door =====
+lifthelploud door 的直接子节点（数值参数，无补全） 「lifthelploud door 」 -> []
+lifthelploud door <音量> 的下一层 「lifthelploud door 200 」 -> [to]
+lifthelploud door <X> to 的下一层 「lifthelploud door 200 to 」 -> []
+lifthelploud -f door 的直接子节点（数值参数，无补全） 「lifthelploud -f door 」 -> []
+lifthelploud -f door <X> to 的下一层 「lifthelploud -f door 200 to 」 -> []
+-------------------- 【1.47】/lifthelpround 指令树 --------------------
+lifthelpround 的直接子节点（数值参数，无补全） 「lifthelpround 」 -> [-f]
+lifthelpround <范围> 的下一层    「lifthelpround 4 」 -> [to]
+lifthelpround <X> to 的下一层  「lifthelpround 4 to 」 -> []
+lifthelpround -f 的下一层      「lifthelpround -f 」 -> []
+lifthelpround -f <X> to 的下一层 「lifthelpround -f 4 to 」 -> []
+  OK   「lifthelpround 0」 应当无法执行（范围下限是 1）
+  OK   「lifthelpround 200」 应当无法执行（范围上限是 128）
+-------------------- 【1.46】/lifthelpup|down|chime 指令树（三提示音独立子开关） --------------------
+===== lifthelpup =====
+lifthelpup 的直接子节点          「lifthelpup 」 -> [-f, off, on]
+lifthelpup on 的下一层         「lifthelpup on 」 -> [to]
+lifthelpup on to 的下一层      「lifthelpup on to 」 -> [off]
+lifthelpup off to 的下一层     「lifthelpup off to 」 -> [on]
+lifthelpup -f 的下一层         「lifthelpup -f 」 -> [off, on]
+lifthelpup -f on to 的下一层   「lifthelpup -f on to 」 -> [off]
+===== lifthelpdown =====
+lifthelpdown 的直接子节点        「lifthelpdown 」 -> [-f, off, on]
+lifthelpdown on 的下一层       「lifthelpdown on 」 -> [to]
+lifthelpdown on to 的下一层    「lifthelpdown on to 」 -> [off]
+lifthelpdown off to 的下一层   「lifthelpdown off to 」 -> [on]
+lifthelpdown -f 的下一层       「lifthelpdown -f 」 -> [off, on]
+lifthelpdown -f on to 的下一层 「lifthelpdown -f on to 」 -> [off]
+===== lifthelpchime =====
+lifthelpchime 的直接子节点       「lifthelpchime 」 -> [-f, off, on]
+lifthelpchime on 的下一层      「lifthelpchime on 」 -> [to]
+lifthelpchime on to 的下一层   「lifthelpchime on to 」 -> [off]
+lifthelpchime off to 的下一层  「lifthelpchime off to 」 -> [on]
+lifthelpchime -f 的下一层      「lifthelpchime -f 」 -> [off, on]
+lifthelpchime -f on to 的下一层 「lifthelpchime -f on to 」 -> [off]
+
+==================== 【1.41】/futihelpmusic 与 /futihelpspeed 形状对齐 ====================
+  OK   形状「(顶层)」 futihelpmusic=[-f, in, out] / futihelpspeed=[-f, in, out]
+  OK   形状「in 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「in a 」 futihelpmusic=[to] / futihelpspeed=[to]
+  OK   形状「in a to 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「out 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「out a 」 futihelpmusic=[to] / futihelpspeed=[to]
+  OK   形状「out a to 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「-f 」 futihelpmusic=[in, out] / futihelpspeed=[in, out]
+  OK   形状「-f in 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「-f in a 」 futihelpmusic=[to] / futihelpspeed=[to]
+  OK   形状「-f in a to 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「-f out 」 futihelpmusic=[] / futihelpspeed=[]
+  OK   形状「-f out a 」 futihelpmusic=[to] / futihelpspeed=[to]
+  OK   形状「-f out a to 」 futihelpmusic=[] / futihelpspeed=[]
+
+==================== 【1.48】/lifthelploud 三项分支各自可执行 ====================
+  OK   「lifthelploud up 200」 可执行 = true
+  OK   「lifthelploud up 200 to 300」 可执行 = true
+  OK   「lifthelploud -f up 200」 可执行 = true
+  OK   「lifthelploud -f up 200 to 300」 可执行 = true
+  OK   「lifthelploud down 200」 可执行 = true
+  OK   「lifthelploud down 200 to 300」 可执行 = true
+  OK   「lifthelploud -f down 200」 可执行 = true
+  OK   「lifthelploud -f down 200 to 300」 可执行 = true
+  OK   「lifthelploud door 200」 可执行 = true
+  OK   「lifthelploud door 200 to 300」 可执行 = true
+  OK   「lifthelploud -f door 200」 可执行 = true
+  OK   「lifthelploud -f door 200 to 300」 可执行 = true
+
+==================== 期望的补全项 ====================
+  OK   「futihelp 」 期望 [-f, off, on] 实际 [-f, off, on]
+  OK   「futihelp on 」 期望 [to] 实际 [to]
+  OK   「futihelp on to 」 期望 [off] 实际 [off]
+  OK   「futihelp off 」 期望 [to] 实际 [to]
+  OK   「futihelp off to 」 期望 [on] 实际 [on]
+  OK   「futihelp -f 」 期望 [off, on] 实际 [off, on]
+  OK   「futihelp -f on 」 期望 [to] 实际 [to]
+  OK   「futihelp -f on to 」 期望 [off] 实际 [off]
+  OK   「futihelp -f off 」 期望 [to] 实际 [to]
+  OK   「futihelp -f off to 」 期望 [on] 实际 [on]
+  OK   「jietispeed 」 期望 [-f] 实际 [-f]
+  OK   「futiloud 」 期望 [-f] 实际 [-f]
+  OK   「futihelploud 」 期望 [-f] 实际 [-f]
+  OK   「futiround 」 期望 [-f] 实际 [-f]
+  OK   「futiround 20 」 期望 [to] 实际 [to]
+  OK   「futiround 20 to 」 期望 [] 实际 []
+  OK   「futihelpround 」 期望 [-f] 实际 [-f]
+  OK   「futihelpround 4 」 期望 [to] 实际 [to]
+  OK   「futihelpround 4 to 」 期望 [] 实际 []
+  OK   「futihelpround -f 4 」 期望 [to] 实际 [to]
+  OK   「futihelpspeed 」 期望 [-f, in, out] 实际 [-f, in, out]
+  OK   「futihelpspeed in 」 期望 [] 实际 []
+  OK   「futihelpspeed in 5 」 期望 [to] 实际 [to]
+  OK   「futihelpspeed in 5 to 」 期望 [] 实际 []
+  OK   「futihelpspeed out 1 」 期望 [to] 实际 [to]
+  OK   「futihelpspeed -f 」 期望 [in, out] 实际 [in, out]
+  OK   「futihelpspeed -f in 5 」 期望 [to] 实际 [to]
+  OK   「futihelpspeed -f in 5 to 」 期望 [] 实际 []
+  OK   「futihelpspeed -f out 1 」 期望 [to] 实际 [to]
+  OK   「futihelpmusic 」 期望 [-f, in, out] 实际 [-f, in, out]
+  OK   「futihelpmusic in 」 期望 [] 实际 []
+  OK   「futihelpmusic in default 」 期望 [to] 实际 [to]
+  OK   「futihelpmusic in default to 」 期望 [] 实际 []
+  OK   「futihelpmusic out default 」 期望 [to] 实际 [to]
+  OK   「futihelpmusic out default to 」 期望 [] 实际 []
+  OK   「futihelpmusic -f 」 期望 [in, out] 实际 [in, out]
+  OK   「futihelpmusic -f in 」 期望 [] 实际 []
+  OK   「futihelpmusic -f in default 」 期望 [to] 实际 [to]
+  OK   「futihelpmusic -f in default to 」 期望 [] 实际 []
+  OK   「futihelpmusic -f out default 」 期望 [to] 实际 [to]
+  OK   「futihelpmusic -f out default to 」 期望 [] 实际 []
+  OK   「lifthelp 」 期望 [-f, off, on] 实际 [-f, off, on]
+  OK   「lifthelp on 」 期望 [to] 实际 [to]
+  OK   「lifthelp on to 」 期望 [off] 实际 [off]
+  OK   「lifthelp off 」 期望 [to] 实际 [to]
+  OK   「lifthelp off to 」 期望 [on] 实际 [on]
+  OK   「lifthelp -f 」 期望 [off, on] 实际 [off, on]
+  OK   「lifthelp -f on to 」 期望 [off] 实际 [off]
+  OK   「lifthelpspeed 」 期望 [-f] 实际 [-f]
+  OK   「lifthelpspeed 1.5 」 期望 [to] 实际 [to]
+  OK   「lifthelpspeed 1.5 to 」 期望 [] 实际 []
+  OK   「lifthelpspeed -f 」 期望 [] 实际 []
+  OK   「lifthelpspeed -f 1.5 」 期望 [to] 实际 [to]
+  OK   「lifthelploud 」 期望 [-f, door, down, up] 实际 [-f, door, down, up]
+  OK   「lifthelploud 200 」 期望 [to] 实际 [to]
+  OK   「lifthelploud 200 to 」 期望 [] 实际 []
+  OK   「lifthelploud -f 」 期望 [door, down, up] 实际 [door, down, up]
+  OK   「lifthelploud -f 200 」 期望 [to] 实际 [to]
+  OK   「lifthelploud -f 200 to 」 期望 [] 实际 []
+  OK   「lifthelploud -f up 200 」 期望 [to] 实际 [to]
+  OK   「lifthelploud -f down 200 to 」 期望 [] 实际 []
+  OK   「lifthelploud -f door 」 期望 [] 实际 []
+
+==================== 每条完整指令都可执行 ====================
+  OK   「futihelp」 可执行 = true
+  OK   「futihelp on」 可执行 = true
+  OK   「futihelp off」 可执行 = true
+  OK   「futihelp on to off」 可执行 = true
+  OK   「futihelp off to on」 可执行 = true
+  OK   「futihelp -f on」 可执行 = true
+  OK   「futihelp -f off」 可执行 = true
+  OK   「futihelp -f on to off」 可执行 = true
+  OK   「futihelp -f off to on」 可执行 = true
+  OK   「futispeed」 可执行 = true
+  OK   「futispeed -f 2」 可执行 = true
+  OK   「futispeed -f 2 to 3」 可执行 = true
+  OK   「jietispeed」 可执行 = true
+  OK   「futiloud」 可执行 = true
+  OK   「futiloud -f 200」 可执行 = true
+  OK   「futiloud -f 200 to 300」 可执行 = true
+  OK   「futihelploud」 可执行 = true
+  OK   「futihelploud 200」 可执行 = true
+  OK   「futihelploud 200 to 300」 可执行 = true
+  OK   「futihelploud -f 200」 可执行 = true
+  OK   「futihelploud -f 200 to 300」 可执行 = true
+  OK   「futimusic」 可执行 = true
+  OK   「futiround」 可执行 = true
+  OK   「futiround 20」 可执行 = true
+  OK   「futiround 20 to 30」 可执行 = true
+  OK   「futiround -f 20」 可执行 = true
+  OK   「futiround -f 20 to 30」 可执行 = true
+  OK   「futihelpround」 可执行 = true
+  OK   「futihelpround 4」 可执行 = true
+  OK   「futihelpround 4 to 6」 可执行 = true
+  OK   「futihelpround -f 6」 可执行 = true
+  OK   「futihelpround -f 6 to 8」 可执行 = true
+  OK   「futihelpspeed」 可执行 = true
+  OK   「futihelpspeed in 5」 可执行 = true
+  OK   「futihelpspeed in 5 to 8」 可执行 = true
+  OK   「futihelpspeed out 3」 可执行 = true
+  OK   「futihelpspeed out 3 to 4」 可执行 = true
+  OK   「futihelpspeed -f in 5」 可执行 = true
+  OK   「futihelpspeed -f in 5 to 8」 可执行 = true
+  OK   「futihelpspeed -f out 1」 可执行 = true
+  OK   「futihelpspeed -f out 1 to 2」 可执行 = true
+  OK   「futihelpmusic」 可执行 = true
+  OK   「futihelpmusic in default」 可执行 = true
+  OK   「futihelpmusic in off」 可执行 = true
+  OK   「futihelpmusic in example.ogg」 可执行 = true
+  OK   「futihelpmusic out default」 可执行 = true
+  OK   「futihelpmusic out off」 可执行 = true
+  OK   「futihelpmusic out example.ogg」 可执行 = true
+  OK   「futihelpmusic in default to off」 可执行 = true
+  OK   「futihelpmusic out example.ogg to default」 可执行 = true
+  OK   「futihelpmusic -f in default」 可执行 = true
+  OK   「futihelpmusic -f in off」 可执行 = true
+  OK   「futihelpmusic -f in default to example.ogg」 可执行 = true
+  OK   「futihelpmusic -f out default」 可执行 = true
+  OK   「futihelpmusic -f out example.ogg to off」 可执行 = true
+  OK   「lifthelp」 可执行 = true
+  OK   「lifthelp on」 可执行 = true
+  OK   「lifthelp off」 可执行 = true
+  OK   「lifthelp on to off」 可执行 = true
+  OK   「lifthelp off to on」 可执行 = true
+  OK   「lifthelp -f on」 可执行 = true
+  OK   「lifthelp -f off」 可执行 = true
+  OK   「lifthelp -f on to off」 可执行 = true
+  OK   「lifthelp -f off to on」 可执行 = true
+  OK   「lifthelpspeed」 可执行 = true
+  OK   「lifthelpspeed 1.5」 可执行 = true
+  OK   「lifthelpspeed 1.5 to 2」 可执行 = true
+  OK   「lifthelpspeed -f 1.5」 可执行 = true
+  OK   「lifthelpspeed -f 1.5 to 2」 可执行 = true
+  OK   「lifthelploud」 可执行 = true
+  OK   「lifthelploud 200」 可执行 = true
+  OK   「lifthelploud 200 to 300」 可执行 = true
+  OK   「lifthelploud -f 200」 可执行 = true
+  OK   「lifthelploud -f 200 to 300」 可执行 = true
+
+==================== 不该存在的分支 ====================
+  OK   「futihelp on to on」 应当无法执行（on to on 应无此分支）
+  OK   「futihelp off to off」 应当无法执行（off to off 应无此分支）
+  OK   「futihelp -f on to on」 应当无法执行（-f on to on 应无此分支）
+  OK   「futiround 0」 应当无法执行（范围下限是 1）
+  OK   「futiround 200」 应当无法执行（范围上限是 128）
+  OK   「futihelpround 0」 应当无法执行（范围下限是 1）
+  OK   「futihelpround 999」 应当无法执行（范围上限是 128）
+  OK   「futihelpspeed in 0」 应当无法执行（速率下限是 1 Hz）
+  OK   「futihelpspeed out 51」 应当无法执行（速率上限是 50 Hz）
+  OK   「futihelpspeed -f in 0」 应当无法执行（-f 分支同样下限 1 Hz）
+  OK   「futihelpspeed -f out 51」 应当无法执行（-f 分支同样上限 50 Hz）
+  OK   「futihelpspeed out 50」 可执行 = true
+  OK   「futihelpspeed -f out 50」 可执行 = true
+  OK   「lifthelploud 0」 应当无法执行（音量下限是 1）
+  OK   「lifthelploud 1001」 应当无法执行（音量上限是 1000）
+  OK   「lifthelploud -f 0」 应当无法执行（-f 分支同样下限 1）
+  OK   「lifthelploud -f 1001」 应当无法执行（-f 分支同样上限 1000）
+  OK   「lifthelploud 1」 可执行 = true
+  OK   「lifthelploud 1000」 可执行 = true
+  OK   「lifthelploud -f 1000」 可执行 = true
+  OK   「lifthelpspeed 0.4」 应当无法执行（倍速下限是 0.5）
+  OK   「lifthelpspeed 2.1」 应当无法执行（倍速上限是 2.0）
+  OK   「lifthelpspeed 0.5」 可执行 = true
+  OK   「lifthelpspeed 2」 可执行 = true
+  OK   「lifthelp on to on」 应当无法执行（on to on 应无此分支）
+
+==================== 尾部多余输入的对照（对照既有指令，判断是不是 Brigadier 固有行为） ====================
+  「futihelp on off」 最后节点=on 有执行器=true 已消费到=12/15 异常=[]
+  「futispeed 2 3」 最后节点=speed 有执行器=true 已消费到=12/13 异常=[]
+  「jietispeed 2 3」 最后节点=speed 有执行器=true 已消费到=13/14 异常=[]
+  「futiloud 200 300」 最后节点=volume 有执行器=true 已消费到=13/16 异常=[]
+  「futihelploud 200 300」 最后节点=volume 有执行器=true 已消费到=17/20 异常=[]
+  「futihelp bogus」 最后节点=futihelp 有执行器=true 已消费到=9/14 异常=[]
+  「futihelpspeed 5」 最后节点=futihelpspeed 有执行器=true 已消费到=14/15 异常=[]
+  「futihelpspeed bogus」 最后节点=futihelpspeed 有执行器=true 已消费到=14/19 异常=[]
+  「futihelpmusic bogus」 最后节点=futihelpmusic 有执行器=true 已消费到=14/19 异常=[]
+  「futihelpmusic -f」 最后节点=-f 有执行器=false 已消费到=16/16 异常=[]
+  「futihelpmusic in」 最后节点=in 有执行器=false 已消费到=16/16 异常=[]
+  「futihelpmusic in default to」 最后节点=to 有执行器=false 已消费到=27/27 异常=[]
+  「futihelpmusic default」 最后节点=futihelpmusic 有执行器=true 已消费到=14/21 异常=[]
+  「futihelpmusic default to off」 最后节点=futihelpmusic 有执行器=true 已消费到=14/28 异常=[]
+  「lifthelp bogus」 最后节点=lifthelp 有执行器=true 已消费到=9/14 异常=[]
+  「lifthelpspeed 5」 最后节点=lifthelpspeed 有执行器=true 已消费到=14/15 异常=[<argument speed:float(0.5, 2.0)>]
+  「lifthelploud 200 300」 最后节点=volume 有执行器=true 已消费到=17/20 异常=[]
+
+结果：全部通过 ?

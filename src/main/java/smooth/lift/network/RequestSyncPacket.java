@@ -46,6 +46,14 @@ public class RequestSyncPacket {
             //   否则刚进世界时客户端会按默认值播（用 /futihelpspeed、/futihelpmusic 改过的设置看不到）。
             EscalatorSpeedManager.sendHelpSpeedSyncTo(player, player.serverLevel());
             EscalatorSpeedManager.sendHelpAudioSyncTo(player, player.serverLevel());
+            // 【1.42/1.45】直梯那两套要**每个维度都发一遍**（设置是按维度存的），
+            //   不像上面那些只需要当前维度 —— 与 Fabric 版 REQUEST_SYNC 接收器一致。
+            for (net.minecraft.server.level.ServerLevel level : player.server.getAllLevels()) {
+                EscalatorSpeedManager.sendLiftChimeSyncTo(player, level);
+            }
+            for (net.minecraft.server.level.ServerLevel level : player.server.getAllLevels()) {
+                EscalatorSpeedManager.sendLiftToneSyncTo(player, level);
+            }
         });
         context.setPacketHandled(true);
     }
