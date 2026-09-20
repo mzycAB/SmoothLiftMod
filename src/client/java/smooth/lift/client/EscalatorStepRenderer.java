@@ -258,8 +258,16 @@ public final class EscalatorStepRenderer {
 
             poseStack.pushPose();
             poseStack.translate(pos.getX() - cameraX, pos.getY() - cameraY, pos.getZ() - cameraZ);
+            // 【1.34】checkSides 必须是 true（和原版 {@code LevelRenderer} 渲染区块时一样）。
+            // 传 false = 「不管邻块遮挡，六个方向的面全都画」，于是**原版会剔除掉的那些
+            // 被邻块完全盖住的面也会被我们画出来**，而那种面的光照恰恰是黑的 —— 因为
+            // 原版给「带 cullface 的面」算光照时，取样点是**该面朝向外侧的邻块位置**，
+            // 邻块是实心方块时那里块光/天光都是 0 ⇒ 光图 = 0 ⇒ 全黑。
+            // 原版靠 {@code Block.shouldRenderFace} 把那面剔掉所以看不见；我们画了它，
+            // 又是在实体之后才画、深度测试用 LEQUAL（相等也通过）⇒ 这个黑面会**盖住**
+            // 邻块那一面 —— 表现就是「扶梯碰到方块的地方变黑」。
             modelRenderer.tesselateBlock(level, model, state, pos, poseStack,
-                    buffer, false, level.random, state.getSeed(pos),
+                    buffer, true, level.random, state.getSeed(pos),
                     OverlayTexture.NO_OVERLAY);
             poseStack.popPose();
         }
