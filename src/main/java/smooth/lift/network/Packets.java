@@ -158,6 +158,46 @@ public final class Packets {
                 .decoder(ImportFolderHelpAudioPacket::decode)
                 .consumerMainThread(ImportFolderHelpAudioPacket::handle)
                 .add();
+        // 【1.42/1.43/1.46/1.47/1.48】直梯开关门提示音设置：服务端 -> 客户端
+        CHANNEL.messageBuilder(LiftChimeSyncPacket.class)
+                .encoder(LiftChimeSyncPacket::encode)
+                .decoder(LiftChimeSyncPacket::decode)
+                .consumerMainThread(LiftChimeSyncPacket::handle)
+                .add();
+        // 【1.45】直梯楼层轨道提示音（石斧界面设置）：服务端 -> 客户端 + 客户端 -> 服务端
+        CHANNEL.messageBuilder(LiftToneSyncPacket.class)
+                .encoder(LiftToneSyncPacket::encode)
+                .decoder(LiftToneSyncPacket::decode)
+                .consumerMainThread(LiftToneSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetLiftTonePacket.class)
+                .encoder(SetLiftTonePacket::encode)
+                .decoder(SetLiftTonePacket::decode)
+                .consumerMainThread(SetLiftTonePacket::handle)
+                .add();
+        // 【1.46】三提示音独立子开关：客户端 -> 服务端
+        CHANNEL.messageBuilder(SetLiftToneSwitchPacket.class)
+                .encoder(SetLiftToneSwitchPacket::encode)
+                .decoder(SetLiftToneSwitchPacket::decode)
+                .consumerMainThread(SetLiftToneSwitchPacket::handle)
+                .add();
+        // 【1.48】直梯提示音音量（共用默认 + 三项各自）：客户端 -> 服务端
+        CHANNEL.messageBuilder(SetLiftChimeVolumePacket.class)
+                .encoder(SetLiftChimeVolumePacket::encode)
+                .decoder(SetLiftChimeVolumePacket::decode)
+                .consumerMainThread(SetLiftChimeVolumePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetLiftToneVolumePacket.class)
+                .encoder(SetLiftToneVolumePacket::encode)
+                .decoder(SetLiftToneVolumePacket::decode)
+                .consumerMainThread(SetLiftToneVolumePacket::handle)
+                .add();
+        // 【1.45】从文件夹导入 OGG 并设为直梯提示音：客户端 -> 服务端
+        CHANNEL.messageBuilder(ImportFolderLiftTonePacket.class)
+                .encoder(ImportFolderLiftTonePacket::encode)
+                .decoder(ImportFolderLiftTonePacket::decode)
+                .consumerMainThread(ImportFolderLiftTonePacket::handle)
+                .add();
     }
 
     /** 客户端 -> 服务端：1.20.4 起 SimpleChannel 不再自带 sendToServer，需通过当前客户端连接发送。 */

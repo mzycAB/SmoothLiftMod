@@ -15,6 +15,9 @@ minecraft {
 mixin {
     add sourceSets.main, 'smooth_escalator.refmap.json'
     config 'smooth_escalator.mixins.json'
+    // 【1.42】MTR 直梯（Lift）相关的 @Pseudo mixin：独立一份配置，
+    //   required=false + plugin 判据，MTR 不在时整份配置跳过，绝不报错。
+    config 'smoothlift.mtr.mixins.json'
 }
 
 repositories {
@@ -54,7 +57,7 @@ jar {
             'Implementation-Title'  : 'SmoothLift',
             'Implementation-Version': project.version,
             'Implementation-Vendor' : 'mzycAB',
-            'MixinConfigs'          : 'smooth_escalator.mixins.json'
+            'MixinConfigs'          : 'smooth_escalator.mixins.json,smoothlift.mtr.mixins.json'
         ])
     }
 }
