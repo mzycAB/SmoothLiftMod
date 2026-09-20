@@ -3,6 +3,7 @@ package smooth.lift;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
 import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.world.level.saveddata.SavedData;
 
@@ -198,6 +199,64 @@ public class EscalatorSpeedData extends SavedData {
      */
     public static final int DEFAULT_HELP_SPEED_OUT = 1;
 
+    // ------------------------------------------------------------------
+    // 【1.42】直梯（Lift）开关门提示音 liftmusic.ogg
+    //
+    // 这是**与扶梯完全无关**的另一件事：MTR 直梯在**关门**时连播 4 次 liftmusic.ogg、
+    // **开门**时连播 2 次（固定间隔，见客户端 LiftChimePlayer）；「哪条直梯」由客户端按
+    // 「离玩家最近的直梯」现算，**不需要在这里存任何按扶梯方块索引的数据** ——
+    // 所以这套数据只有「维度默认」一层，没有 blockXxx 那张表，比上面所有设置都轻。
+    //
+    // ★ 这两条设置**按维度**存（和其它设置一样，一份 ServerLevel 一份 SavedData）。
+    //   指令里的 `-f` 因此是「**对所有维度**强制」（见 SmoothLift 里的 lifthelp / lifthelpspeed），
+    //   而不是「对这条直梯强制」—— 直梯没有单条粒度的设置。
+    // ------------------------------------------------------------------
+
+    /**
+     * 【1.42】直梯开关门提示音的**倍速**区间。
+     *
+     * <p>为什么上限就是 **2.0**、下限就是 **0.5**：倍速是直接写进
+     * {@code SoundInstance.pitch} 的，而原版 {@code SoundEngine.calculatePitch} 把它
+     * **硬夹在 [0.5F, 2.0F]**（与提示音速率那边的素材分档是同一个限制）。
+     * 也就是说填 3.0 只会被悄悄压回 2.0，不如在这里就夹住并如实告诉玩家 ——
+     * 否则玩家会得到「填了 3 但听起来和 2 一样」这种最难查的反馈。
+     */
+    public static final float LIFT_HELP_SPEED_MIN = 0.5f;
+    public static final float LIFT_HELP_SPEED_MAX = 2.0f;
+
+    /** 【1.42】默认倍速 = 1.0（原速，和直接听 liftmusic.ogg 完全一样）。 */
+    public static final float DEFAULT_LIFT_HELP_SPEED = 1.0f;
+
+    /**
+     * 【1.42】同一条提示音**连播时相邻两次的间隔**（秒）。
+     *
+     * <p>素材本身长 0.859 秒；这里取 0.8 秒（略短于素材）是用户选定的「固定间隔连播」：
+     * 4 次关门音 ≈ 2.4 秒、2 次开门音 ≈ 0.8 秒，**不随门运动时长伸缩**。
+     * 实际间隔 = {@code 本值 / 倍速}（倍速越快，连播也越密），见客户端 {@code LiftChimePlayer}。
+     */
+    public static final double LIFT_HELP_INTERVAL_SECONDS = 0.8;
+
+    /** 【1.42】关门时连播几次。 */
+    public static final int LIFT_HELP_CLOSE_REPEATS = 4;
+
+    /** 【1.42】开门时连播几次。 */
+    public static final int LIFT_HELP_OPEN_REPEATS = 2;
+
+    /**
+     * 【1.43】直梯开关门提示音的**默认音量**（{@code /lifthelploud} 设置）。
+     *
+     * <p>取值区间直接复用扶梯那两套音量的
+     * [{@link #HELP_VOLUME_MIN}, {@link #HELP_VOLUME_MAX}]（= 1~1000，100 = 原始音量、
+     * 1000 = 10× 放大）—— 引用同一组常量而不是另写一份数字，保证「运行底噪 / 无障碍提示音 /
+     * 直梯提示音」三套音量永远不会因为改了其中一处而悄悄不一致。
+     *
+     * <p>&gt;100 的放大和另外两套一样，需要客户端成对做两件事
+     * （实例实现 {@code GainManagedSound} 让 {@code SoundEngineVolumeMixin} 放行 [0,1] 夹取，
+     * 以及开播时把该 OpenAL 源的 {@code AL_MAX_GAIN} 抬到
+     * {@code EscalatorAudioPlayer#MAX_GAIN}）—— 只做一件仍然最多 1.0×，见 {@code LiftChimePlayer}。
+     */
+    public static final int DEFAULT_LIFT_HELP_VOLUME = DEFAULT_HELP_VOLUME;
+
     /**
      * 【1.39】无障碍提示音「音乐」的哨兵 ID：**模组原来的提示音**（五档「咔啪」素材 + 速率分档）。
      *
@@ -368,6 +427,111 @@ public class EscalatorSpeedData extends SavedData {
      */
     public final Map<BlockPos, String> blockHelpAudioOut = new HashMap<>();
 
+    /**
+     * 【1.42】直梯开关门提示音开关（{@code /lifthelp} 设置）。
+     *
+     * <p>{@code true} = 直梯关门连播 {@link #LIFT_HELP_CLOSE_REPEATS} 次、开门连播
+     * {@link #LIFT_HELP_OPEN_REPEATS} 次 liftmusic.ogg；{@code false} = 完全不播。
+     * 旧存档没有这个字段 → 读到默认 {@code true}（功能默认开）。
+     */
+    public boolean defaultLiftHelp = true;
+
+    /**
+     * 【1.42】直梯开关门提示音的**倍速**（{@code /lifthelpspeed} 设置，允许小数）。
+     * 取值被 {@link #clampLiftHelpSpeed} 夹到
+     * [{@link #LIFT_HELP_SPEED_MIN}, {@link #LIFT_HELP_SPEED_MAX}]。旧存档缺字段 → 1.0（原速）。
+     */
+    public float defaultLiftHelpSpeed = DEFAULT_LIFT_HELP_SPEED;
+
+    /**
+     * 【1.43】直梯开关门提示音的**音量**（{@code /lifthelploud} 设置）。
+     * 取值被 {@link #clampLiftHelpVolume} 夹到 [{@link #HELP_VOLUME_MIN}, {@link #HELP_VOLUME_MAX}]
+     * （1~1000，100 = 原始音量、1000 = 10× 放大）。旧存档缺字段 → {@link #DEFAULT_LIFT_HELP_VOLUME}
+     * （= 100），也就是「和 1.42 一样响」。
+     *
+     * <p>和开关 / 倍速一样**只有维度默认一层**（没有按直梯索引的表 —— 直梯是按「离玩家最近的
+     * 那一条」现算的，没有方块粒度可言）。
+     */
+    public int defaultLiftHelpVolume = DEFAULT_LIFT_HELP_VOLUME;
+
+    /**
+     * 【1.48】三项提示音**各自的音量**（维度默认；{@link #defaultLiftHelpVolume} 是「共用默认」，
+     * 这三个是「某项单独调过」之后的覆盖值）。
+     *
+     * <ul>
+     *   <li>{@code up} = 上楼提示音（准备向上移动那声）；</li>
+     *   <li>{@code down} = 下楼提示音（准备向下移动那声）；</li>
+     *   <li>{@code chime} = 开关门提示音（开门 2 次 / 关门 4 次连播）。</li>
+     * </ul>
+     * 取值：**{@link #LIFT_TONE_VOLUME_UNSET}（-1）= 该项没单独调过，跟随 {@link #defaultLiftHelpVolume}**；
+     * 否则 = 该项自己的音量（1~1000，100 = 原始音量、1000 = 10×）。旧存档没有这三个字段 → -1
+     * （全部跟随共用默认，与 1.47 及以前行为一致）。
+     */
+    public int defaultLiftToneVolumeUp = LIFT_TONE_VOLUME_UNSET;
+    public int defaultLiftToneVolumeDown = LIFT_TONE_VOLUME_UNSET;
+    public int defaultLiftToneVolumeChime = LIFT_TONE_VOLUME_UNSET;
+
+    /** 【1.48】「该项没单独调过」的哨兵（不是合法音量，合法区间是 1~1000）。 */
+    public static final int LIFT_TONE_VOLUME_UNSET = -1;
+
+    /**
+     * 【1.46】三提示音的**独立子开关**（维度默认；{@link #defaultLiftHelp} 是总开关，这三个是「总开关
+     * 开着的时候各自还能不能再关一层」）。
+     *
+     * <ul>
+     *   <li>{@code up} = 上楼提示音（准备向上移动那声）；</li>
+     *   <li>{@code down} = 下楼提示音（准备向下移动那声）；</li>
+     *   <li>{@code chime} = 开关门提示音（开门 2 次 / 关门 4 次连播）。</li>
+     * </ul>
+     * 三者独立，缺省全开（{@code true}）。旧存档没有这三个字段 → 读到 {@code true}，
+     * 与 1.45 之前的行为完全一致。
+     */
+    public boolean defaultLiftToneUpEnabled = true;
+    public boolean defaultLiftToneDownEnabled = true;
+    public boolean defaultLiftToneChimeEnabled = true;
+
+    /**
+     * 【1.47】直梯提示音（上楼 / 下楼 / 开关门，三项共用一份）的**淡入淡出范围**（格）。
+     * 由 {@code /lifthelpround} 设置；首次载入模组默认 {@link #DEFAULT_LIFT_HELP_ROUND} = 4 格
+     * （与扶梯无障碍提示音的默认射程一致 —— 点状音源贴块，不是 16 格那种整条环境音）。
+     * 取值被 {@link #clampLiftHelpRound} 夹到 [{@link #LIFT_HELP_ROUND_MIN}, {@link #LIFT_HELP_ROUND_MAX}]
+     * （1~128，复用扶梯那组范围常量）。旧存档缺字段 → 4（与「第一次载入」同行为）。
+     */
+    public int defaultLiftHelpRound = DEFAULT_LIFT_HELP_ROUND;
+
+    /** 【1.47】直梯提示音淡入淡出范围下限。 */
+    public static final int LIFT_HELP_ROUND_MIN = 1;
+    /** 【1.47】直梯提示音淡入淡出范围上限（与扶梯同一组上限：128）。 */
+    public static final int LIFT_HELP_ROUND_MAX = 128;
+    /** 【1.47】默认 4 格（用户点名「第一次载入模组，默认4格」）。 */
+    public static final int DEFAULT_LIFT_HELP_ROUND = 4;
+
+    /**
+     * 【1.45】石斧右键直梯楼层轨道换的提示音：竖井列打包坐标 → {@link LiftToneAudio}。
+     *
+     * <p>「哪条直梯」没有稳定 ID（跨重启会变），所以用「楼层轨道所在竖井的那一列」当身份：
+     * 一条直梯的所有楼层轨道共享同一个 (X, Z)，只有 Y 不同 ⇒ key = {@code BlockPos.asLong(x, 0, z)}
+     * （Y 固定为 0）。石斧右键任意一层轨道都定位到同一个 key。
+     *
+     * <p>值：{@code up} = 准备向上移动（up.ogg）、{@code down} = 准备向下移动（down.ogg）、
+     * {@code chime} = 开关门（liftmusic.ogg）。三者互不冲突，可分别选。
+     * 每个字段取值有两种语义：
+     * <ul>
+     *   <li>{@link #LIFT_TONE_DEFAULT} = 用模组内置素材（原始开关门/up/down 提示音）；</li>
+     *   <li>{@link #LIFT_TONE_OFF} = 这一条不播提示音；</li>
+     *   <li>其它 = 音频库里的文件名（从 {@code smoothlift_audio} 导入过的那份）。</li>
+     * </ul>
+     * 旧存档没有这张表 → 空表（全部走默认素材，与旧行为一致）。
+     */
+    public final Map<Long, LiftToneAudio> liftToneAudio = new HashMap<>();
+
+    /** 【1.45】「默认素材」的哨兵值。 */
+    public static final String LIFT_TONE_DEFAULT = "default";
+    /** 【1.45】「这条直梯不播」的哨兵值。 */
+    public static final String LIFT_TONE_OFF = "off";
+    /** 【1.45】「设置不存在」的哨兵值（与默认素材同义，旧存档读到它 = 默认）。 */
+    public static final String LIFT_TONE_MISSING = "";
+
     /** 维度默认阶梯动画速度：未单独设置阶梯动画的扶梯使用它。 */
     public double defaultStepSpeed() {
         return stepEnabled ? stepValue : VANILLA_STEP;
@@ -497,6 +661,57 @@ public class EscalatorSpeedData extends SavedData {
                 data.defaultHelpAudioOut = id;
             }
         }
+        // 【1.42】直梯开关门提示音
+        //   旧存档没有这两个字段 → 保持字段初始值（开 / 倍速 1.0），也就是「功能默认打开、原速」。
+        if (tag.contains("defaultLiftHelp")) {
+            data.defaultLiftHelp = tag.getBoolean("defaultLiftHelp");
+        }
+        if (tag.contains("defaultLiftHelpSpeed")) {
+            data.defaultLiftHelpSpeed = clampLiftHelpSpeed(tag.getFloat("defaultLiftHelpSpeed"));
+        }
+        // 【1.43】音量：旧存档（含只有 1.42 字段的）缺它 → 保持初始值 100 = 原始音量
+        if (tag.contains("defaultLiftHelpVolume")) {
+            data.defaultLiftHelpVolume = clampLiftHelpVolume(tag.getInt("defaultLiftHelpVolume"));
+        }
+        // 【1.46】三提示音独立子开关：旧存档缺字段 → 保持 true（与 1.45 之前行为一致）
+        if (tag.contains("defaultLiftToneUpEnabled")) {
+            data.defaultLiftToneUpEnabled = tag.getBoolean("defaultLiftToneUpEnabled");
+        }
+        if (tag.contains("defaultLiftToneDownEnabled")) {
+            data.defaultLiftToneDownEnabled = tag.getBoolean("defaultLiftToneDownEnabled");
+        }
+        if (tag.contains("defaultLiftToneChimeEnabled")) {
+            data.defaultLiftToneChimeEnabled = tag.getBoolean("defaultLiftToneChimeEnabled");
+        }
+        // 【1.47】直梯提示音淡入淡出范围：旧存档缺字段 → 默认 4 格（同「第一次载入」）
+        if (tag.contains("defaultLiftHelpRound")) {
+            data.defaultLiftHelpRound = clampLiftHelpRound(tag.getInt("defaultLiftHelpRound"));
+        }
+        // 【1.48】三项各自音量：旧存档缺字段 → -1（跟随共用默认）
+        if (tag.contains("defaultLiftToneVolumeUp")) {
+            data.defaultLiftToneVolumeUp = clampLiftToneVolume(tag.getInt("defaultLiftToneVolumeUp"));
+        }
+        if (tag.contains("defaultLiftToneVolumeDown")) {
+            data.defaultLiftToneVolumeDown = clampLiftToneVolume(tag.getInt("defaultLiftToneVolumeDown"));
+        }
+        if (tag.contains("defaultLiftToneVolumeChime")) {
+            data.defaultLiftToneVolumeChime = clampLiftToneVolume(tag.getInt("defaultLiftToneVolumeChime"));
+        }
+        // 【1.45】直梯楼层轨道提示音：key → {up, down, chime} 三个音频 id。
+        //   旧存档没有这张表 → 空表（全部走默认素材）。格式：
+        //   ListTag，每个元素是 `{ "key": <long>, "up": <str>, "down": <str>, "chime": <str> }`。
+        if (tag.contains("liftToneAudio", 9)) {
+            for (net.minecraft.nbt.Tag item : tag.getList("liftToneAudio", 10)) {
+                CompoundTag entry = (CompoundTag) item;
+                long key = entry.getLong("key");
+                String up = entry.contains("up") ? entry.getString("up") : "";
+                String down = entry.contains("down") ? entry.getString("down") : "";
+                String chime = entry.contains("chime") ? entry.getString("chime") : "";
+                if (key != 0L && !(up.isEmpty() && down.isEmpty() && chime.isEmpty())) {
+                    data.liftToneAudio.put(key, new LiftToneAudio(up, down, chime));
+                }
+            }
+        }
         return data;
     }
 
@@ -601,6 +816,33 @@ public class EscalatorSpeedData extends SavedData {
         //   这是旧版不认识 out 的必然结果，可以接受。
         tag.putString("defaultHelpAudio", defaultHelpAudioIn);
         tag.put("blockHelpAudio", writeStringMap(blockHelpAudioIn));
+        // 【1.42】直梯开关门提示音（只有维度默认一层，没有按方块索引的表）
+        tag.putBoolean("defaultLiftHelp", defaultLiftHelp);
+        tag.putFloat("defaultLiftHelpSpeed", defaultLiftHelpSpeed);
+        // 【1.43】直梯提示音音量（同上，只有维度默认一层）
+        tag.putInt("defaultLiftHelpVolume", defaultLiftHelpVolume);
+        // 【1.46】三提示音独立子开关（维度默认一层）
+        tag.putBoolean("defaultLiftToneUpEnabled", defaultLiftToneUpEnabled);
+        tag.putBoolean("defaultLiftToneDownEnabled", defaultLiftToneDownEnabled);
+        tag.putBoolean("defaultLiftToneChimeEnabled", defaultLiftToneChimeEnabled);
+        // 【1.47】直梯提示音淡入淡出范围（三项共用）
+        tag.putInt("defaultLiftHelpRound", defaultLiftHelpRound);
+        // 【1.48】三项各自音量（-1 = 跟随共用默认）
+        tag.putInt("defaultLiftToneVolumeUp", defaultLiftToneVolumeUp);
+        tag.putInt("defaultLiftToneVolumeDown", defaultLiftToneVolumeDown);
+        tag.putInt("defaultLiftToneVolumeChime", defaultLiftToneVolumeChime);
+        // 【1.45】直梯楼层轨道提示音（竖井列 → 三音频 id）
+        ListTag toneList = new ListTag();
+        for (Map.Entry<Long, LiftToneAudio> entry : liftToneAudio.entrySet()) {
+            CompoundTag t = new CompoundTag();
+            t.putLong("key", entry.getKey());
+            LiftToneAudio v = entry.getValue();
+            t.putString("up", v.up);
+            t.putString("down", v.down);
+            t.putString("chime", v.chime);
+            toneList.add(t);
+        }
+        tag.put("liftToneAudio", toneList);
         return tag;
     }
 
@@ -778,6 +1020,50 @@ public class EscalatorSpeedData extends SavedData {
         return Math.max(HELP_SPEED_MIN, Math.min(HELP_SPEED_MAX, speed));
     }
 
+    /**
+     * 【1.42】把任意输入夹到合法**直梯提示音倍速**
+     * （{@link #LIFT_HELP_SPEED_MIN}~{@link #LIFT_HELP_SPEED_MAX}）。
+     *
+     * <p>非有限值（NaN / ±Inf）一律当作 {@link #DEFAULT_LIFT_HELP_SPEED} 处理 ——
+     * {@code Math.max/min} 遇到 NaN 会把 NaN 原样传下去，而一个 NaN 的 pitch 会让
+     * OpenAL 那一路直接失效（表现是「设完之后再也没声音」），必须在这里堵掉。
+     */
+    public static float clampLiftHelpSpeed(float speed) {
+        if (Float.isNaN(speed) || Float.isInfinite(speed)) {
+            return DEFAULT_LIFT_HELP_SPEED;
+        }
+        return Math.max(LIFT_HELP_SPEED_MIN, Math.min(LIFT_HELP_SPEED_MAX, speed));
+    }
+
+    /**
+     * 【1.43】把任意输入夹到合法**直梯提示音音量**
+     * （{@link #HELP_VOLUME_MIN}~{@link #HELP_VOLUME_MAX}，即 1~1000）。
+     *
+     * <p>和 {@link #clampHelpVolume} 是同一套区间，只是各自对应一套独立数据。
+     * 夹在数据层而不是只靠指令参数类型，是为了让**存档里被外部改坏的值**（NBT 手改、
+     * 旧版本写进来的越界值）在装载时就被纠正 —— 否则一个 100000 会被原版音量夹取
+     * 悄悄压回上限，玩家看到的是「填了没用」而不是报错。
+     */
+    public static int clampLiftHelpVolume(int volume) {
+        return Math.max(HELP_VOLUME_MIN, Math.min(HELP_VOLUME_MAX, volume));
+    }
+
+    /** 【1.47】直梯提示音淡入淡出范围：夹到 [1, 128]（复用扶梯那组范围常量）。 */
+    public static int clampLiftHelpRound(int round) {
+        return Math.max(LIFT_HELP_ROUND_MIN, Math.min(LIFT_HELP_ROUND_MAX, round));
+    }
+
+    /**
+     * 【1.48】单项音量的夹取：{@link #LIFT_TONE_VOLUME_UNSET}（-1 = 跟随共用默认）原样放行，
+     * 其余夹到 [{@link #HELP_VOLUME_MIN}, {@link #HELP_VOLUME_MAX}]（1~1000）。
+     */
+    public static int clampLiftToneVolume(int volume) {
+        if (volume == LIFT_TONE_VOLUME_UNSET) {
+            return LIFT_TONE_VOLUME_UNSET;
+        }
+        return Math.max(HELP_VOLUME_MIN, Math.min(HELP_VOLUME_MAX, volume));
+    }
+
     /** 【1.31】这条扶梯**上客端（进入扶梯）**提示音的生效速率（Hz）；没单独设置过就是维度默认（初始 10）。 */
     public int getHelpSpeedIn(BlockPos pos) {
         Integer v = blockHelpSpeedIn.get(pos);
@@ -880,6 +1166,33 @@ public class EscalatorSpeedData extends SavedData {
         blockAudio.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
         blockHelpAudioIn.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
         blockHelpAudioOut.entrySet().removeIf(entry -> entry.getValue().equals(audioId));
+        // 【1.45】直梯楼层轨道提示音也可能引用过这段（共用同一个音频库）：引用它的那一项
+        //   退化成「默认素材」而不是留着指向已删除的文件（否则播放端查到库里没有 → 静默不响）。
+        //   ★ LiftToneAudio 是 record（字段 final），不能改字段，只能整体替换。
+        Map<Long, LiftToneAudio> tones = new HashMap<>();
+        for (Map.Entry<Long, LiftToneAudio> entry : liftToneAudio.entrySet()) {
+            LiftToneAudio t = entry.getValue();
+            String up = audioId.equals(t.up()) ? LIFT_TONE_DEFAULT : t.up();
+            String down = audioId.equals(t.down()) ? LIFT_TONE_DEFAULT : t.down();
+            String chime = audioId.equals(t.chime()) ? LIFT_TONE_DEFAULT : t.chime();
+            if (!(LIFT_TONE_DEFAULT.equals(up) && LIFT_TONE_DEFAULT.equals(down)
+                    && LIFT_TONE_DEFAULT.equals(chime))) {
+                tones.put(entry.getKey(), new LiftToneAudio(up, down, chime));
+            }
+        }
+        liftToneAudio.clear();
+        liftToneAudio.putAll(tones);
+    }
+
+    /**
+     * 【1.45】一条直梯的三项提示音设置（可独立选择各自素材，互不冲突）。
+     *
+     * <p>每个字段的取值语义见 {@link #liftToneAudio}：{@link #LIFT_TONE_DEFAULT} 内置素材 /
+     * {@link #LIFT_TONE_OFF} 不播 / 其它 = 音频库文件名。
+     */
+    public record LiftToneAudio(String up, String down, String chime) {
+        public static final LiftToneAudio NONE = new LiftToneAudio(
+                LIFT_TONE_DEFAULT, LIFT_TONE_DEFAULT, LIFT_TONE_DEFAULT);
     }
 
     // ------------------------------------------------------------------

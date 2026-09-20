@@ -9,6 +9,8 @@ import smooth.lift.network.HelpSpeedSyncPayload;
 import smooth.lift.network.HelpSyncPayload;
 import smooth.lift.network.HelpVolumeSyncPayload;
 import smooth.lift.network.RoundSyncPayload;
+import smooth.lift.network.LiftChimeSyncPayload;
+import smooth.lift.network.LiftToneSyncPayload;
 import smooth.lift.network.SyncPayload;
 import smooth.lift.network.VolumeSyncPayload;
 import net.minecraft.core.BlockPos;
@@ -120,8 +122,32 @@ public final class EscalatorSpeedManager {
         public String defaultHelpAudioOut = EscalatorSpeedData.HELP_AUDIO_DEFAULT;
         /** 【1.41】扶梯方块 → **落客端**无障碍提示音音乐 ID（服务端同步过来的镜像）。 */
         public final Map<BlockPos, String> blockHelpAudioOut = new HashMap<>();
+        /**
+         * 【1.42】直梯开关门提示音开关（{@code /lifthelp}，服务端同步过来的镜像）。
+         * 与扶梯那套提示音（{@link #defaultHelp}）**完全无关**，是独立的另一件事。
+         */
+        public boolean liftHelp = true;
+        /** 【1.42】直梯开关门提示音倍速（{@code /lifthelpspeed}，服务端同步过来的镜像）。 */
+        public float liftHelpSpeed = EscalatorSpeedData.DEFAULT_LIFT_HELP_SPEED;
+        /** 【1.43】直梯开关门提示音音量（{@code /lifthelploud}，服务端同步过来的镜像）。 */
+        public int liftHelpVolume = EscalatorSpeedData.DEFAULT_LIFT_HELP_VOLUME;
+        /** 【1.48】三项各自音量镜像（-1 = 跟随共用默认）。 */
+        public int liftToneVolumeUp = EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+        public int liftToneVolumeDown = EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+        public int liftToneVolumeChime = EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+        /** 【1.47】直梯提示音（三项共用）淡入淡出范围（{@code /lifthelpround}，服务端同步过来的镜像）。 */
+        public int liftHelpRound = EscalatorSpeedData.DEFAULT_LIFT_HELP_ROUND;
+        /** 【1.46】三提示音独立子开关的镜像（{@code /lifthelpup|down|chime} / 石斧 UI 开关）。 */
+        public boolean liftToneUpEnabled = true;
+        public boolean liftToneDownEnabled = true;
+        public boolean liftToneChimeEnabled = true;
         /** 【1.7】存档<smoothlift_audio>文件夹里可选 OGG 文件名（上传来源，未入库的才显示）。 */
         public final Set<String> folderAudio = new HashSet<>();
+        /**
+         * 【1.45】直梯楼层轨道提示音（竖井列打包坐标 → 三音频 id，服务端同步过来的镜像）。
+         * 播放端按「最近直梯的楼层列」查它。
+         */
+        public final Map<Long, EscalatorSpeedData.LiftToneAudio> liftToneAudio = new HashMap<>();
     }
 
     private static final Map<ResourceKey<Level>, ClientDimensionData> CLIENT_DATA = new HashMap<>();
@@ -1552,6 +1578,8 @@ public final class EscalatorSpeedManager {
         // 【1.39】提示音音乐的代次同样要 ++：镜像被清空是一次「整体替换」，
         // 否则播放器会继续用上一个世界缓存下来的提示音。
         clientHelpAudioGeneration++;
+        // 【1.42】直梯提示音设置也同理：不断代的话，断线重连后会沿用上一个世界的开关/倍速。
+        clientLiftChimeGeneration++;
     }
 
     // ------------------------------------------------------------------
@@ -3180,4 +3208,721 @@ public final class EscalatorSpeedManager {
         return ResourceKey.create(Registries.DIMENSION, ResourceLocation.parse(id));
     }
 
+    // 【1.42】直梯（Lift）开关门提示音 liftmusic.ogg
+    //
+    //   数据只有「维度默认」一层（见 EscalatorSpeedData 里那一段的说明），所以这里的
+    //   访问器比其它设置短得多：没有 blockXxx 表、没有「单独设置」概念。
+    //
+    //   ★ 这里说的「维度默认」是**按维度存的**（每个 ServerLevel 一份 SavedData），
+    //     所以指令里的 `-f` 取「**对所有维度**强制」的含义 —— 那才是这套数据里
+    //     唯一能被「强制」的东西。别照抄扶梯那边的「清掉单独设置」文案。
+    // ==================================================================
+
+    /** 【1.42】这个维度**生效**的直梯提示音开关（客户端读镜像，服务端读 SavedData）。 */
+    public static boolean isLiftHelpEnabled(Level level) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return data == null || data.liftHelp;
+        }
+        return getServerData((ServerLevel) level).defaultLiftHelp;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.46】三提示音（up / down / chime）的**独立子开关**：总开关（/lifthelp）开着时，
+    //   这三个还能各自再关一层。which 一律是 "up" / "down" / "chime"。
+    //   客户端读镜像、服务端读 SavedData；指令与石斧 UI 都走这一组。
+    // ------------------------------------------------------------------
+
+    private static boolean serverLiftToneEnabled(EscalatorSpeedData data, String which) {
+        return switch (which) {
+            case "up" -> data.defaultLiftToneUpEnabled;
+            case "down" -> data.defaultLiftToneDownEnabled;
+            case "chime" -> data.defaultLiftToneChimeEnabled;
+            default -> true;
+        };
+    }
+
+    private static void setServerLiftToneEnabled(EscalatorSpeedData data, String which, boolean enabled) {
+        switch (which) {
+            case "up" -> data.defaultLiftToneUpEnabled = enabled;
+            case "down" -> data.defaultLiftToneDownEnabled = enabled;
+            case "chime" -> data.defaultLiftToneChimeEnabled = enabled;
+            default -> {
+            }
+        }
+    }
+
+    /** 【1.46】这个维度**生效**的某项子开关（客户端读镜像，服务端读 SavedData）。 */
+    public static boolean isLiftToneEnabled(Level level, String which) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return switch (which) {
+                case "up" -> data == null || data.liftToneUpEnabled;
+                case "down" -> data == null || data.liftToneDownEnabled;
+                case "chime" -> data == null || data.liftToneChimeEnabled;
+                default -> true;
+            };
+        }
+        return serverLiftToneEnabled(getServerData((ServerLevel) level), which);
+    }
+
+    /** {@code /lifthelpup|down|chime <on|off>}：只改**本维度**的对应子开关。 */
+    public static void setDefaultLiftToneEnabled(ServerLevel level, String which, boolean enabled) {
+        EscalatorSpeedData data = getServerData(level);
+        setServerLiftToneEnabled(data, which, enabled);
+        data.setDirty();
+    }
+
+    /** {@code /lifthelpup|down|chime <X> to <Y>}：本维度对应子开关正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftToneEnabled(ServerLevel level, String which, boolean from, boolean to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (serverLiftToneEnabled(data, which) != from) {
+            return false;
+        }
+        setServerLiftToneEnabled(data, which, to);
+        data.setDirty();
+        return true;
+    }
+
+    /** {@code /lifthelpup|down|chime -f <on|off>}：把**所有维度**的对应子开关都设成该值。 */
+    public static int setDefaultLiftToneEnabledAll(MinecraftServer server, String which, boolean enabled) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (serverLiftToneEnabled(data, which) != enabled) {
+                setServerLiftToneEnabled(data, which, enabled);
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** {@code /lifthelpup|down|chime -f <X> to <Y>}：所有维度里对应子开关正好是 X 的改成 Y。 */
+    public static int replaceDefaultLiftToneEnabledAll(MinecraftServer server, String which, boolean from, boolean to) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (serverLiftToneEnabled(data, which) == from) {
+                setServerLiftToneEnabled(data, which, to);
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** 【1.46】某项子开关在界面 / 指令反馈里的中文名。 */
+    public static String liftToneEnabledLabel(String which) {
+        return switch (which) {
+            case "up" -> "上楼提示音";
+            case "down" -> "下楼提示音";
+            case "chime" -> "开关门提示音";
+            default -> "提示音";
+        };
+    }
+
+    /**
+     * 【1.42】这个维度**生效**的直梯提示音倍速（客户端读镜像，服务端读 SavedData）。
+     * 始终落在 [{@link EscalatorSpeedData#LIFT_HELP_SPEED_MIN}, {@link EscalatorSpeedData#LIFT_HELP_SPEED_MAX}]。
+     */
+    public static float getLiftHelpSpeed(Level level) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return data == null ? EscalatorSpeedData.DEFAULT_LIFT_HELP_SPEED : data.liftHelpSpeed;
+        }
+        return getServerData((ServerLevel) level).defaultLiftHelpSpeed;
+    }
+
+    /**
+     * 【1.43】这个维度**生效**的直梯提示音音量（客户端读镜像，服务端读 SavedData）。
+     * 始终落在 [{@link EscalatorSpeedData#HELP_VOLUME_MIN}, {@link EscalatorSpeedData#HELP_VOLUME_MAX}]
+     * （1~1000，100 = 原始音量、1000 = 10× 放大）。
+     */
+    public static int getLiftHelpVolume(Level level) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return data == null ? EscalatorSpeedData.DEFAULT_LIFT_HELP_VOLUME : data.liftHelpVolume;
+        }
+        return getServerData((ServerLevel) level).defaultLiftHelpVolume;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.48】三项提示音（up / down / chime）**各自的音量**：-1 = 该项没单独调过 → 跟随共用默认。
+    //   which 一律是 "up" / "down" / "chime"（指令子命令用 door = chime 的别名，见 SmoothLift）。
+    //   客户端读镜像、服务端读 SavedData；石斧 UI 每个列表里的音量输入框走这一组。
+    // ------------------------------------------------------------------
+
+    private static int serverLiftToneVolume(EscalatorSpeedData data, String which) {
+        return switch (which) {
+            case "up" -> data.defaultLiftToneVolumeUp;
+            case "down" -> data.defaultLiftToneVolumeDown;
+            case "chime" -> data.defaultLiftToneVolumeChime;
+            default -> EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+        };
+    }
+
+    private static void setServerLiftToneVolume(EscalatorSpeedData data, String which, int volume) {
+        switch (which) {
+            case "up" -> data.defaultLiftToneVolumeUp = EscalatorSpeedData.clampLiftToneVolume(volume);
+            case "down" -> data.defaultLiftToneVolumeDown = EscalatorSpeedData.clampLiftToneVolume(volume);
+            case "chime" -> data.defaultLiftToneVolumeChime = EscalatorSpeedData.clampLiftToneVolume(volume);
+            default -> {
+            }
+        }
+    }
+
+    /** 【1.48】这项提示音**生效**的音量（单项 -1 → 跟随共用默认）。客户端读镜像，服务端读 SavedData。 */
+    public static int getLiftToneVolume(Level level, String which) {
+        int own;
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            own = switch (which) {
+                case "up" -> data == null ? EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET : data.liftToneVolumeUp;
+                case "down" -> data == null ? EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET : data.liftToneVolumeDown;
+                case "chime" -> data == null ? EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET : data.liftToneVolumeChime;
+                default -> EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+            };
+        } else {
+            own = serverLiftToneVolume(getServerData((ServerLevel) level), which);
+        }
+        if (own == EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET) {
+            return getLiftHelpVolume(level); // 跟随共用默认
+        }
+        return own;
+    }
+
+    /** 【1.48】这项提示音有没有**单独调过**音量（true = 有自己的值；false = 跟随共用默认）。 */
+    public static boolean hasOwnLiftToneVolume(Level level, String which) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return switch (which) {
+                case "up" -> data != null && data.liftToneVolumeUp != EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+                case "down" -> data != null && data.liftToneVolumeDown != EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+                case "chime" -> data != null && data.liftToneVolumeChime != EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+                default -> false;
+            };
+        }
+        return serverLiftToneVolume(getServerData((ServerLevel) level), which)
+                != EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
+    }
+
+    /** {@code /lifthelploud up|down|chime <音量>}：只改**本维度**这项的音量。 */
+    public static void setDefaultLiftToneVolume(ServerLevel level, String which, int volume) {
+        EscalatorSpeedData data = getServerData(level);
+        setServerLiftToneVolume(data, which, volume);
+        data.setDirty();
+    }
+
+    /** {@code /lifthelploud up|down|chime <X> to <Y>}：本维度这项音量正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftToneVolume(ServerLevel level, String which, int from, int to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (serverLiftToneVolume(data, which) != from) {
+            return false;
+        }
+        setServerLiftToneVolume(data, which, to);
+        data.setDirty();
+        return true;
+    }
+
+    /** {@code /lifthelploud -f up|down|chime <音量>}：把**所有维度**这项的音量都设成该值。 */
+    public static int setDefaultLiftToneVolumeAll(MinecraftServer server, String which, int volume) {
+        int changed = 0;
+        int clamped = EscalatorSpeedData.clampLiftToneVolume(volume);
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (serverLiftToneVolume(data, which) != clamped) {
+                setServerLiftToneVolume(data, which, clamped);
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** {@code /lifthelploud -f up|down|chime <X> to <Y>}：所有维度里这项音量正好是 X 的改成 Y。 */
+    public static int replaceDefaultLiftToneVolumeAll(MinecraftServer server, String which, int from, int to) {
+        int changed = 0;
+        int clamped = EscalatorSpeedData.clampLiftToneVolume(to);
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (serverLiftToneVolume(data, which) == from) {
+                setServerLiftToneVolume(data, which, clamped);
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * 【1.47】这个维度**生效**的直梯提示音淡入淡出范围（客户端读镜像，服务端读 SavedData）。
+     * 三项提示音（上楼 / 下楼 / 开关门）共用这一份；始终落在
+     * [{@link EscalatorSpeedData#LIFT_HELP_ROUND_MIN}, {@link EscalatorSpeedData#LIFT_HELP_ROUND_MAX}]。
+     */
+    public static int getLiftHelpRound(Level level) {
+        if (level.isClientSide()) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            return data == null ? EscalatorSpeedData.DEFAULT_LIFT_HELP_ROUND : data.liftHelpRound;
+        }
+        return getServerData((ServerLevel) level).defaultLiftHelpRound;
+    }
+
+    /** {@code /lifthelpround <范围>}：只改**本维度**的默认范围。 */
+    public static void setDefaultLiftHelpRound(ServerLevel level, int round) {
+        EscalatorSpeedData data = getServerData(level);
+        data.defaultLiftHelpRound = EscalatorSpeedData.clampLiftHelpRound(round);
+        data.setDirty();
+    }
+
+    /** {@code /lifthelpround <X> to <Y>}：本维度默认范围正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftHelpRound(ServerLevel level, int from, int to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (data.defaultLiftHelpRound != from) {
+            return false;
+        }
+        data.defaultLiftHelpRound = EscalatorSpeedData.clampLiftHelpRound(to);
+        data.setDirty();
+        return true;
+    }
+
+    /** {@code /lifthelpround -f <范围>}：把**所有维度**的默认范围都设成该值。 */
+    public static int setDefaultLiftHelpRoundAll(MinecraftServer server, int round) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            int clamped = EscalatorSpeedData.clampLiftHelpRound(round);
+            if (data.defaultLiftHelpRound != clamped) {
+                data.defaultLiftHelpRound = clamped;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** {@code /lifthelpround -f <X> to <Y>}：所有维度里默认范围正好是 X 的改成 Y。 */
+    public static int replaceDefaultLiftHelpRoundAll(MinecraftServer server, int from, int to) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelpRound == from) {
+                data.defaultLiftHelpRound = EscalatorSpeedData.clampLiftHelpRound(to);
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /** {@code /lifthelp <on|off>}：只改**本维度**的默认开关。 */
+    public static void setDefaultLiftHelp(ServerLevel level, boolean enabled) {
+        EscalatorSpeedData data = getServerData(level);
+        data.defaultLiftHelp = enabled;
+        data.setDirty();
+    }
+
+    /** {@code /lifthelp <X> to <Y>}：本维度默认开关正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftHelp(ServerLevel level, boolean from, boolean to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (data.defaultLiftHelp != from) {
+            return false;
+        }
+        data.defaultLiftHelp = to;
+        data.setDirty();
+        return true;
+    }
+
+    /** {@code /lifthelpspeed <倍速>}：只改**本维度**的默认倍速。 */
+    public static void setDefaultLiftHelpSpeed(ServerLevel level, float speed) {
+        EscalatorSpeedData data = getServerData(level);
+        data.defaultLiftHelpSpeed = EscalatorSpeedData.clampLiftHelpSpeed(speed);
+        data.setDirty();
+    }
+
+    /** {@code /lifthelpspeed <X> to <Y>}：本维度默认倍速正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftHelpSpeed(ServerLevel level, float from, float to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (data.defaultLiftHelpSpeed != from) {
+            return false;
+        }
+        data.defaultLiftHelpSpeed = EscalatorSpeedData.clampLiftHelpSpeed(to);
+        data.setDirty();
+        return true;
+    }
+
+    /** {@code /lifthelploud <音量>}：只改**本维度**的默认音量。 */
+    public static void setDefaultLiftHelpVolume(ServerLevel level, int volume) {
+        EscalatorSpeedData data = getServerData(level);
+        data.defaultLiftHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        data.setDirty();
+    }
+
+    /** {@code /lifthelploud <X> to <Y>}：本维度默认音量正好是 X 时才改成 Y。 */
+    public static boolean replaceDefaultLiftHelpVolume(ServerLevel level, int from, int to) {
+        EscalatorSpeedData data = getServerData(level);
+        if (data.defaultLiftHelpVolume != from) {
+            return false;
+        }
+        data.defaultLiftHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(to);
+        data.setDirty();
+        return true;
+    }
+
+    /**
+     * {@code /lifthelp -f <on|off>}：把**所有维度**的默认开关都设成该值。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int setDefaultLiftHelpAll(MinecraftServer server, boolean enabled) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelp != enabled) {
+                data.defaultLiftHelp = enabled;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * {@code /lifthelpspeed -f <倍速>}：把**所有维度**的默认倍速都设成该值。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int setDefaultLiftHelpSpeedAll(MinecraftServer server, float speed) {
+        float target = EscalatorSpeedData.clampLiftHelpSpeed(speed);
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelpSpeed != target) {
+                data.defaultLiftHelpSpeed = target;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * {@code /lifthelp -f <X> to <Y>}：所有维度里，默认开关正好是 X 的那些改成 Y。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int replaceDefaultLiftHelpAll(MinecraftServer server, boolean from, boolean to) {
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelp == from) {
+                data.defaultLiftHelp = to;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * {@code /lifthelpspeed -f <X> to <Y>}：所有维度里，默认倍速正好是 X 的那些改成 Y。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int replaceDefaultLiftHelpSpeedAll(MinecraftServer server, float from, float to) {
+        float target = EscalatorSpeedData.clampLiftHelpSpeed(to);
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelpSpeed == from) {
+                data.defaultLiftHelpSpeed = target;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * {@code /lifthelploud -f <音量>}：把**所有维度**的默认音量都设成该值。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int setDefaultLiftHelpVolumeAll(MinecraftServer server, int volume) {
+        int target = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelpVolume != target) {
+                data.defaultLiftHelpVolume = target;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * {@code /lifthelploud -f <X> to <Y>}：所有维度里，默认音量正好是 X 的那些改成 Y。
+     *
+     * @return 实际被改动的维度数
+     */
+    public static int replaceDefaultLiftHelpVolumeAll(MinecraftServer server, int from, int to) {
+        int target = EscalatorSpeedData.clampLiftHelpVolume(to);
+        int changed = 0;
+        for (ServerLevel level : server.getAllLevels()) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultLiftHelpVolume == from) {
+                data.defaultLiftHelpVolume = target;
+                data.setDirty();
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * 【1.42】应用服务端同步过来的直梯提示音设置（覆盖式更新本维度的镜像）。
+     *
+     * <p>【1.43】多了**音量**一项 —— 和开关 / 倍速同属一套「按维度」的设置，所以共用同一只
+     * 同步包、同一个代次，不做第三条频道。
+     *
+     * <p>代次 +1 是给客户端播放器做「缓存作废」用的（与 {@code clientHelpGeneration} 同一手法）：
+     * 播放器每 tick 只在「代次变了」时才真的去查，不然每次读都要过一次 Map。
+     */
+    public static void applyClientLiftChime(ResourceKey<Level> dimension, boolean enabled, float speed,
+                                            int volume, boolean upEnabled, boolean downEnabled,
+                                            boolean chimeEnabled, int round,
+                                            int toneVolumeUp, int toneVolumeDown, int toneVolumeChime) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        data.liftHelp = enabled;
+        data.liftHelpSpeed = EscalatorSpeedData.clampLiftHelpSpeed(speed);
+        data.liftHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        data.liftHelpRound = EscalatorSpeedData.clampLiftHelpRound(round);
+        data.liftToneUpEnabled = upEnabled;
+        data.liftToneDownEnabled = downEnabled;
+        data.liftToneChimeEnabled = chimeEnabled;
+        data.liftToneVolumeUp = EscalatorSpeedData.clampLiftToneVolume(toneVolumeUp);
+        data.liftToneVolumeDown = EscalatorSpeedData.clampLiftToneVolume(toneVolumeDown);
+        data.liftToneVolumeChime = EscalatorSpeedData.clampLiftToneVolume(toneVolumeChime);
+        clientLiftChimeGeneration++;
+    }
+
+    /** 见 {@link #applyClientLiftChime}。只在客户端线程读、在客户端线程写。 */
+    public static long clientLiftChimeGeneration() {
+        return clientLiftChimeGeneration;
+    }
+
+    /** 见 {@link #clientLiftChimeGeneration()}。 */
+    private static long clientLiftChimeGeneration;
+
+    /**
+     * 【1.42】构建某个维度的「直梯提示音」同步包：维度默认开关 + 维度默认倍速
+     * 【1.43】+ 维度默认音量。【1.46】+ 三提示音独立子开关。
+     *
+     * <p>字段顺序**就是** {@link #applyClientLiftChime} 的入参顺序，两处必须一起改
+     * （客户端 {@code SmoothLiftClient} 那边是按同一顺序读的）：
+     * {@code dimId → enabled → speed → volume → upEnabled → downEnabled → chimeEnabled}。
+     */
+    private static LiftChimeSyncPayload buildLiftChimePayload(ServerLevel level) {
+        EscalatorSpeedData data = getServerData(level);
+        return new LiftChimeSyncPayload(
+                level.dimension().location().toString(),
+                data.defaultLiftHelp,
+                data.defaultLiftHelpSpeed,
+                data.defaultLiftHelpVolume,
+                data.defaultLiftToneUpEnabled,
+                data.defaultLiftToneDownEnabled,
+                data.defaultLiftToneChimeEnabled,
+                data.defaultLiftHelpRound,
+                data.defaultLiftToneVolumeUp,
+                data.defaultLiftToneVolumeDown,
+                data.defaultLiftToneVolumeChime);
+    }
+
+    /** 【1.42】把一个维度的直梯提示音设置发给单个玩家。 */
+    public static void sendLiftChimeSyncTo(ServerPlayer player, ServerLevel level) {
+        ServerPlayNetworking.send(player, buildLiftChimePayload(level));
+    }
+
+    /** 【1.42】把所有维度的直梯提示音设置同步给所有在线玩家。 */
+    public static void syncLiftChimeToAll(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            for (ServerLevel level : server.getAllLevels()) {
+                sendLiftChimeSyncTo(player, level);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.45】直梯楼层轨道提示音（石斧右键楼层轨道设置：up / down / chime 三列表）
+    // ------------------------------------------------------------------
+
+    /** 竖井列打包坐标：同一条直梯的所有楼层轨道共享 (X, Z)，只有 Y 不同 ⇒ key = asLong(x, 0, z)。 */
+    public static long liftToneKey(int x, int z) {
+        return BlockPos.asLong(x, 0, z);
+    }
+
+    /** 从任意一个楼层/轿厢坐标（double）算竖井列 key；越界/异常一律退化成「无设置」。 */
+    public static long liftToneKeyNear(double x, double z) {
+        return liftToneKey((int) Math.floor(x), (int) Math.floor(z));
+    }
+
+    /**
+     * 服务端：读某条直梯（竖井列）的三项提示音设置；没设置过 → {@link EscalatorSpeedData.LiftToneAudio#NONE}。
+     * 值域校验不做在这里（写入时已经夹过）。
+     */
+    public static EscalatorSpeedData.LiftToneAudio getServerLiftTone(ServerLevel level, long key) {
+        EscalatorSpeedData.LiftToneAudio tone = getServerData(level).liftToneAudio.get(key);
+        return tone != null ? tone : EscalatorSpeedData.LiftToneAudio.NONE;
+    }
+
+    /**
+     * 客户端：读某条直梯（竖井列）的三项提示音设置（镜像）；没同步过 → {@code NONE}。
+     */
+    public static EscalatorSpeedData.LiftToneAudio getClientLiftTone(Level level, long key) {
+        ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+        if (data == null) {
+            return EscalatorSpeedData.LiftToneAudio.NONE;
+        }
+        EscalatorSpeedData.LiftToneAudio tone = data.liftToneAudio.get(key);
+        return tone != null ? tone : EscalatorSpeedData.LiftToneAudio.NONE;
+    }
+
+    /**
+     * 【1.45】按「哪一项（up/down/chime）」定位值；{@code which} 不属于这三者 → null。
+     */
+    private static String toneField(EscalatorSpeedData.LiftToneAudio tone, String which) {
+        return switch (which) {
+            case "up" -> tone.up();
+            case "down" -> tone.down();
+            case "chime" -> tone.chime();
+            default -> null;
+        };
+    }
+
+    /**
+     * 校验并写入一个直梯提示音设置。
+     *
+     * @return 成功写入了才 true；{@code audioId} 不是 default / off / 音频库里存在的 id → false。
+     */
+    public static boolean setServerLiftTone(ServerLevel level, long key, String which, String audioId) {
+        if (!"up".equals(which) && !"down".equals(which) && !"chime".equals(which)) {
+            return false;
+        }
+        if (!EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(audioId)
+                && !EscalatorSpeedData.LIFT_TONE_OFF.equals(audioId)
+                && !getServerData(level).audioLibrary.containsKey(audioId)) {
+            return false;
+        }
+        EscalatorSpeedData data = getServerData(level);
+        EscalatorSpeedData.LiftToneAudio old = data.liftToneAudio.get(key);
+        if (old == null) {
+            old = EscalatorSpeedData.LiftToneAudio.NONE;
+        }
+        String up = "up".equals(which) ? audioId : old.up();
+        String down = "down".equals(which) ? audioId : old.down();
+        String chime = "chime".equals(which) ? audioId : old.chime();
+        if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(up)
+                && EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(down)
+                && EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(chime)) {
+            // 三项全默认 = 等于没设置，直接删掉这条记录（表越干净越好查）。
+            data.liftToneAudio.remove(key);
+        } else {
+            data.liftToneAudio.put(key, new EscalatorSpeedData.LiftToneAudio(up, down, chime));
+        }
+        data.setDirty();
+        return true;
+    }
+
+    /**
+     * 【1.45】构建某个维度的「直梯楼层轨道提示音」同步包：
+     * {@code dimId → 条数 → (key, up, down, chime) × N}。
+     */
+    private static LiftToneSyncPayload buildLiftTonePayload(ServerLevel level) {
+        EscalatorSpeedData data = getServerData(level);
+        return new LiftToneSyncPayload(level.dimension().location().toString(),
+                new HashMap<>(data.liftToneAudio));
+    }
+
+    /** 【1.45】把一个维度的直梯楼层轨道提示音设置发给单个玩家。 */
+    public static void sendLiftToneSyncTo(ServerPlayer player, ServerLevel level) {
+        ServerPlayNetworking.send(player, buildLiftTonePayload(level));
+    }
+
+    /** 【1.45】把所有维度的直梯楼层轨道提示音设置同步给所有在线玩家。 */
+    public static void syncLiftToneToAll(MinecraftServer server) {
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            for (ServerLevel level : server.getAllLevels()) {
+                sendLiftToneSyncTo(player, level);
+            }
+        }
+    }
+
+    /** 【1.45】客户端接收器：把同步包的直梯楼层轨道提示音写进镜像（包已在接收器里解析好）。 */
+    public static void applyClientLiftTone(ResourceKey<Level> dimension,
+                                           Map<Long, EscalatorSpeedData.LiftToneAudio> tones) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        data.liftToneAudio.clear();
+        data.liftToneAudio.putAll(tones);
+        clientLiftToneGeneration++;
+    }
+
+    /**
+     * 【1.45】客户端：点完石斧界面某一行后**本地立即**改镜像一个竖井列的设置
+     * （服务端的权威值随后会通过 {@link #applyClientLiftTone} 整表覆盖回来，所以只是临时加速回显）。
+     */
+    public static void applyClientLiftToneLocal(ResourceKey<Level> dimension, long key,
+                                                EscalatorSpeedData.LiftToneAudio tone) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(tone.up())
+                && EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(tone.down())
+                && EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(tone.chime())) {
+            data.liftToneAudio.remove(key);
+        } else {
+            data.liftToneAudio.put(key, tone);
+        }
+        clientLiftToneGeneration++;
+    }
+
+    /** 【1.46】客户端：石斧 UI 点完开关后**本地立即**翻镜像（服务端权威值随后整表覆盖回来）。 */
+    public static void applyClientLiftToneSwitchLocal(ResourceKey<Level> dimension, String which, boolean enabled) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        switch (which) {
+            case "up" -> data.liftToneUpEnabled = enabled;
+            case "down" -> data.liftToneDownEnabled = enabled;
+            case "chime" -> data.liftToneChimeEnabled = enabled;
+            default -> {
+            }
+        }
+        clientLiftChimeGeneration++;
+    }
+
+    /** 【1.48】客户端：石斧 UI 主界面「设置默认音量」后**本地立即**改镜像（服务端随后权威同步覆盖）。 */
+    public static void applyClientLiftVolumeLocal(ResourceKey<Level> dimension, int volume) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        data.liftHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        clientLiftChimeGeneration++;
+    }
+
+    /** 【1.48】客户端：石斧 UI 单项列表「音量」后**本地立即**改镜像（服务端随后权威同步覆盖）。 */
+    public static void applyClientLiftToneVolumeLocal(ResourceKey<Level> dimension, String which, int volume) {
+        ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+        int v = EscalatorSpeedData.clampLiftToneVolume(volume);
+        switch (which) {
+            case "up" -> data.liftToneVolumeUp = v;
+            case "down" -> data.liftToneVolumeDown = v;
+            case "chime" -> data.liftToneVolumeChime = v;
+            default -> {
+            }
+        }
+        clientLiftChimeGeneration++;
+    }
+
+    /** 直梯楼层轨道提示音镜像的代数（客户端播放端用来刷新缓存）。 */
+    public static long clientLiftToneGeneration() {
+        return clientLiftToneGeneration;
+    }
+
+    private static long clientLiftToneGeneration;
 }
