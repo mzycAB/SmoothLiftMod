@@ -34,6 +34,14 @@ public class SmoothLiftClient implements ClientModInitializer {
     /** 【1.7】服务端音频同步分块拼接缓冲：维度ID → (块索引 → 数据)。 */
     private static final Map<String, Map<Integer, byte[]>> PENDING_SYNC_CHUNKS = new HashMap<>();
 
+    /**
+     * 【1.45】判定「直梯楼层轨道」（按注册名前缀，两端共用主类的判据，避免各写一份走样）。
+     * 见 {@link smooth.lift.SmoothLift#isLiftTrackFloor}。
+     */
+    private static boolean isLiftTrackFloor(net.minecraft.world.level.block.state.BlockState state) {
+        return smooth.lift.SmoothLift.isLiftTrackFloor(state);
+    }
+
     @Override
     public void onInitializeClient() {
         // 逐条扶梯独立的阶梯动画：注册区块索引 + 世界渲染回调
@@ -45,6 +53,10 @@ public class SmoothLiftClient implements ClientModInitializer {
 
         // 【1.15】香港式扶梯视障人士提示音：进扶梯一端急促咔咔、出扶梯一端缓慢咔咔（【1.23】改为敲击声）
         ClientTickEvents.END_CLIENT_TICK.register(EscalatorChimePlayer::onClientTick);
+
+        // 【1.42】直梯（MTR Lift）开关门提示音：关门连播 4 次 liftmusic.ogg、开门连播 2 次。
+        // 与上面两个播放器互不影响：那两个只认「扶梯阶梯方块」，本播放器只认 MTR 的直梯对象。
+        ClientTickEvents.END_CLIENT_TICK.register(LiftChimePlayer::onClientTick);
 
         // 拿着石斧右键扶梯 -> 打开速度输入界面
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
@@ -62,6 +74,25 @@ public class SmoothLiftClient implements ClientModInitializer {
             return InteractionResult.FAIL;
         });
 
+        // 【1.45】拿着石斧右键**直梯楼层轨道** -> 打开直梯提示音三列表界面。
+        //   「是楼层轨道」按注册名判（lift_track_floor_*），不依赖 MTR 编译期。
+        //   直梯没有稳定 ID，所以把右键到的这格的「竖井列 key (X, Z)」传进界面，
+        //   同一条直梯的所有楼层轨道共享同一个 key。
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            if (!world.isClientSide() || hand != InteractionHand.MAIN_HAND) {
+                return InteractionResult.PASS;
+            }
+            if (!player.getMainHandItem().is(Items.STONE_AXE)) {
+                return InteractionResult.PASS;
+            }
+            BlockPos pos = hitResult.getBlockPos();
+            if (!isLiftTrackFloor(world.getBlockState(pos))) {
+                return InteractionResult.PASS;
+            }
+            Minecraft.getInstance().setScreen(new LiftToneSetupScreen(pos));
+            return InteractionResult.FAIL;
+        });
+
         // 客户端完全进世界后主动向服务端请求速度数据。
         // 服务端侧的 ServerPlayConnectionEvents.JOIN 推送发生在玩家连接建立过程中
         // （早于频道握手完成），此时发的包可能被客户端丢弃，导致进游戏后速度显示为默认。
@@ -75,6 +106,7 @@ public class SmoothLiftClient implements ClientModInitializer {
             PENDING_SYNC_CHUNKS.clear();
             EscalatorAudioPlayer.onDisconnect();
             EscalatorChimePlayer.onDisconnect();
+            LiftChimePlayer.onDisconnect();
             EscalatorAnimationDriver.clear();
             EscalatorStepRenderer.onDisconnect();
         });
@@ -355,6 +387,70 @@ public class SmoothLiftClient implements ClientModInitializer {
                 LOGGER.info("[SmoothLift/HelpAudio] 无障碍提示音已同步（{}）：默认 进入 {}、离开 {}，单独设置 {} / {} 处",
                         dimKey.location(), defaultIn, defaultOut, blockIn.size(), blockOut.size());
                 HelpAudioSetupScreen.notifyDataChanged();
+            });
+        });
+
+        // 【1.42】接收服务端同步的**直梯开关门提示音**设置（开关 + 倍速 + 【1.43】音量 + 【1.46】三子开关 + 【1.47】范围，按维度；最小的包）
+        ClientPlayNetworking.registerGlobalReceiver(SmoothLift.LIFT_CHIME_SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
+            String dimId = buf.readUtf(256);
+            boolean enabled = buf.readBoolean();
+            float speed = buf.readFloat();
+            // 【1.43】音量 —— 读的顺序必须与 EscalatorSpeedManager.buildLiftChimePacket 的写序一致
+            int volume = buf.readVarInt();
+            // 【1.46】三提示音独立子开关（追加在音量后面，顺序与写侧一致：up → down → chime）
+            boolean upEnabled = buf.readBoolean();
+            boolean downEnabled = buf.readBoolean();
+            boolean chimeEnabled = buf.readBoolean();
+            // 【1.47】淡入淡出范围（包尾追加）
+            int round = buf.readVarInt();
+            // 【1.48】三项各自音量（-1 = 跟随共用默认）
+            int toneVolumeUp = buf.readVarInt();
+            int toneVolumeDown = buf.readVarInt();
+            int toneVolumeChime = buf.readVarInt();
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
+            } catch (Exception e) {
+                return;
+            }
+            client.execute(() -> {
+                EscalatorSpeedManager.applyClientLiftChime(dimKey, enabled, speed, volume,
+                        upEnabled, downEnabled, chimeEnabled, round,
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+                LOGGER.info("[SmoothLift/LiftChime] 直梯提示音设置已同步（{}）：{}、倍速 {}、音量 {}、"
+                                + "子开关 up={} down={} chime={}、范围 {} 格、单项音量 up={} down={} chime={}",
+                        dimKey.location(), enabled ? "开" : "关", speed, volume,
+                        upEnabled, downEnabled, chimeEnabled, round,
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+            });
+        });
+
+        // 【1.45】接收服务端同步的**直梯楼层轨道提示音**（竖井列 → up/down/chime 三音频 id）。
+        //   播放端（LiftChimePlayer）按「最近直梯的竖井列」查这份镜像；打开石斧界面时也要读它。
+        //   ★ 顺序同 buildLiftTonePacket：dimId → 条数 → (key, up, down, chime) × N。
+        ClientPlayNetworking.registerGlobalReceiver(SmoothLift.LIFT_TONE_SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
+            String dimId = buf.readUtf(256);
+            int n = buf.readVarInt();
+            final Map<Long, EscalatorSpeedData.LiftToneAudio> tones = new HashMap<>();
+            for (int i = 0; i < n; i++) {
+                long key = buf.readLong();
+                String up = buf.readUtf(128);
+                String down = buf.readUtf(128);
+                String chime = buf.readUtf(128);
+                tones.put(key, new EscalatorSpeedData.LiftToneAudio(up, down, chime));
+            }
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
+            } catch (Exception e) {
+                return;
+            }
+            client.execute(() -> {
+                EscalatorSpeedManager.applyClientLiftTone(dimKey, tones);
+                int count = tones.size();
+                LOGGER.info("[SmoothLift/LiftChime] 直梯楼层轨道提示音已同步（{}）：{} 条",
+                        dimKey.location(), count);
+                LiftToneSetupScreen.notifyToneDataChanged();
             });
         });
 
