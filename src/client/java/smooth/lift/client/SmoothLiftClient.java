@@ -20,7 +20,15 @@ import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
 import smooth.lift.EscalatorUtil;
 import smooth.lift.network.AudioSyncPayload;
+import smooth.lift.network.HelpAudioSyncPayload;
+import smooth.lift.network.HelpRoundSyncPayload;
+import smooth.lift.network.HelpSpeedSyncPayload;
+import smooth.lift.network.HelpSyncPayload;
+import smooth.lift.network.HelpVolumeSyncPayload;
+import smooth.lift.network.LiftChimeSyncPayload;
+import smooth.lift.network.LiftToneSyncPayload;
 import smooth.lift.network.RequestSyncPayload;
+import smooth.lift.network.RoundSyncPayload;
 import smooth.lift.network.SyncPayload;
 import smooth.lift.network.VolumeSyncPayload;
 
@@ -36,6 +44,14 @@ public class SmoothLiftClient implements ClientModInitializer {
     /** 【1.7】服务端音频同步分块拼接缓冲：维度ID → (块索引 → 数据)。 */
     private static final Map<String, Map<Integer, byte[]>> PENDING_SYNC_CHUNKS = new HashMap<>();
 
+    /**
+     * 【1.45】判定「直梯楼层轨道」（按注册名前缀，两端共用主类的判据，避免各写一份走样）。
+     * 见 {@link smooth.lift.SmoothLift#isLiftTrackFloor}。
+     */
+    private static boolean isLiftTrackFloor(net.minecraft.world.level.block.state.BlockState state) {
+        return smooth.lift.SmoothLift.isLiftTrackFloor(state);
+    }
+
     @Override
     public void onInitializeClient() {
         // 逐条扶梯独立的阶梯动画：注册区块索引 + 世界渲染回调
@@ -44,6 +60,13 @@ public class SmoothLiftClient implements ClientModInitializer {
 
         // 【1.7】自定义扶梯声音播放器：每 tick 检查附近扶梯并调整音量
         ClientTickEvents.END_CLIENT_TICK.register(EscalatorAudioPlayer::onClientTick);
+
+        // 【1.15】香港式扶梯视障人士提示音：进扶梯一端急促咔咔、出扶梯一端缓慢咔咔（【1.23】改为敲击声）
+        ClientTickEvents.END_CLIENT_TICK.register(EscalatorChimePlayer::onClientTick);
+
+        // 【1.42】直梯（MTR Lift）开关门提示音：关门连播 4 次 liftmusic.ogg、开门连播 2 次。
+        // 与上面两个播放器互不影响：那两个只认「扶梯阶梯方块」，本播放器只认 MTR 的直梯对象。
+        ClientTickEvents.END_CLIENT_TICK.register(LiftChimePlayer::onClientTick);
 
         // 拿着石斧右键扶梯 -> 打开速度输入界面
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
@@ -61,6 +84,25 @@ public class SmoothLiftClient implements ClientModInitializer {
             return InteractionResult.FAIL;
         });
 
+        // 【1.45】拿着石斧右键**直梯楼层轨道** -> 打开直梯提示音三列表界面。
+        //   「是楼层轨道」按注册名判（lift_track_floor_*），不依赖 MTR 编译期。
+        //   直梯没有稳定 ID，所以把右键到的这格的「竖井列 key (X, Z)」传进界面，
+        //   同一条直梯的所有楼层轨道共享同一个 key。
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            if (!world.isClientSide() || hand != InteractionHand.MAIN_HAND) {
+                return InteractionResult.PASS;
+            }
+            if (!player.getMainHandItem().is(Items.STONE_AXE)) {
+                return InteractionResult.PASS;
+            }
+            BlockPos pos = hitResult.getBlockPos();
+            if (!isLiftTrackFloor(world.getBlockState(pos))) {
+                return InteractionResult.PASS;
+            }
+            Minecraft.getInstance().setScreen(new LiftToneSetupScreen(pos));
+            return InteractionResult.FAIL;
+        });
+
         // 客户端完全进世界后主动向服务端请求速度数据。
         // 服务端侧的 ServerPlayConnectionEvents.JOIN 推送发生在玩家连接建立过程中
         // （早于频道握手完成），此时发的包可能被客户端丢弃，导致进游戏后速度显示为默认。
@@ -73,6 +115,8 @@ public class SmoothLiftClient implements ClientModInitializer {
             EscalatorSpeedManager.clearClientData();
             PENDING_SYNC_CHUNKS.clear();
             EscalatorAudioPlayer.onDisconnect();
+            EscalatorChimePlayer.onDisconnect();
+            LiftChimePlayer.onDisconnect();
             EscalatorAnimationDriver.clear();
             EscalatorStepRenderer.onDisconnect();
         });
@@ -99,7 +143,7 @@ public class SmoothLiftClient implements ClientModInitializer {
 
         // 【1.7】接收服务端分块同步的音频库与扶梯-音频绑定，全部块到齐后应用
         ClientPlayNetworking.registerGlobalReceiver(AudioSyncPayload.TYPE, (payload, context) -> {
-            final String dimId = payload.dimension();
+            String dimId = payload.dimension();
             int totalChunks = payload.totalChunks();
             int chunkIndex = payload.chunkIndex();
             byte[] chunk = payload.chunk();
@@ -116,14 +160,14 @@ public class SmoothLiftClient implements ClientModInitializer {
             for (byte[] part : chunks.values()) {
                 total += part.length;
             }
-            byte[] data = new byte[total];
+            byte[] audioBytes = new byte[total];
             int offset = 0;
             for (int i = 0; i < totalChunks; i++) {
                 byte[] part = chunks.get(i);
                 if (part == null) {
                     return;
                 }
-                System.arraycopy(part, 0, data, offset, part.length);
+                System.arraycopy(part, 0, audioBytes, offset, part.length);
                 offset += part.length;
             }
             final ResourceKey<Level> dimKey;
@@ -132,28 +176,28 @@ public class SmoothLiftClient implements ClientModInitializer {
             } catch (Exception e) {
                 return;
             }
-            final FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.wrappedBuffer(data));
-            int audioCount = buf.readVarInt();
+            final FriendlyByteBuf data = new FriendlyByteBuf(Unpooled.wrappedBuffer(audioBytes));
+            int audioCount = data.readVarInt();
             final Map<String, byte[]> audioLibrary = new HashMap<>();
             for (int i = 0; i < audioCount; i++) {
-                String id = buf.readUtf(128);
-                byte[] bytes = buf.readByteArray();
+                String id = data.readUtf(128);
+                byte[] bytes = data.readByteArray();
                 if (bytes.length > 0 && bytes.length <= EscalatorSpeedData.MAX_AUDIO_BYTES) {
                     audioLibrary.put(id, bytes);
                 }
             }
-            int folderCount = buf.readVarInt();
+            int folderCount = data.readVarInt();
             final Set<String> folderAudio = new HashSet<>();
             for (int i = 0; i < folderCount; i++) {
-                folderAudio.add(buf.readUtf(128));
+                folderAudio.add(data.readUtf(128));
             }
-            int bindCount = buf.readVarInt();
+            int bindCount = data.readVarInt();
             final Map<BlockPos, String> blockAudio = new HashMap<>();
             for (int i = 0; i < bindCount; i++) {
-                blockAudio.put(buf.readBlockPos(), buf.readUtf(128));
+                blockAudio.put(data.readBlockPos(), data.readUtf(128));
             }
             // 【1.11】默认扶梯音频（空串 = 没有默认音频）
-            String defaultAudioRaw = buf.readUtf(128);
+            String defaultAudioRaw = data.readUtf(128);
             final String defaultAudio = defaultAudioRaw.isEmpty() ? null : defaultAudioRaw;
             context.client().execute(() -> {
                 EscalatorSpeedManager.applyClientAudioData(dimKey, audioLibrary, folderAudio, blockAudio,
@@ -174,17 +218,179 @@ public class SmoothLiftClient implements ClientModInitializer {
 
         // 【1.9】接收服务端同步的「扶梯方块 → 声音音量」表（小包，不含音频字节）
         ClientPlayNetworking.registerGlobalReceiver(VolumeSyncPayload.TYPE, (payload, context) -> {
-            final String dimId = payload.dimension();
-            final int defVol = payload.defaultVolume();
             final Map<BlockPos, Integer> volumes = new HashMap<>(payload.volumes());
             final ResourceKey<Level> dimKey;
             try {
-                dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
             } catch (Exception e) {
                 return;
             }
+            final int defVol = payload.defaultVolume();
             context.client().execute(() -> EscalatorSpeedManager.applyClientVolumes(dimKey, volumes, defVol));
         });
+
+        // 【1.16】接收服务端同步的「扶梯方块 → 无障碍提示音开关」表（小包）
+        ClientPlayNetworking.registerGlobalReceiver(HelpSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, Boolean> help = new HashMap<>(payload.help());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final boolean defaultHelp = payload.defaultHelp();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientHelp(dimKey, defaultHelp, help);
+                // 「开关关不掉」时先看这条日志：没打出来 = 同步包根本没到（装错 jar / 频道没注册）；
+                // 打出来了但还响 = 去看 [SmoothLift/Chime] 那两条「已静音 / 恢复播放」。
+                LOGGER.info("[SmoothLift/Help] 无障碍提示音开关已同步（{}）：默认 {}、单独设置 {} 处",
+                        dimKey.location(), defaultHelp ? "开" : "关", help.size());
+            });
+        });
+
+        // 【1.18】接收服务端同步的「扶梯方块 → 无障碍提示音音量」表（小包）
+        ClientPlayNetworking.registerGlobalReceiver(HelpVolumeSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, Integer> helpVolume = new HashMap<>(payload.helpVolumes());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final int defVolume = payload.defaultHelpVolume();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientHelpVolume(dimKey, defVolume, helpVolume);
+                LOGGER.info("[SmoothLift/HelpVolume] 无障碍提示音音量已同步（{}）：默认 {}、单独设置 {} 处",
+                        dimKey.location(), defVolume, helpVolume.size());
+            });
+        });
+
+        // 【1.24】接收服务端同步的「扶梯方块 → 运行底噪可闻范围（格）」表（小包）
+        ClientPlayNetworking.registerGlobalReceiver(RoundSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, Integer> round = new HashMap<>(payload.rounds());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final int defaultRound = payload.defaultRound();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientRounds(dimKey, defaultRound, round);
+                LOGGER.info("[SmoothLift/Round] 扶梯音效淡入淡出范围已同步（{}）：默认 {} 格、单独设置 {} 处",
+                        dimKey.location(), defaultRound, round.size());
+            });
+        });
+
+        // 【1.24】接收服务端同步的「扶梯方块 → 无障碍提示音可闻范围（格）」表（小包）
+        ClientPlayNetworking.registerGlobalReceiver(HelpRoundSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, Integer> helpRound = new HashMap<>(payload.helpRounds());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final int defaultHelpRound = payload.defaultHelpRound();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientHelpRounds(dimKey, defaultHelpRound, helpRound);
+                LOGGER.info("[SmoothLift/HelpRound] 无障碍提示音淡入淡出范围已同步（{}）：默认 {} 格、单独设置 {} 处",
+                        dimKey.location(), defaultHelpRound, helpRound.size());
+            });
+        });
+
+        // 【1.31】接收服务端同步的无障碍提示音**速率**（入口 / 出口两套 Hz，同一只包）
+        ClientPlayNetworking.registerGlobalReceiver(HelpSpeedSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, Integer> blockIn = new HashMap<>(payload.helpSpeedIn());
+            final Map<BlockPos, Integer> blockOut = new HashMap<>(payload.helpSpeedOut());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final int defaultIn = payload.defaultHelpSpeedIn();
+            final int defaultOut = payload.defaultHelpSpeedOut();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientHelpSpeeds(dimKey, defaultIn, blockIn, defaultOut, blockOut);
+                LOGGER.info("[SmoothLift/HelpSpeed] 无障碍提示音速率已同步（{}）：默认 进入 {} 次/秒、离开 {} 次/秒，"
+                                + "单独设置 {} / {} 处",
+                        dimKey.location(), defaultIn, defaultOut, blockIn.size(), blockOut.size());
+            });
+        });
+
+        // 【1.41】接收服务端同步的「默认提示音音乐 + 扶梯方块 → 提示音音乐」表
+        //   （小包，进 / 出两套 —— 顺序同 buildHelpAudioPacket：默认in, 表in, 默认out, 表out）
+        //   音频字节仍然来自 AUDIO_SYNC 那一份（同一个库），这里只发「选了哪一个」。
+        ClientPlayNetworking.registerGlobalReceiver(HelpAudioSyncPayload.TYPE, (payload, context) -> {
+            final Map<BlockPos, String> blockIn = new HashMap<>(payload.helpAudioIn());
+            final Map<BlockPos, String> blockOut = new HashMap<>(payload.helpAudioOut());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final String defaultIn = payload.defaultHelpAudioIn();
+            final String defaultOut = payload.defaultHelpAudioOut();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientHelpAudio(dimKey, defaultIn, blockIn, defaultOut, blockOut);
+                LOGGER.info("[SmoothLift/HelpAudio] 无障碍提示音已同步（{}）：默认 进入 {}、离开 {}，单独设置 {} / {} 处",
+                        dimKey.location(), defaultIn, defaultOut, blockIn.size(), blockOut.size());
+                HelpAudioSetupScreen.notifyDataChanged();
+            });
+        });
+
+        // 【1.42】接收服务端同步的**直梯开关门提示音**设置（开关 + 倍速 + 【1.43】音量 + 【1.46】三子开关
+        //   + 【1.47】范围 + 【1.48】单项音量，按维度；最小的包）
+        ClientPlayNetworking.registerGlobalReceiver(LiftChimeSyncPayload.TYPE, (payload, context) -> {
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            final boolean enabled = payload.enabled();
+            final float speed = payload.speed();
+            final int volume = payload.volume();
+            final boolean upEnabled = payload.upEnabled();
+            final boolean downEnabled = payload.downEnabled();
+            final boolean chimeEnabled = payload.chimeEnabled();
+            final int round = payload.round();
+            final int toneVolumeUp = payload.volumeUp();
+            final int toneVolumeDown = payload.volumeDown();
+            final int toneVolumeChime = payload.volumeChime();
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientLiftChime(dimKey, enabled, speed, volume,
+                        upEnabled, downEnabled, chimeEnabled, round,
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+                LOGGER.info("[SmoothLift/LiftChime] 直梯提示音设置已同步（{}）：{}、倍速 {}、音量 {}、"
+                                + "子开关 up={} down={} chime={}、范围 {} 格、单项音量 up={} down={} chime={}",
+                        dimKey.location(), enabled ? "开" : "关", speed, volume,
+                        upEnabled, downEnabled, chimeEnabled, round,
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+            });
+        });
+
+        // 【1.45】接收服务端同步的**直梯楼层轨道提示音**（竖井列 → up/down/chime 三音频 id）。
+        //   播放端（LiftChimePlayer）按「最近直梯的竖井列」查这份镜像；打开石斧界面时也要读它。
+        ClientPlayNetworking.registerGlobalReceiver(LiftToneSyncPayload.TYPE, (payload, context) -> {
+            final Map<Long, EscalatorSpeedData.LiftToneAudio> tones = new HashMap<>(payload.tones());
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(payload.dimension());
+            } catch (Exception e) {
+                return;
+            }
+            context.client().execute(() -> {
+                EscalatorSpeedManager.applyClientLiftTone(dimKey, tones);
+                int count = tones.size();
+                LOGGER.info("[SmoothLift/LiftChime] 直梯楼层轨道提示音已同步（{}）：{} 条",
+                        dimKey.location(), count);
+                LiftToneSetupScreen.notifyToneDataChanged();
+            });
+        });
+
     }
 
     private record SyncEntry(double defaultSpeed, Map<BlockPos, Double> speeds, Map<BlockPos, Double> stepSpeeds,

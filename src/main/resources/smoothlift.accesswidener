@@ -24,7 +24,7 @@ accessible	method	net/minecraft/client/renderer/RenderType	create	(Ljava/lang/St
 # ---------------------------------------------------------------------------
 # 自定义扶梯声音：客户端播放器需要把玩家选择的 OGG 音频直接注入声音引擎，
 # 因此要访问 SoundManager -> SoundEngine -> SoundBufferLibrary 这条链上的三个
-# 私有字段（本项目用 mojmap 官方映射，1.21.4 对应：
+# 私有字段（本项目用 mojmap 官方映射，1.21.1 对应：
 #   Minecraft.getSoundManager()（公开）-> SoundManager.soundEngine
 #   -> SoundEngine.soundBuffers -> SoundBufferLibrary.cache（缓存 Map）
 # 注入后 SoundEngine.play() 经 getCompleteBuffer(computeIfAbsent) 命中缓存，
@@ -32,7 +32,7 @@ accessible	method	net/minecraft/client/renderer/RenderType	create	(Ljava/lang/St
 #
 # instanceToChannel（SoundInstance -> ChannelHandle）用于播放成功后对底层
 # Channel 调 setLooping(true)：静态 Sound 默认播完一遍就停，扶梯声音需要循环。
-# 下面 5 条已用 1.21.4 的 mojmap 客户端 jar 逐条 javap 核对，与 1.20.4 同名同类型。
+# 下面 5 条已用 1.21.1 的 mojmap 客户端 jar 逐条 javap 核对，与 1.20.4 同名同类型。
 # ---------------------------------------------------------------------------
 accessible	field	net/minecraft/client/sounds/SoundManager	soundEngine	Lnet/minecraft/client/sounds/SoundEngine;
 accessible	field	net/minecraft/client/sounds/SoundEngine	soundBuffers	Lnet/minecraft/client/sounds/SoundBufferLibrary;

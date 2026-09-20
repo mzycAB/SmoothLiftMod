@@ -3,7 +3,8 @@
 	"package": "smooth.lift.client.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"client": [
-		"SoundEngineVolumeMixin"
+		"SoundEngineVolumeMixin",
+		"AbstractClientPlayerBobMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1
