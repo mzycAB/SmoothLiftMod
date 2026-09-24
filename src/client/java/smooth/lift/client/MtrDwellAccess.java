@@ -1,0 +1,1087 @@
+package smooth.lift.client;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+/**
+ * 【1.15 · 第八轮】MTR **时刻表（站台停留时长）**的只读跨版本访问层 —— 「不要靠猜」的那一半。
+ *
+ * <h2>为什么要有这个类</h2>
+ *
+ * 用户要的是「关门提示音的**结尾**正好落在门关上那一刻」（见 {@code PsdChimePlayer} 类注释）。
+ * 素材 10.8 秒、门自己只走 4 秒，所以必须在门**开始关之前** 6.8 秒起播 —— 而 MTR
+ * **没有任何关门预警信号**，这个提前量只能自己预测。
+ *
+ * <p>原来的预测是**实测学习**：记住这一扇门上一轮「开门 → 全关」跑了多少 tick，下一轮照着排。
+ * 学习有两个先天缺陷：
+ * <ol>
+ *   <li><b>第一次永远没参照</b> —— 刚进世界、或刚走到这个站，第一轮只能退化成「只嘀嘀」；</li>
+ *   <li><b>跨站借用会串味</b> —— 停站时长是**每个站台各自的**属性（A 站 10 秒、B 站 20 秒），
+ *       拿 A 站学到的值去排 B 站的提前量，必然错一截。</li>
+ * </ol>
+ * 而**这个数字 MTR 本来就知道**：它是站台数据里的一项，客户端手里就有。本类把它读出来。
+ *
+ * <h2>★ 读的不是「站台停留时长」，而是「开门 → 全关」的周期</h2>
+ *
+ * 朴素做法是「读停站时长，减素材时长」—— 那样会**差 1.5 秒以上**。真正的关系在
+ * {@code org.mtr.core.data.Vehicle.simulateStopped} 的字节码里（MTR 4.0.5，已逐条核过）：
+ *
+ * <pre>
+ *   D  = PathData.getDwellTime()            // 这一个停靠点的目标停留时长（ms）
+ *                                            //  ← 来源见下：站台数据里的 dwellTime
+ *   门开：elapsedDwellTime >= 1000 （DOOR_DELAY）       才开始开 ——「门全开」≈ 停稳 + 1000ms
+ *   关门：elapsedDwellTime >= max(D/2, D - 4200)       才发车 ⇒ 门开始关
+ *                                            4200 = DOOR_MOVE_TIME(3200) + DOOR_DELAY(1000)
+ *                                            另一半 D/2 是下限：停站太短时至少留一半时间开门
+ *   所以「门开始关 → 计划发车」= 4200ms，而「全开 → 门开始关」= max(D/2, D-4200) - 1000
+ * </pre>
+ *
+ * <p>⇒ <b>开门那一瞬到门全关</b> = {@code max(D/2, D-4200) - 1000 + 门程}。
+ * {@link #cycleTicksForDwell} 就是这个式子。
+ *
+ * <h2>★ 「站台数据里的 dwellTime」确实就是那个 D</h2>
+ *
+ * {@code SidingPathFinder} 构造每一段 {@code PathData} 时（字节码）：
+ * <pre>
+ *   savedRailBaseId = endSavedRail.getId()
+ *   dwellTime       = (endSavedRail instanceof Platform) ? platform.getDwellTime() : 1L
+ * </pre>
+ * 即轨道线路的停靠点 D **就是** {@code Platform.getDwellTime()}。所以这里读站台即可，
+ * 不必去翻列车的 {@code immutablePath}。
+ *
+ * <p><b>⚠ 反面教材（差点踩进去）</b>：{@code Platform.getDwellTime()} 之外，
+ * MTR 里还有 {@code RouteStation.getDwellTime()}、{@code PathData.getDwellTime()}，
+ * 而 {@code Vehicle.eleapedDwellTime} 真正累加的那个 D 只来自 {@code PathData}。
+ * 全 jar 扫过一遍：{@code Platform.getDwellTime()} 在 MTR4 里的调用者只有
+ * {@code SidingPathFinder}（建路径）与 {@code DirectionsFinder}（出行建议），
+ * **不是**「另一个无关的站台属性」，读它就是对的那一个。
+ *
+ * <h2>怎么找到「这扇门属于哪个站台」</h2>
+ *
+ * MTR 的屏蔽门方块实体（{@code BlockPSDAPGDoorBase$BlockEntityBase}）里**只有**门值，
+ * 不含任何站台引用 —— 所以门 → 站台只能**按几何**认。站台的「中点坐标」由 MTR 自己算好放在
+ * {@code Data.platforms} 里（{@code Platform.getMidPosition()}，{@code Data.sync()} 里
+ * 还顺手塞进了 {@code platformIdToPosition}），于是：
+ *
+ * <ol>
+ *   <li>门到站台**中轴线段**的垂直距离最近的（拿不到两端点时退回「到中点」的水平距离）；</li>
+ *   <li>横向必须落在 {@link #MAX_LATERAL}（中轴线段模式）/ {@link #MAX_HORIZONTAL}（中点模式）格以内；
+ *       纵向必须落在 {@link #MAX_DY} 格以内，避免把楼上/楼下的站台认成同一个；</li>
+ *   <li>优先挑**停留时长有效**（&gt; 0）的那一个 —— MTR 里没配过的站台读出来是 0，拿它算周期只会算出 -1；</li>
+ *   <li>认不出来（读不到 / 一个候选都没有）⇒ 返回 {@code -1}，调用方**原样退回实测学习**。</li>
+ * </ol>
+ *
+ * <p>【第十二轮】每次「选中的站台变了」除了报选中项，还会报**被上限挡掉的那个最近的站台**；
+ * 进入世界后的第一份日志里还会把**全部**站台（车站名 + 坐标 + 停留时长）列成一张表。
+ * 这两样是给「改了停留时间却读不到」用的（详见 {@link #dumpPlatforms}）。
+ *
+ * <h2>反射与降级</h2>
+ *
+ * 本模组的 build.gradle **不依赖 MTR**，编译期没有任何 MTR 类型 —— 所以这里全程反射
+ * （与 {@link MtrLiftAccess} 同一套写法）。<b>任何一步失败都只是「读不到」</b>：
+ * 返回 {@code -1}、打一条日志、之后彻底静默，播放器照旧走实测学习那条路，
+ * 行为与加这个类之前**完全一样**。绝不会把反射异常抛进客户端 tick。
+ *
+ * <p>MTR3 没有 {@code org.mtr.core.data.Platform}（也没有屏蔽门提示音这一套数据面），
+ * 探测失败即整体停用 —— 这正是期望行为。
+ */
+public final class MtrDwellAccess {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger("smoothlift");
+
+    /**
+     * MTR4 {@code Vehicle.DOOR_DELAY} = 1000ms（常量池实测 {@code Integer 1000}）。
+     * 从「门该开了」到门真的开始动之间的延迟。
+     */
+    public static final int DOOR_DELAY_MS = 1000;
+
+    /**
+     * MTR4 {@code Vehicle.DOOR_MOVE_TIME} = 3200ms（常量池实测 {@code Integer 3200}）。
+     * MTR 认为门从全开到全关要走这么久（用它倒推「该提前多久发关门指令」）。
+     */
+    public static final int DOOR_MOVE_TIME_MS = 3200;
+
+    /** 关门提前量 = {@code DOOR_MOVE_TIME + DOOR_DELAY}（字节码里的 {@code D - 4200} 那个 4200）。 */
+    public static final int CLOSE_LEAD_MS = DOOR_MOVE_TIME_MS + DOOR_DELAY_MS;
+
+    /**
+     * 门程（门开始关 → 全关）的**兜底** tick 数 = 80。
+     *
+     * <p>来路：{@code BlockPSDAPGDoorBase$BlockEntityBase.tick(F)} 里
+     * {@code doorValue} 每次走 {@code partialTick*20/3200*2} = 1/80，两端夹在 0..1
+     * ⇒ 若按「每 tick 走一格」算是 80 tick = 4000ms。但**实测不是这个数**：
+     * {@code PsdChimePlayer} 自己学到的 {@code globalTravelTicks} 稳定在 ~29 tick（1450ms）。
+     *
+     * <p>★★【1.15 · 第十二轮】两者差 2.7 倍的原因是 {@code tick(F)} 挂在**渲染器每帧**
+     * 那条路径上（mixin 挂的 {@code getDoorValue()} 就是 {@code RenderPSDAPGDoor.render}
+     * 每帧调一次的那个口）—— 也就是说**门速跟帧率走**，根本不存在一个「正确常数」。
+     * 所以这个 80 只当**极端兜底**（它偏**乐观**：算出来的周期比真实的长），
+     * **一旦实测学到就立刻改用它**（见 {@code PsdChimePlayer.planClose} 里的
+     * {@code globalTravelTicks > 0 ? globalTravelTicks : DEFAULT_TRAVEL_TICKS}）。
+     * 想收窄这个兜底，得先在游戏里量「不同帧率下的门程」，别凭字节码改。
+     */
+    public static final int DEFAULT_TRAVEL_TICKS = 80;
+
+    /**
+     * 认站台时允许的纵向偏差（格）。
+     *
+     * <p>取 {@value} 的理由：屏蔽门方块通常紧贴在站台方块**上方或旁边**一格（±1），
+     * 而站台的「中点」是站台方块自己的坐标；给到 {@value} 是留出半格楼梯 / 装饰层的余量。
+     * 再大就会把楼上（高架站）或楼下（地下站）**不同层**的站台拉进来当候选 ——
+     * 那种错认会安静地读到一个错的停站时长，比读不到更坏。
+     */
+    private static final double MAX_DY = 8.0;
+
+    /**
+     * 【1.15 · 第十轮】门到站台**中轴线段**的横向容许偏差（格）—— 正常布局下的主判据。
+     *
+     * <p>★ 为什么改成「到线段」而不是「到中点」：站台是**长条**。用中点距离挑「最近的那个站台」
+     * 有个致命形态 —— 门在站台**这一端**、而**对面方向**那个站台的中点恰好更近，
+     * 于是安静地读到**隔壁站台**的停站时长（那两个站台的停站时长经常不一样）。
+     * 改用「门到站台两端点连线的垂直距离」之后，门踩在哪条站台上就是哪条，
+     * 与站台多长、门挂在哪一端都无关。
+     *
+     * <p>取 {@value} 的理由：屏蔽门方块就建在站台方块上/紧邻（垂直距离 ≈ 0~1 格），
+     * 留到 {@value} 格已经覆盖「门建在宽站台外沿」这类布局。**故意取得小**：
+     * 宁可「读不到」（上游会原样退回「本扇门实测」，代价只是第一次停站没人声），
+     * 也不要「安静地读到隔壁站台」（那会让停站时长怎么改都没用，且看不出原因）。
+     */
+    private static final double MAX_LATERAL = 4.0;
+
+    /**
+     * 【1.15 · 第十轮】退路模式（读不到站台两端点时）允许的**中点**水平距离上限（格）。
+     *
+     * <p>★ 以前这里**根本没有上限**：「横向最近的那个站台」全靠一个无界 {@code min} 来挑 ⇒
+     * 屏蔽门离任何站台都很远时（站台还没同步完 / 门挂在别处 / 玩家在另一个车站），
+     * 会安静地读到**几百格以外**那个车站的停站时长，于是「改这一站的停站时间完全没用」。
+     * 加上限之后，够不着就返回「读不到」，行为可解释。
+     *
+     * <p>取 {@value} 的理由：长条站台的门到**中点**最多是站台长度的一半，
+     * {@value} 格够覆盖 128 格的超长站台，又能挡住「几百格以外那个站」这种假匹配。
+     */
+    private static final double MAX_HORIZONTAL = 64.0;
+
+    // ------------------------------------------------------------------
+    // 反射绑定（只做一次）
+    // ------------------------------------------------------------------
+
+    private static boolean initialised;
+    private static boolean bound;
+    /** 反射链路出问题时只打一条日志，之后彻底静默（避免每 tick 刷屏）。 */
+    private static boolean broken;
+    /** 「站台集合是空的」只提示一次。 */
+    private static boolean warnedEmpty;
+    /** 首次成功读到站台集合时打一条（只打一次）：日志里能一眼看出客户端到底有没有站台数据。 */
+    private static boolean loggedCount;
+    /** 【第十轮】「一个站台都够不着」只提示一次。 */
+    private static boolean warnedNoMatch;
+    /**
+     * 【第十轮】记住上一条日志里「选中了哪个站台、读到多少」——
+     * 只在**选择发生变化**时打日志，既能看见「换站了」，又不会每 tick 刷屏。
+     */
+    private static String lastPick = "";
+
+    /** {@code MinecraftClientData.getInstance()}（MTR4）。 */
+    private static Method getInstance;
+    /** {@code Data.platforms}（public final，声明在 {@code Data} 上，MTR4）。 */
+    private static Field platformsField;
+    /** {@code SavedRailBase.getMidPosition()}（public，{@code Platform} 继承）。 */
+    private static Method getMidPosition;
+    /** {@code Platform.getDwellTime()}（public long）。 */
+    private static Method getDwellTime;
+    /**
+     * 【第十轮】站台的两个端点（{@code SavedRailBase.position1/position2}，protected）。
+     * <b>可选</b>：读不到就退回「中点距离」模式（见 {@link #MAX_HORIZONTAL}），
+     * 不让一个可选优化把整个功能拖挂。
+     */
+    private static Field position1Field;
+    private static Field position2Field;
+    /**
+     * 【1.15 · 第十二轮】站台所属**车站**（{@code SavedRailBase.area}，public 字段，对 Platform 而言就是
+     * {@code Station}）+ {@code NameColorDataBase.getName()}（public final）。
+     * <b>可选</b>：只为日志好看 —— 用户报「改了停留时间没用」时，
+     * 「认到的是哪个车站的站台」比一组坐标好认得多。
+     */
+    private static Field areaField;
+    private static Method getNameMethod;
+    /** {@code Position.getX/getY/getZ()}（public）。 */
+    private static Method posGetX;
+    private static Method posGetY;
+    private static Method posGetZ;
+    /** {@code Platform.getId()}（MTR4，public）—— 拿它去查时刻表。 */
+    private static Method getIdMethod;
+
+    // ------------------------------------------------------------------
+    // 【1.21】时刻表「下一班到站」这一层（进站报站 /pbmarrive 用）
+    //
+    //   ★ 用户点名「**看时刻表啊，不要猜**，可以借鉴关门音频的代码，应该有相似之处」。
+    //   关门音频那一套读的是 `Data.platforms` 里的 `Platform.getDwellTime()`（停站时长），
+    //   「下一班什么时候到」在同一份 MTR 数据里，由 **MTR 自己的到达缓存**给出 ——
+    //   就是 PIDS（站台显示屏）与「列车时刻表传感器」用的那一个：
+    //
+    //     ArrivalsCacheClient.INSTANCE.requestArrivals(LongCollection platformIds)
+    //       → 每个 ArrivalResponse: getArrival() - getMillisOffset() - System.currentTimeMillis()
+    //       → / 1000 就是「还有几秒到站」
+    //
+    //   （对 `org/mtr/mod/block/BlockTrainScheduleSensor$BlockEntity` 逐条 javap 抄下来的，
+    //    见 _tools 里那条探针；RenderPIDS 也是同一条路。）
+    //
+    //   ★ 为什么整层都是**可选**的：没装 MTR / MTR 改了这个内部类，
+    //   只该让「进站报站」不响，不该把停站时长的读取一起拖挂 ⇒ bind() 里单独 try。
+    // ------------------------------------------------------------------
+
+    /** {@code org.mtr.mod.data.ArrivalsCacheClient.INSTANCE}（public static final）。 */
+    private static Object arrivalsCache;
+    /** {@code ArrivalsCacheClient.requestArrivals(LongCollection)}（声明在父类，public final）。 */
+    private static Method requestArrivals;
+    /** {@code ArrivalsCacheClient.getMillisOffset()}（把服务器时刻表对齐到真实时间）。 */
+    private static Method getMillisOffset;
+    /** {@code ArrivalResponse.getArrival()}（到站时刻，ms）。 */
+    private static Method arrivalGetArrival;
+    /** {@code org.mtr.libraries...LongArrayList} 的无参构造 + {@code add(long)}（构造入参用）。 */
+    private static java.lang.reflect.Constructor<?> longListCtor;
+    private static Method longListAdd;
+
+    /**
+     * 【1.21】算「**最近的一班**列车」时，**已经过站**超过这么多毫秒的条目就不再算数（ms）。
+     *
+     * <p>★ 取值必须**远小于**相邻两班的间隔：刚进站的那班在时刻表里会短暂地还挂着一个过去的
+     * {@code arrival}，若把它也算成候选，它就会一直把**后面那班**压住（密集时刻表下整段漏播）。
+     * 留 5 秒只是为了「车刚停稳时玩家才走进视距」还能补上这一班，不要再放大。
+     *
+     * <p>★ 播放端判「是不是已经晚了」用的是**同一个常数** —— 同一件事只留一个数字。
+     */
+    public static final long ARRIVAL_PAST_MS = 5_000L;
+    /**
+     * 【第十二轮】站台清单只打印一次（数量变了会再打一次）——
+     * 这份清单是给「我明明改了停留时间，怎么读出来还是默认值」用的：
+     * 把**每一个**站台的车站 + 坐标 + 停留时长都摆出来，用户一眼就能看出自己改的是哪一条、
+     * 而屏蔽门读到的又是哪一条。
+     */
+    /**
+     * 【1.15 · 第十二轮】站台清单只在**内容变了**的时候重打 —— 签名 = 「每个站台的坐标 + 停留时长」。
+     *
+     * <p>★ 以前只按「数量」去重，于是**停留时长被改了却看不出来**：
+     * 用户在仪表盘里把某个站台的停留时间改成 30 秒，数量还是 6 ⇒ 清单不再打印，
+     * 日志里就永远停在「6 个站台，全是 10000ms（默认）」那个印象上，
+     * 分不清「改动没到客户端」还是「改动到了但没被用上」。
+     */
+    private static String dumpedPlatformSignature = "";
+
+    private MtrDwellAccess() {
+    }
+
+    /** 这一层能不能用（首次调用时探测，之后缓存）。 */
+    public static boolean available() {
+        if (!initialised) {
+            initialised = true;
+            bound = bind();
+        }
+        return bound && !broken;
+    }
+
+    private static boolean bind() {
+        try {
+            Class<?> mcd = Class.forName("org.mtr.mod.client.MinecraftClientData");
+            getInstance = method(mcd, "getInstance");
+            if (getInstance == null) {
+                throw new NoSuchMethodException("MinecraftClientData.getInstance");
+            }
+            Class<?> data = Class.forName("org.mtr.core.data.Data");
+            platformsField = fieldInHierarchy(data, "platforms");
+            if (platformsField == null) {
+                throw new NoSuchFieldException("org.mtr.core.data.Data.platforms");
+            }
+            Class<?> platform = Class.forName("org.mtr.core.data.Platform");
+            getMidPosition = method(platform, "getMidPosition");
+            getDwellTime = method(platform, "getDwellTime");
+            if (getMidPosition == null || getDwellTime == null) {
+                throw new NoSuchMethodException("Platform.getMidPosition/getDwellTime");
+            }
+            Class<?> position = Class.forName("org.mtr.core.data.Position");
+            posGetX = method(position, "getX");
+            posGetY = method(position, "getY");
+            posGetZ = method(position, "getZ");
+            if (posGetX == null || posGetY == null || posGetZ == null) {
+                throw new NoSuchMethodException("Position.getX/getY/getZ");
+            }
+            // 【第十轮】**可选**绑定：站台两端点。拿得到就用「门到站台中轴线段」认亲（见 MAX_LATERAL），
+            //   拿不到就退回「到中点」模式（见 MAX_HORIZONTAL）——绝不让这个优化把功能拖挂。
+            try {
+                Class<?> savedRail = Class.forName("org.mtr.core.data.SavedRailBase");
+                position1Field = fieldInHierarchy(savedRail, "position1");
+                position2Field = fieldInHierarchy(savedRail, "position2");
+            } catch (Throwable ignored) {
+                position1Field = null;
+                position2Field = null;
+            }
+            // 【第十二轮】**可选**绑定：站台 → 所属车站（只为日志能点名车站）。
+            try {
+                Class<?> savedRail = Class.forName("org.mtr.core.data.SavedRailBase");
+                areaField = fieldInHierarchy(savedRail, "area");
+                Class<?> named = Class.forName("org.mtr.core.data.NameColorDataBase");
+                getNameMethod = method(named, "getName");
+            } catch (Throwable ignored) {
+                areaField = null;
+                getNameMethod = null;
+            }
+            // 【1.21】**可选**绑定：站台 id（进站报站要靠它去查时刻表）。
+            getIdMethod = method(platform, "getId");
+            // 【1.21】**可选**绑定：到达缓存。失败只让进站报站不响，不影响停站时长。
+            bindArrivals();
+            boolean segmentMode = position1Field != null && position2Field != null;
+            LOGGER.info("[SmoothLift/PsdChime] 检测到 MTR4 站台数据层 —— "
+                            + "可以直接读时刻表的停站时长（不必再靠上一轮实测去猜）；"
+                            + "认站台方式 = {}",
+                    segmentMode ? "门到站台中轴线段的垂直距离（≤ " + MAX_LATERAL + " 格）"
+                            : "门到站台中点的水平距离（≤ " + MAX_HORIZONTAL + " 格，端点字段读不到）");
+            return true;
+        } catch (Throwable t) {
+            // 不是错误路径：没装 MTR4 / 装了别的版本 / MTR 改了内部结构，都走到这里。
+            // 屏蔽门提示音本来就有「实测学习」那条完整可用的路，读不到只是少一份参照。
+            LOGGER.info("[SmoothLift/PsdChime] 读不到 MTR 站台数据（{}），"
+                    + "停站时长只能靠上一轮实测学习（功能照常，只是第一次停站没人声）", t.toString());
+            return false;
+        }
+    }
+
+    private static Method method(Class<?> owner, String name, Class<?>... params) {
+        try {
+            Method m = owner.getMethod(name, params);
+            m.setAccessible(true);
+            return m;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static Field fieldInHierarchy(Class<?> owner, String name) {
+        for (Class<?> c = owner; c != null; c = c.getSuperclass()) {
+            try {
+                Field f = c.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (Throwable ignored) {
+                // 继续往父类找
+            }
+        }
+        return null;
+    }
+
+    /** 容器形态兜底：fastutil 的 Set 是 {@code java.util.Set}（Iterable），fastutil 的 Map 只能取 values()。 */
+    private static Iterable<?> elementsOf(Object raw) {
+        if (raw instanceof java.util.Map<?, ?> map) {
+            return map.values();
+        }
+        if (raw instanceof Iterable<?> iterable) {
+            return iterable;
+        }
+        return null;
+    }
+
+    /**
+     * 【1.21】**可选**绑定 MTR 的到达缓存（PIDS / 时刻表传感器用的同一个）。
+     *
+     * <p>失败是**正常路径**（没装 MTR / 换了 MTR 版本 / 被别的模组换了实现），
+     * 只打一条 info，整层保持 {@code null} ⇒ {@link #nextArrivalRemainingMs} 直接返回
+     * {@link Long#MIN_VALUE}，「进站报站」静默不响，其它功能照常。
+     */
+    private static boolean bindArrivals() {
+        arrivalsCache = null;
+        requestArrivals = null;
+        getMillisOffset = null;
+        arrivalGetArrival = null;
+        longListCtor = null;
+        longListAdd = null;
+        try {
+            Class<?> acc = Class.forName("org.mtr.mod.data.ArrivalsCacheClient");
+            arrivalsCache = acc.getField("INSTANCE").get(null);
+            Class<?> longCollection = Class.forName(
+                    "org.mtr.libraries.it.unimi.dsi.fastutil.longs.LongCollection");
+            requestArrivals = acc.getMethod("requestArrivals", longCollection);
+            getMillisOffset = acc.getMethod("getMillisOffset");
+            Class<?> response = Class.forName("org.mtr.core.operation.ArrivalResponse");
+            arrivalGetArrival = response.getMethod("getArrival");
+            Class<?> longList = Class.forName(
+                    "org.mtr.libraries.it.unimi.dsi.fastutil.longs.LongArrayList");
+            longListCtor = longList.getConstructor();
+            longListAdd = longList.getMethod("add", long.class);
+            if (arrivalsCache == null || longListCtor == null || longListAdd == null) {
+                throw new NoSuchFieldException("ArrivalsCacheClient.INSTANCE");
+            }
+            LOGGER.info("[SmoothLift/PsdChime] 已接上 MTR 到达缓存 ⇒ /pbmarrive 可以按时刻表在"
+                    + "「最近一班车还剩 N 秒到站」时播进站报站");
+            return true;
+        } catch (Throwable t) {
+            arrivalsCache = null;
+            LOGGER.info("[SmoothLift/PsdChime] 读不到 MTR 到达缓存（{}），"
+                    + "/pbmarrive（进站报站）不会响；其余功能不受影响", t.toString());
+            return false;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 读
+    // ------------------------------------------------------------------
+
+    /**
+     * 【1.21】这一串屏蔽门在哪一条**站台**上（拿去查时刻表）。
+     *
+     * <p>认亲规则与 {@link #dwellMsAt} **完全一致**（同一套 {@code MAX_LATERAL} /
+     * {@code MAX_HORIZONTAL} / {@code MAX_DY} 与「优先挑停站时长有效的站台」），
+     * 这样「进站报站读的时刻表」与「关门提示音读的停站时长」永远是**同一条站台**的数据。
+     *
+     * @return 站台 id；{@code -1} = 认不到（没装 MTR4 / 附近没有够得着的站台）
+     */
+    public static long platformIdAt(double x, double y, double z) {
+        if (!available() || getIdMethod == null) {
+            return -1L;
+        }
+        try {
+            Object instance = getInstance.invoke(null);
+            if (instance == null) {
+                return -1L;
+            }
+            Iterable<?> platforms = elementsOf(platformsField.get(instance));
+            if (platforms == null) {
+                return -1L;
+            }
+            boolean segmentMode = position1Field != null && position2Field != null;
+            Object bestUsable = null;
+            double bestUsableDist = Double.MAX_VALUE;
+            Object bestAny = null;
+            double bestAnyDist = Double.MAX_VALUE;
+            for (Object platform : platforms) {
+                if (platform == null) {
+                    continue;
+                }
+                double distance = matchDistance(platform, x, y, z, segmentMode);
+                if (Double.isNaN(distance)) {
+                    continue;
+                }
+                if (distance < bestAnyDist) {
+                    bestAnyDist = distance;
+                    bestAny = platform;
+                }
+                if (dwellOf(platform) > 0L && distance < bestUsableDist) {
+                    bestUsableDist = distance;
+                    bestUsable = platform;
+                }
+            }
+            Object chosen = bestUsable != null ? bestUsable : bestAny;
+            if (chosen == null) {
+                return -1L;
+            }
+            Object id = getIdMethod.invoke(chosen);
+            return id instanceof Number n ? n.longValue() : -1L;
+        } catch (Throwable t) {
+            broken = true;
+            LOGGER.warn("[SmoothLift/PsdChime] 读 MTR 站台 id 失败，/pbmarrive 改用「认不到就跳过」：{}",
+                    t.toString());
+            return -1L;
+        }
+    }
+
+    /**
+     * 【1.21】站台位置匹配：门到这条站台的距离；够不着（超过上限 / 高差太大）返回 {@code NaN}。
+     *
+     * <p>与 {@link #dwellMsAt} 里那段循环同一套判据，只是**不记诊断**（那是 dwellMsAt 的活）——
+     * 这个方法跑在「每 tick 每串门一次」的路径上，必须便宜。
+     */
+    private static double matchDistance(Object platform, double x, double y, double z,
+                                        boolean segmentMode) {
+        try {
+            if (segmentMode) {
+                double[] seg = segmentXZ(platform);
+                if (seg == null) {
+                    return Double.NaN;
+                }
+                if (Math.abs(seg[1] - y) > MAX_DY && Math.abs(seg[4] - y) > MAX_DY) {
+                    return Double.NaN;
+                }
+                double distance = pointToSegmentXZ(x, z, seg[0], seg[2], seg[3], seg[5]);
+                return distance > MAX_LATERAL ? Double.NaN : distance;
+            }
+            Object mid = getMidPosition.invoke(platform);
+            if (mid == null) {
+                return Double.NaN;
+            }
+            double px = ((Number) posGetX.invoke(mid)).doubleValue();
+            double py = ((Number) posGetY.invoke(mid)).doubleValue();
+            double pz = ((Number) posGetZ.invoke(mid)).doubleValue();
+            if (Math.abs(py - y) > MAX_DY) {
+                return Double.NaN;
+            }
+            double dx = px - x;
+            double dz = pz - z;
+            double distance = Math.sqrt(dx * dx + dz * dz);
+            return distance > MAX_HORIZONTAL ? Double.NaN : distance;
+        } catch (Throwable ignored) {
+            return Double.NaN;
+        }
+    }
+
+    /**
+     * 【1.28】诊断：这扇门**最近**的 MTR 站台有多远（不受 {@value #MAX_LATERAL} 上限约束）。
+     *
+     * <p>配合 {@code PsdDoorTracker} 的认站台失败日志用 —— 用户报「某排屏蔽门的
+     * 到站 / 进站报站不响」时，这行能当场区分三种情况：读不到站台数据 / 附近根本没站台 /
+     * 有站台但离门超过 4 格（差多远）。三种的修法完全不同，不能混在一句「认不到」里。
+     */
+    public static String nearestPlatformExplain(double x, double y, double z) {
+        if (!available() || getIdMethod == null) {
+            return "读不到 MTR 站台数据";
+        }
+        try {
+            Object instance = getInstance.invoke(null);
+            if (instance == null) {
+                return "读不到 MTR 站台数据";
+            }
+            Iterable<?> platforms = elementsOf(platformsField.get(instance));
+            if (platforms == null) {
+                return "读不到 MTR 站台数据";
+            }
+            boolean segmentMode = position1Field != null && position2Field != null;
+            Object best = null;
+            double bestDist = Double.MAX_VALUE;
+            for (Object platform : platforms) {
+                if (platform == null) {
+                    continue;
+                }
+                double d = rawMatchDistance(platform, x, y, z, segmentMode);
+                if (!Double.isNaN(d) && d < bestDist) {
+                    bestDist = d;
+                    best = platform;
+                }
+            }
+            if (best == null) {
+                return "附近一个站台都读不到位置";
+            }
+            Object id = getIdMethod.invoke(best);
+            return "最近的站台 id=" + (id instanceof Number n ? n.longValue() : -1L)
+                    + "，距门 " + String.format("%.1f", bestDist) + " 格（横向上限 4.0 格）";
+        } catch (Throwable t) {
+            return "读 MTR 站台位置失败（" + t.getClass().getSimpleName() + "）";
+        }
+    }
+
+    /**
+     * 【1.28】只看「门到站台的距离」，**不卡任何上限** —— 认亲要卡（{@link #matchDistance}），
+     * 诊断不要（它要回答的就是「差几格才够不着」）。
+     */
+    private static double rawMatchDistance(Object platform, double x, double y, double z,
+                                           boolean segmentMode) {
+        try {
+            if (segmentMode) {
+                double[] seg = segmentXZ(platform);
+                if (seg == null) {
+                    return Double.NaN;
+                }
+                if (Math.abs(seg[1] - y) > MAX_DY && Math.abs(seg[4] - y) > MAX_DY) {
+                    return Double.NaN;
+                }
+                return pointToSegmentXZ(x, z, seg[0], seg[2], seg[3], seg[5]);
+            }
+            Object mid = getMidPosition.invoke(platform);
+            if (mid == null) {
+                return Double.NaN;
+            }
+            double px = ((Number) posGetX.invoke(mid)).doubleValue();
+            double py = ((Number) posGetY.invoke(mid)).doubleValue();
+            double pz = ((Number) posGetZ.invoke(mid)).doubleValue();
+            // 诊断与认亲同一套 Y 上限：认到的门肯定过得了这关，这里只回答「XZ 上差多远」。
+            if (Math.abs(py - y) > MAX_DY) {
+                return Double.NaN;
+            }
+            double dx = px - x;
+            double dz = pz - z;
+            return Math.sqrt(dx * dx + dz * dz);
+        } catch (Throwable ignored) {
+            return Double.NaN;
+        }
+    }
+
+    /**
+     * 【1.21】这个站台**最近的一班**列车还有多少毫秒到站
+     * （= 玩家设的 {@code -X} 秒用的就是它）。
+     *
+     * <p>对时刻表里每一条算 {@code arrival - millisOffset - System.currentTimeMillis()}，
+     * 丢掉「已经过站超过 {@link #ARRIVAL_PAST_MS}」的条目（它们不再算「最近的一班」），
+     * 取剩下里**最小**的那一个 —— 也就是下一班车还有多久到站。
+     *
+     * @return 毫秒（只可能落在 {@code [-ARRIVAL_PAST_MS, +∞)}：车刚停稳那几秒会是小的负数）；
+     *         {@link Long#MIN_VALUE} = 读不到（没装 MTR4 / 还没同步 / 调用失败）
+     */
+    public static long nextArrivalRemainingMs(long platformId) {
+        if (platformId <= 0L || !available() || arrivalsCache == null
+                || requestArrivals == null || getMillisOffset == null || arrivalGetArrival == null) {
+            return Long.MIN_VALUE;
+        }
+        try {
+            Object ids = longListCtor.newInstance();
+            longListAdd.invoke(ids, platformId);
+            Object list = requestArrivals.invoke(arrivalsCache, ids);
+            if (!(list instanceof Iterable<?> responses)) {
+                return Long.MIN_VALUE;
+            }
+            long offset = ((Number) getMillisOffset.invoke(arrivalsCache)).longValue();
+            long now = System.currentTimeMillis();
+            long best = Long.MIN_VALUE;
+            for (Object response : responses) {
+                if (response == null) {
+                    continue;
+                }
+                Object arrival = arrivalGetArrival.invoke(response);
+                if (!(arrival instanceof Number n)) {
+                    continue;
+                }
+                long remaining = n.longValue() - offset - now;
+                if (remaining < -ARRIVAL_PAST_MS) {
+                    continue;
+                }
+                if (best == Long.MIN_VALUE || remaining < best) {
+                    best = remaining;
+                }
+            }
+            return best;
+        } catch (Throwable t) {
+            broken = true;
+            LOGGER.warn("[SmoothLift/PsdChime] 查 MTR 时刻表失败，/pbmarrive 暂不响：{}", t.toString());
+            return Long.MIN_VALUE;
+        }
+    }
+
+    /**
+     * 某个世界坐标（屏蔽门锚点）所属站台的**停站时长**。
+     *
+     * <p>【1.15 · 第十轮】认亲方式改成「**门到站台中轴线段**的垂直距离」（拿得到站台两端点时，
+     * 见 {@link #MAX_LATERAL}），退路才是「到中点的水平距离」（见 {@link #MAX_HORIZONTAL}）。
+     * 另外**优先挑停站时长有效的站台**：MTR 里没配过停站时间的站台读出来是 0，
+     * 拿它算周期只会算出 -1，等于白认一次亲。
+     *
+     * <p>只在「选中的站台变了」时打一条日志 —— 用户报「改停站时间没用」时，
+     * 一眼就能看出到底认到了哪个站台、读到多少。
+     *
+     * @return 毫秒；{@code <= 0} = 读不到（没装 MTR4 / 反射坏了 / 附近没有够得着的站台）
+     */
+    public static long dwellMsAt(double x, double y, double z) {
+        if (!available()) {
+            return -1L;
+        }
+        try {
+            Object instance = getInstance.invoke(null);
+            if (instance == null) {
+                return -1L;
+            }
+            Iterable<?> platforms = elementsOf(platformsField.get(instance));
+            if (platforms == null) {
+                return -1L;
+            }
+            boolean segmentMode = position1Field != null && position2Field != null;
+            Object bestAny = null;
+            double bestAnyDist = Double.MAX_VALUE;
+            String bestAnyAt = "";
+            Object bestUsable = null;
+            double bestUsableDist = Double.MAX_VALUE;
+            String bestUsableAt = "";
+            long bestUsableDwell = 0L;
+            // 【第十二轮】「次近的有效站台」—— 用来抓**另一类**「改了没用」：
+            //   两条站台都落在 4 格以内时（岛式站台 / 门正卡在两条之间），我们只会认**最近的那条**，
+            //   而用户改的可能是另一条。这种情形**不会**触发下面的「被上限挡掉」，
+            //   所以必须单独记一个「次近」，否则照样是一笔糊涂账。
+            Object secondUsable = null;
+            double secondUsableDist = Double.MAX_VALUE;
+            String secondUsableAt = "";
+            long secondUsableDwell = 0L;
+            // 【第十二轮】离这扇门最近、但**被 4 格上限挡在外面**的那个站台 —— 专门用来回答
+            //   「我明明把停留时间改大了，怎么读出来还是 10000ms」：多半是改在了另一条站台上，
+            //   而这一条恰好就在 4 格线外一点点，被静默排除掉了。必须把它报出来。
+            Object bestRejected = null;
+            double bestRejectedDist = Double.MAX_VALUE;
+            String bestRejectedAt = "";
+            long bestRejectedDwell = 0L;
+            int seen = 0;
+            for (Object platform : platforms) {
+                if (platform == null) {
+                    continue;
+                }
+                seen++;
+                double distance;
+                if (segmentMode) {
+                    double[] seg = segmentXZ(platform);
+                    if (seg == null) {
+                        continue;
+                    }
+                    if (Math.abs(seg[1] - y) > MAX_DY && Math.abs(seg[4] - y) > MAX_DY) {
+                        continue;
+                    }
+                    distance = pointToSegmentXZ(x, z, seg[0], seg[2], seg[3], seg[5]);
+                    if (distance > MAX_LATERAL) {
+                        if (distance < bestRejectedDist) {
+                            bestRejectedDist = distance;
+                            bestRejected = platform;
+                            bestRejectedAt = midText(platform);
+                            bestRejectedDwell = dwellOf(platform);
+                        }
+                        continue;
+                    }
+                } else {
+                    Object mid = getMidPosition.invoke(platform);
+                    if (mid == null) {
+                        continue;
+                    }
+                    double px = ((Number) posGetX.invoke(mid)).doubleValue();
+                    double py = ((Number) posGetY.invoke(mid)).doubleValue();
+                    double pz = ((Number) posGetZ.invoke(mid)).doubleValue();
+                    if (Math.abs(py - y) > MAX_DY) {
+                        continue;
+                    }
+                    double dx = px - x;
+                    double dz = pz - z;
+                    distance = Math.sqrt(dx * dx + dz * dz);
+                    if (distance > MAX_HORIZONTAL) {
+                        if (distance < bestRejectedDist) {
+                            bestRejectedDist = distance;
+                            bestRejected = platform;
+                            bestRejectedAt = midText(platform);
+                            bestRejectedDwell = dwellOf(platform);
+                        }
+                        continue;
+                    }
+                }
+                if (distance < bestAnyDist) {
+                    bestAnyDist = distance;
+                    bestAny = platform;
+                    bestAnyAt = midText(platform);
+                }
+                long dwell = dwellOf(platform);
+                if (dwell > 0L) {
+                    if (distance < bestUsableDist) {
+                        // 原来的「最近」降级成「次近」（记下来才好回答「附近还有没有别的站台」）。
+                        secondUsable = bestUsable;
+                        secondUsableDist = bestUsableDist;
+                        secondUsableAt = bestUsableAt;
+                        secondUsableDwell = bestUsableDwell;
+                        bestUsableDist = distance;
+                        bestUsable = platform;
+                        bestUsableAt = midText(platform);
+                        bestUsableDwell = dwell;
+                    } else if (distance < secondUsableDist) {
+                        secondUsableDist = distance;
+                        secondUsable = platform;
+                        secondUsableAt = midText(platform);
+                        secondUsableDwell = dwell;
+                    }
+                }
+            }
+            if (seen == 0) {
+                if (!warnedEmpty) {
+                    warnedEmpty = true;
+                    LOGGER.warn("[SmoothLift/PsdChime] MTR 的站台集合是空的 ⇒ 读不到时刻表停站时长"
+                            + "（多半是这一刻还没同步完；同步完成后会自动生效，不用重启）");
+                }
+                return -1L;
+            }
+            if (!loggedCount) {
+                loggedCount = true;
+                LOGGER.info("[SmoothLift/PsdChime] MTR 站台数据读到 {} 个站台 —— "
+                        + "屏蔽门按「这扇门所在站台」的停站时长排提前量", seen);
+            }
+            // 【第十二轮】站台清单：每帧都会走到这里，但内部按「数量变了才重打」自我节流。
+            dumpPlatforms(platforms, seen, segmentMode);
+            boolean usable = bestUsable != null;
+            Object chosen = usable ? bestUsable : bestAny;
+            if (chosen == null) {
+                if (!warnedNoMatch) {
+                    warnedNoMatch = true;
+                    LOGGER.warn("[SmoothLift/PsdChime] 附近 {} 个站台里**一个都够不着**这扇门 ⇒ "
+                                    + "本扇门读不到时刻表停站时长（要求：{}），改回「本扇门实测」"
+                                    + "（这一站第一次停站没有人声，下一次就正常）",
+                            seen, segmentMode
+                                    ? "门到站台中轴线的垂直距离 ≤ " + MAX_LATERAL + " 格"
+                                    : "门到站台中点的水平距离 ≤ " + MAX_HORIZONTAL + " 格");
+                }
+                return -1L;
+            }
+            String chosenAt = usable ? bestUsableAt : bestAnyAt;
+            double chosenDist = usable ? bestUsableDist : bestAnyDist;
+            long chosenDwell = usable ? bestUsableDwell : dwellOf(chosen);
+            if (chosenDwell <= 0L) {
+                // 认到了站台，但那一站**没配过停站时间**（MTR 里读出来是 0）。
+                // 这种「认到个 0」比「认不到」更容易让人以为读到了，必须点名说清。
+                if (!warnedNoMatch) {
+                    warnedNoMatch = true;
+                    LOGGER.warn("[SmoothLift/PsdChime] 离这扇门最近的那个站台 @{}（{} 格）"
+                                    + "**没配过停站时间**（读出来 {}ms）⇒ 读不到有效时长，"
+                                    + "改回「本扇门实测」。想让它生效请去**站台界面**设停站时间",
+                            chosenAt, String.format("%.1f", chosenDist), chosenDwell);
+                }
+                return -1L;
+            }
+            String pick = chosenAt + "|" + chosenDwell + "|" + String.format("%.1f", chosenDist);
+            if (!pick.equals(lastPick)) {
+                lastPick = pick;
+                String st = stationNameOf(chosen);
+                LOGGER.info("[SmoothLift/PsdChime] 认到站台 {}@{} —— 离这扇门 {} 格，停站时长 {}ms"
+                                + "（{}，{}）",
+                        st == null ? "" : "「" + st + "」", chosenAt,
+                        String.format("%.1f", chosenDist), chosenDwell,
+                        usable ? "①优先有效值" : "①只有这一个候选",
+                        segmentMode ? "按中轴线" : "按中点");
+                // 【第十二轮】把「就在旁边、却被认亲上限挡掉」的那个站台也报出来 ——
+                //   「改了停留时间没用」的绝大多数现场都在这一条上（改到了隔壁那条站台）。
+                if (bestRejected != null && bestRejectedDist <= 16.0) {
+                    String rst = stationNameOf(bestRejected);
+                    LOGGER.warn("[SmoothLift/PsdChime] ↳ 但：离这扇门只有 {} 格的站台 {}@{}"
+                                    + "（停站时长 {}ms）**在认亲上限 {} 格之外**，没被选中。"
+                                    + "若你改的是那一条，说明这扇门离它太远（它多半是隔壁轨道/另一层）",
+                            String.format("%.1f", bestRejectedDist),
+                            rst == null ? "" : "「" + rst + "」", bestRejectedAt, bestRejectedDwell,
+                            segmentMode ? String.format("%.0f", MAX_LATERAL) : String.format("%.0f", MAX_HORIZONTAL));
+                }
+                // 【第十二轮】还有个**认不出对错**的情形：两条站台都够得着，我们只认最近的那条。
+                //   两条停留时长不同时把「次近」也报出来 —— 用户改的若是那一条，这里就能对上号。
+                if (secondUsable != null && secondUsableDwell != chosenDwell) {
+                    String sst = stationNameOf(secondUsable);
+                    LOGGER.warn("[SmoothLift/PsdChime] ↳ 注意：附近**还有一条够得着的站台** {}@{}"
+                                    + "（离这扇门 {} 格，停站时长 {}ms）。这一轮认的是更近的那条（{}格 / {}ms）——"
+                                    + "两条都够得着时只按距离挑，若你改的是那一条，请确认这扇门到底挂在哪条站台上",
+                            sst == null ? "" : "「" + sst + "」", secondUsableAt,
+                            String.format("%.1f", secondUsableDist), secondUsableDwell,
+                            String.format("%.1f", chosenDist), chosenDwell);
+                }
+            }
+            return chosenDwell;
+        } catch (Throwable t) {
+            broken = true;
+            LOGGER.warn("[SmoothLift/PsdChime] 读 MTR 站台停站时长失败，改回「实测学习」：{}", t.toString());
+            return -1L;
+        }
+    }
+
+    /** 读这个站台的停站时长；读不出来返回 {@link Long#MIN_VALUE}（不是 0 —— 0 是「没配过」）。 */
+    private static long dwellOf(Object platform) {
+        try {
+            Object dwell = getDwellTime.invoke(platform);
+            return dwell instanceof Number n ? n.longValue() : Long.MIN_VALUE;
+        } catch (Throwable ignored) {
+            return Long.MIN_VALUE;
+        }
+    }
+
+    /** 站台两端点 → {@code {ax, ay, az, bx, by, bz}}；读不到返回 {@code null}。 */
+    private static double[] segmentXZ(Object platform) {
+        try {
+            Object a = position1Field.get(platform);
+            Object b = position2Field.get(platform);
+            if (a == null || b == null) {
+                return null;
+            }
+            return new double[]{
+                    ((Number) posGetX.invoke(a)).doubleValue(),
+                    ((Number) posGetY.invoke(a)).doubleValue(),
+                    ((Number) posGetZ.invoke(a)).doubleValue(),
+                    ((Number) posGetX.invoke(b)).doubleValue(),
+                    ((Number) posGetY.invoke(b)).doubleValue(),
+                    ((Number) posGetZ.invoke(b)).doubleValue()};
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 点到**线段**在水平面上的最近距离。
+     *
+     * <p>★ 站台是长条，认亲必须按线段算：按中点算的话，门站在站台**这一端**时，
+     * **对面方向**那个站台的中点很可能更近 ⇒ 安静地读到隔壁站台的停站时长。
+     */
+    private static double pointToSegmentXZ(double px, double pz,
+                                           double ax, double az, double bx, double bz) {
+        double vx = bx - ax;
+        double vz = bz - az;
+        double len2 = vx * vx + vz * vz;
+        double t = len2 <= 1.0E-9 ? 0.0 : ((px - ax) * vx + (pz - az) * vz) / len2;
+        if (t < 0.0) {
+            t = 0.0;
+        } else if (t > 1.0) {
+            t = 1.0;
+        }
+        double dx = px - (ax + t * vx);
+        double dz = pz - (az + t * vz);
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    /** 日志用的「这个站台在哪」——读它的中点坐标。 */
+    private static String midText(Object platform) {
+        try {
+            Object mid = getMidPosition.invoke(platform);
+            if (mid == null) {
+                return "?";
+            }
+            return String.format("%.0f,%.0f,%.0f",
+                    ((Number) posGetX.invoke(mid)).doubleValue(),
+                    ((Number) posGetY.invoke(mid)).doubleValue(),
+                    ((Number) posGetZ.invoke(mid)).doubleValue());
+        } catch (Throwable ignored) {
+            return "?";
+        }
+    }
+
+    /** 这个站台属于哪个**车站**（{@code platform.area → Station.getName()}）；读不到返回 {@code null}。 */
+    private static String stationNameOf(Object platform) {
+        if (areaField == null || getNameMethod == null) {
+            return null;
+        }
+        try {
+            Object area = areaField.get(platform);
+            if (area == null) {
+                return null;
+            }
+            Object name = getNameMethod.invoke(area);
+            return name == null ? null : name.toString();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 【1.15 · 第十二轮】把**每一个**站台都摆出来（车站名 + 坐标 + 两端点 + 停留时长），只打一次。
+     *
+     * <p>存在的唯一理由：用户报「停留时间明明改成 30 秒了，读出来还是 10000ms」时，
+     * 光看「认到站台 @x,y,z」这一条**认不出**自己改的是哪一条。把整张表摆出来之后，
+     * 三种情况一眼可分：
+     * <ol>
+     *   <li>表里有一条 30000ms —— 那你改的是**另一条站台**（看它挂在哪个车站 / 哪个坐标）；</li>
+     *   <li>表里**全部**都是 10000ms（标了「MTR 默认值」）—— 那这个改动**根本没存进世界**
+     *       （改完没确认 / 没权限 / 改的是别的存档）；</li>
+     *   <li>表里根本没有你想改的那条 —— 它还没同步到这个客户端。</li>
+     * </ol>
+     */
+    private static void dumpPlatforms(Iterable<?> platforms, int seen, boolean segmentMode) {
+        // 先算「内容签名」：数量 + 每个站台的（坐标=停留时长）。只比数量会漏掉「改了停留时间」。
+        StringBuilder sig = new StringBuilder();
+        for (Object platform : platforms) {
+            if (platform == null) {
+                continue;
+            }
+            sig.append(midText(platform)).append('=').append(dwellOf(platform)).append(';');
+        }
+        String signature = seen + "|" + sig;
+        if (signature.equals(dumpedPlatformSignature)) {
+            return;
+        }
+        boolean changed = !dumpedPlatformSignature.isEmpty();
+        dumpedPlatformSignature = signature;
+        if (changed) {
+            LOGGER.info("[SmoothLift/PsdChime] ★ MTR 站台数据**变了**（位置或停留时长有更新）"
+                    + "—— 重新列一遍，请对着看你要改的那一条现在是多少：");
+        }
+        // MTR 的 Platform 构造函数把 dwellTime 写成 10000L（字节码 ldc2_w 10000l），
+        // 所以「没被改过」的站台一律读 10000 —— 用它当「默认值」的判据。
+        final long mtrDefault = 10000L;
+        int index = 0;
+        for (Object platform : platforms) {
+            if (platform == null) {
+                continue;
+            }
+            index++;
+            long dwell = dwellOf(platform);
+            String st = stationNameOf(platform);
+            StringBuilder sb = new StringBuilder();
+            sb.append("[SmoothLift/PsdChime]   站台 #").append(index).append(' ');
+            if (st != null) {
+                sb.append('「').append(st).append("」 ");
+            }
+            sb.append('@').append(midText(platform));
+            if (segmentMode) {
+                double[] seg = segmentXZ(platform);
+                if (seg != null) {
+                    sb.append(String.format("  (%.0f,%.0f,%.0f)→(%.0f,%.0f,%.0f)",
+                            seg[0], seg[1], seg[2], seg[3], seg[4], seg[5]));
+                    double len = Math.sqrt(Math.pow(seg[3] - seg[0], 2)
+                            + Math.pow(seg[4] - seg[1], 2) + Math.pow(seg[5] - seg[2], 2));
+                    sb.append(String.format("  长 %.0f 格", len));
+                }
+            }
+            if (dwell == Long.MIN_VALUE) {
+                sb.append("  停留时长读不到");
+            } else {
+                sb.append("  停留 ").append(dwell).append("ms");
+                if (dwell == mtrDefault) {
+                    sb.append("（MTR 默认值，从没改过）");
+                }
+            }
+            LOGGER.info(sb.toString());
+        }
+    }
+
+    /**
+     * 「门开始开 → 门全关」的周期（tick）—— 从停站时长算出来，**不用等上一轮实测**。
+     *
+     * <p>推导全在类注释里，这里只写算式（与 MTR4 字节码一一对应）：
+     * <pre>
+     *   closeAt        = max(D/2, D - 4200)      // 门开始关（= 发车指令）的时刻，相对「停稳」
+     *   全开 → 开始关  = closeAt - 1000
+     *   开门瞬间 → 全关 = (closeAt - 1000) + 门程
+     * </pre>
+     *
+     * @param dwellMs     站台停站时长（{@link #dwellMsAt} 的结果）
+     * @param travelTicks 门程（{@code > 0} 时用实测学到的 {@code globalTravelTicks}，
+     *                    否则用 {@link #DEFAULT_TRAVEL_TICKS}）
+     * @return tick 数；{@code dwellMs <= 0} 时返回 {@code -1}（读不到）
+     */
+    public static long cycleTicksForDwell(long dwellMs, long travelTicks) {
+        if (dwellMs <= 0L) {
+            return -1L;
+        }
+        long closeAt = Math.max(dwellMs / 2L, dwellMs - CLOSE_LEAD_MS);
+        long openToClose = closeAt - DOOR_DELAY_MS;
+        if (openToClose < 0L) {
+            // 停站太短：MTR 还没等门全开就要发车了。这里按「门一开始动就往回走」算，
+            // 不能让它变成负数（那会让上游的 `cycle <= leadTicks` 判据误判成「塞得下」）。
+            openToClose = 0L;
+        }
+        long travel = travelTicks > 0L ? travelTicks : DEFAULT_TRAVEL_TICKS;
+        return (openToClose + 49L) / 50L + travel;
+    }
+
+    /**
+     * 【1.15 · 第十二轮】想让**整条素材**塞进周期里，这一站**至少**要把停留时长设到多少毫秒。
+     *
+     * <p>给日志用：以前只报「周期 8800ms 塞不下整条素材 10806ms」，用户拿到这两个数字还得自己
+     * 反推「那我该设多少秒」—— 而这两个数之间隔着 {@link #cycleTicksForDwell} 那条折线，
+     * 手算极易算错（实测：素材 10806ms 时，门程按默认 80 tick 算要 13000ms，
+     * 按实测学到的 29 tick 算要 15000ms —— **同一个素材，答案随门程而变**）。
+     * 所以这个数字必须由**同一套公式**反解出来，不能靠用户心算。
+     *
+     * @param materialMs  整条提示音素材的时长（ms）
+     * @param travelTicks 门程 tick（与 {@link #cycleTicksForDwell} 用同一个值，才能保证自洽）
+     * @return 毫秒；{@code materialMs <= 0} 或算不出（要求超过 10 分钟）时返回 {@code -1}
+     */
+    public static long minDwellForMaterialMs(long materialMs, long travelTicks) {
+        if (materialMs <= 0L) {
+            return -1L;
+        }
+        long leadTicks = (materialMs + 49L) / 50L;             // 素材 → tick（向上取整）
+        long travel = travelTicks > 0L ? travelTicks : DEFAULT_TRAVEL_TICKS;
+        // 先解不等式取一个下界：D 大时 closeAt = D - 4200，
+        //   cycle = (D - 4200 - 1000 + 49)/50 + travel ≥ leadTicks + 1
+        //   ⇒ D ≥ 5200 + 50 * (leadTicks + 1 - travel)
+        long d = 5200L + 50L * (leadTicks + 1L - travel);
+        if (d < 1000L) {
+            d = 1000L;
+        }
+        d = ((d + 999L) / 1000L) * 1000L;                      // 向上取整到整秒（站台界面就是按秒设的）
+        // 再拿真式子校正（整数除法 + max(D/2, …) 那半支会让下界偶尔差一档）。
+        while (cycleTicksForDwell(d, travel) < leadTicks + 1L) {
+            d += 1000L;
+            if (d > 600_000L) {
+                return -1L;                                    // 10.8 秒的素材不可能要到这一步
+            }
+        }
+        return d;
+    }
+}

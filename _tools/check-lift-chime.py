@@ -492,15 +492,29 @@ check(re.search(r'Commands\.literal\("lifthelploud"\)[\s\S]{0,1500}?liftToneLoud
       "/lifthelploud 挂了 up|down|door 三项分支 + 合并的 -f 节点（【1.48】形状，door = chime 别名）")
 
 # 7c) 同步包**读写顺序配对** —— 跨文件不变量，最容易被单边改坏
-def pkt_ops(src, marker, kind, span=900):
+def pkt_ops(src, marker, kind, end=None, span=900):
+    """截出「写侧方法体 / 读侧接收器」这一段的 buf.<kind>Xxx() 调用序列。
+
+    【1.15】`end` 是**结束标记**：光靠固定长度窗口（span=900）会漏掉包尾新追加的字段
+    —— 包一长，尾部那几个 writeUtf/readUtf 就滑出窗口，于是「读写顺序配对」这条断言
+    会在**悄悄变瞎**的情况下仍然显示通过（那比红更危险）。所以两侧都按各自的收尾符号截断：
+    写侧到方法右括号、读侧到接收器 lambda 的 `});`。
+    """
     i = src.find(marker)
     if i < 0:
         return None
-    return re.findall(r"buf\.%s([A-Z][A-Za-z]*)\(" % kind, src[i:i + span])
+    j = len(src)
+    if end is not None:
+        k = src.find(end, i)
+        if k > 0:
+            j = k
+    if end is None or j > i + span * 4:
+        j = min(j, i + span * 4)
+    return re.findall(r"buf\.%s([A-Z][A-Za-z]*)\(" % kind, src[i:j])
 
 
-w_ops = pkt_ops(mgr_src, "private static FriendlyByteBuf buildLiftChimePacket", "write")
-r_ops = pkt_ops(client_src, "SmoothLift.LIFT_CHIME_SYNC_CHANNEL", "read")
+w_ops = pkt_ops(mgr_src, "private static FriendlyByteBuf buildLiftChimePacket", "write", end="\n    }")
+r_ops = pkt_ops(client_src, "SmoothLift.LIFT_CHIME_SYNC_CHANNEL", "read", end="});")
 check(w_ops is not None and r_ops is not None,
       "找得到同步包的写侧（buildLiftChimePacket）与读侧（SmoothLiftClient）",
       "写 %s / 读 %s" % (w_ops, r_ops))
@@ -508,17 +522,22 @@ if w_ops and r_ops:
     check(w_ops == r_ops,
           "同步包写入顺序 == 读取顺序（dimId → enabled → speed → volume → up → down → chime → round → 单项音量×3）",
           "写 %s 读 %s" % (w_ops, r_ops))
-    check(w_ops[-7:] == ["Boolean", "Boolean", "Boolean", "VarInt", "VarInt", "VarInt", "VarInt"],
-          "【1.46~1.48】包尾 = 三子开关(up→down→chime) + 范围(round) + 三项各自音量(up→down→chime)",
-          "实际尾部 %s" % w_ops[-7:])
+    # 【1.15】包尾又追加了三个字符串（三项的维度默认素材）
+    check(w_ops[-13:] == ["Boolean", "Float", "VarInt", "Boolean", "Boolean", "Boolean",
+                          "VarInt", "VarInt", "VarInt", "VarInt", "Utf", "Utf", "Utf"],
+          "【1.46~1.48】三子开关(up→down→chime) + 范围(round) + 三项各自音量 + "
+          "【1.15】三项默认素材(up→down→chime)",
+          "实际尾部 %s" % w_ops[-13:])
 
 # 7d) applyClientLiftChime 的入参 == 读侧读到的值（【1.46】三个子开关，【1.47】范围，【1.48】三项各自音量）
 check(re.search(
     r"applyClientLiftChime\(ResourceKey<Level> dimension,\s*boolean enabled,\s*"
     r"float speed,\s*int volume,\s*boolean upEnabled,\s*boolean downEnabled,\s*"
     r"boolean chimeEnabled,\s*int round,\s*int toneVolumeUp,\s*int toneVolumeDown,\s*"
-    r"int toneVolumeChime\)", mgr_src) is not None,
-      "applyClientLiftChime 接收 (dimension, enabled, speed, volume, up, down, chime, round, 单项音量×3) —— 与读侧顺序一致")
+    r"int toneVolumeChime,\s*String toneAudioUp,\s*String toneAudioDown,\s*"
+    r"String toneAudioChime\)", mgr_src) is not None,
+      "applyClientLiftChime 接收 (dimension, enabled, speed, volume, up, down, chime, round, 单项音量×3, "
+      "【1.15】三项维度默认素材×3) —— 与读侧顺序一致")
 
 # 7e) 【1.47】播放端范围动态化：不再写死 16，而是从同步镜像读（默认 4 格）
 check("DEFAULT_LIFT_HELP_ROUND" in mgr_src or "defaultLiftHelpRound" in mgr_src,

@@ -58,6 +58,13 @@ public class SmoothLiftClient implements ClientModInitializer {
         // 与上面两个播放器互不影响：那两个只认「扶梯阶梯方块」，本播放器只认 MTR 的直梯对象。
         ClientTickEvents.END_CLIENT_TICK.register(LiftChimePlayer::onClientTick);
 
+        // 【1.50】MTR 屏蔽门（平台幕门）开关门提示音：默认开门 → dooropen.ogg、关门 → mdoorclose.ogg
+        // （【1.15】起三段内置音频，指令名分别是 default / default-c / default-m，
+        //  另有 default-s =「默认（短）」（同一段素材但不播语音播报段）—— 见 PsdChimePlayer）。
+        // 门值从哪里来：见 PsdDoorTracker（挂在两个 MTR 版本的屏蔽门渲染读口上，每帧每扇门回报一次）。
+        // 只认「屏蔽门方块」的注册名，所以与上面三个播放器互不影响。
+        ClientTickEvents.END_CLIENT_TICK.register(PsdChimePlayer::onClientTick);
+
         // 拿着石斧右键扶梯 -> 打开速度输入界面
         UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
             if (!world.isClientSide() || hand != InteractionHand.MAIN_HAND) {
@@ -93,6 +100,24 @@ public class SmoothLiftClient implements ClientModInitializer {
             return InteractionResult.FAIL;
         });
 
+        // 【1.50】拿着石斧右键**屏蔽门** -> 打开开关门提示音界面（与直梯那份布局一致：开关 + 两个列表 + 音量）。
+        //   「是屏蔽门」按注册名判（psd_door_* / apg_door_*），不依赖 MTR 编译期；
+        //   玻璃 / 上半格被排除，保证「右键哪一格都是同一扇门」（key 与播放端同一个 anchorOf）。
+        UseBlockCallback.EVENT.register((player, world, hand, hitResult) -> {
+            if (!world.isClientSide() || hand != InteractionHand.MAIN_HAND) {
+                return InteractionResult.PASS;
+            }
+            if (!player.getMainHandItem().is(Items.STONE_AXE)) {
+                return InteractionResult.PASS;
+            }
+            BlockPos pos = hitResult.getBlockPos();
+            if (!SmoothLift.isPsdDoor(world.getBlockState(pos))) {
+                return InteractionResult.PASS;
+            }
+            Minecraft.getInstance().setScreen(new PsdToneSetupScreen(pos));
+            return InteractionResult.FAIL;
+        });
+
         // 客户端完全进世界后主动向服务端请求速度数据。
         // 服务端侧的 ServerPlayConnectionEvents.JOIN 推送发生在玩家连接建立过程中
         // （早于频道握手完成），此时发的包可能被客户端丢弃，导致进游戏后速度显示为默认。
@@ -107,6 +132,7 @@ public class SmoothLiftClient implements ClientModInitializer {
             EscalatorAudioPlayer.onDisconnect();
             EscalatorChimePlayer.onDisconnect();
             LiftChimePlayer.onDisconnect();
+            PsdChimePlayer.onDisconnect();
             EscalatorAnimationDriver.clear();
             EscalatorStepRenderer.onDisconnect();
         });
@@ -155,6 +181,16 @@ public class SmoothLiftClient implements ClientModInitializer {
                 return;
             }
             Map<Integer, byte[]> chunks = PENDING_SYNC_CHUNKS.computeIfAbsent(dimId, k -> new HashMap<>());
+            // ★【1.19】一次重发 = 从 index 0 重新开始 ⇒ 见到 0 就把上一次的残留丢掉。
+            //   为什么现在才需要：改版后**导入音频会立刻触发一次整库重发**（见
+            //   SET_PSD_MIDIUM_CHANNEL / IMPORT_PSD_MIDIUM_AUDIO_CHANNEL 的 receiver），
+            //   而包长是「几 MB 的字节 + 256 个/块」。上一次还没传完就再点一次导入，
+            //   两批分块会在同一个 key 下拼起来 ⇒ 拼出的 payload 是垃圾（读序错位、格式崩），
+            //   表现是「列表变成一堆乱码名字」或整表清空。TCP 保序，所以 0 号块先到，
+            //   在 0 号块上清空即可把每一批重发都变回独立的一批。
+            if (chunkIndex == 0) {
+                chunks.clear();
+            }
             chunks.put(chunkIndex, chunk);
             if (chunks.size() < totalChunks) {
                 return;
@@ -214,9 +250,12 @@ public class SmoothLiftClient implements ClientModInitializer {
                 LOGGER.info("[SmoothLift/Audio] 音频同步完成（{}）：已入库 {} 个音频（{}KB）、"
                                 + "文件夹待导入 {} 个、扶梯绑定 {} 处、默认音频 {}",
                         dimKey.location(), audioLibrary.size(), kb / 1024, folderAudio.size(),
-                        blockAudio.size(), defaultAudio == null ? "（无）" : defaultAudio);
+                        blockAudio.size(), defaultAudio == null ? "" : defaultAudio);
                 EscalatorAudioPlayer.onAudioReloaded();
                 AudioSetupScreen.notifyAudioDataChanged();
+                // 【1.17】屏蔽门界面的「到站播放音频」也列出这两张表（未导入 / 已导入），
+                //   库里增删之后它得跟着刷新，否则刚导入的那条会一直挂在左边。
+                PsdToneSetupScreen.notifyToneDataChanged();
             });
         });
 
@@ -407,6 +446,10 @@ public class SmoothLiftClient implements ClientModInitializer {
             int toneVolumeUp = buf.readVarInt();
             int toneVolumeDown = buf.readVarInt();
             int toneVolumeChime = buf.readVarInt();
+            // 【1.15】三项的维度默认素材（default / off / 音频库文件名）—— 读序同 buildLiftChimePacket
+            String toneAudioUp = buf.readUtf(128);
+            String toneAudioDown = buf.readUtf(128);
+            String toneAudioChime = buf.readUtf(128);
             final ResourceKey<Level> dimKey;
             try {
                 dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
@@ -416,12 +459,15 @@ public class SmoothLiftClient implements ClientModInitializer {
             client.execute(() -> {
                 EscalatorSpeedManager.applyClientLiftChime(dimKey, enabled, speed, volume,
                         upEnabled, downEnabled, chimeEnabled, round,
-                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime,
+                        toneAudioUp, toneAudioDown, toneAudioChime);
                 LOGGER.info("[SmoothLift/LiftChime] 直梯提示音设置已同步（{}）：{}、倍速 {}、音量 {}、"
-                                + "子开关 up={} down={} chime={}、范围 {} 格、单项音量 up={} down={} chime={}",
+                                + "子开关 up={} down={} chime={}、范围 {} 格、单项音量 up={} down={} chime={}、"
+                                + "默认素材 up={} down={} chime={}",
                         dimKey.location(), enabled ? "开" : "关", speed, volume,
                         upEnabled, downEnabled, chimeEnabled, round,
-                        toneVolumeUp, toneVolumeDown, toneVolumeChime);
+                        toneVolumeUp, toneVolumeDown, toneVolumeChime,
+                        toneAudioUp, toneAudioDown, toneAudioChime);
             });
         });
 
@@ -451,6 +497,112 @@ public class SmoothLiftClient implements ClientModInitializer {
                 LOGGER.info("[SmoothLift/LiftChime] 直梯楼层轨道提示音已同步（{}）：{} 条",
                         dimKey.location(), count);
                 LiftToneSetupScreen.notifyToneDataChanged();
+            });
+        });
+
+        // 【1.50】接收服务端同步的**屏蔽门开关门提示音**设置（按维度；最小的包）。
+        //   ★ 读序必须与 EscalatorSpeedManager.buildPsdChimePacket 的写序严格一致：
+        //     dimId → 总开关 → 共用默认音量 → open子开关 → close子开关 → 范围
+        //     → open单独音量 → close单独音量 → 【1.15】open默认素材 → close默认素材
+        //     → 【1.16】关门提示音强制等待时长（秒）
+        //     → 【1.17】到站播报素材 id → 到站播报等待秒数
+        ClientPlayNetworking.registerGlobalReceiver(SmoothLift.PSD_CHIME_SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
+            String dimId = buf.readUtf(256);
+            boolean enabled = buf.readBoolean();
+            int volume = buf.readVarInt();
+            boolean openEnabled = buf.readBoolean();
+            boolean closeEnabled = buf.readBoolean();
+            int round = buf.readVarInt();
+            int toneVolumeOpen = buf.readVarInt();
+            int toneVolumeClose = buf.readVarInt();
+            // 【1.15】两项的维度默认素材（末尾追加，写侧同序）
+            String toneAudioOpen = buf.readUtf(128);
+            String toneAudioClose = buf.readUtf(128);
+            // 【1.16】关门提示音的强制等待时长（秒，末尾再追加一格，写侧同序）
+            int closeWaitSeconds = buf.readVarInt();
+            // 【1.17】到站播报：素材 id + 等待秒数（末尾再追加两格，写侧同序）
+            String midiumAudio = buf.readUtf(128);
+            int midiumWaitSeconds = buf.readVarInt();
+            // 【1.21】进站报站：素材 id + 秒数（末尾再追加两格，写侧同序）
+            String arriveAudio = buf.readUtf(128);
+            int arriveSeconds = buf.readVarInt();
+            // 【1.22】到站 / 进站播报各自那一项的音量（末尾再追加两格，写侧同序）
+            int midiumVolume = buf.readVarInt();
+            int arriveVolume = buf.readVarInt();
+            // 【1.23】到站 / 进站播报各自的**可闻范围**（末尾再追加两格，写侧同序）
+            int midiumRound = buf.readVarInt();
+            int arriveRound = buf.readVarInt();
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
+            } catch (Exception e) {
+                return;
+            }
+            client.execute(() -> {
+                EscalatorSpeedManager.applyClientPsdChime(dimKey, enabled, volume,
+                        openEnabled, closeEnabled, round, toneVolumeOpen, toneVolumeClose,
+                        toneAudioOpen, toneAudioClose, closeWaitSeconds,
+                        midiumAudio, midiumWaitSeconds, arriveAudio, arriveSeconds,
+                        midiumVolume, arriveVolume, midiumRound, arriveRound);
+                LOGGER.info("[SmoothLift/PsdChime] 屏蔽门提示音设置已同步（{}）：{}、音量 {}、"
+                                + "子开关 open={} close={}、范围 提示音 {} 格 / 到站 {} 格 / 进站 {} 格、"
+                                + "单项音量 open={} close={} 到站={} 进站={}、"
+                                + "默认素材 open={} close={}、关门强制等待 {} 秒、到站播报 {}（等待 {} 秒）、"
+                                + "进站报站 {}（提前 {} 秒）",
+                        dimKey.location(), enabled ? "开" : "关", volume,
+                        openEnabled, closeEnabled, round, midiumRound, arriveRound,
+                        toneVolumeOpen, toneVolumeClose, midiumVolume, arriveVolume,
+                        toneAudioOpen, toneAudioClose, closeWaitSeconds,
+                        midiumAudio, midiumWaitSeconds, arriveAudio, arriveSeconds);
+            });
+        });
+
+        // 【1.50】接收服务端同步的**每扇屏蔽门单独素材**（门锚点 → open/close 两音频 id）。
+        //   播放端（PsdChimePlayer）按「最近那扇门的锚点」查这份镜像；打开石斧界面时也读它。
+        //   ★ 顺序同 buildPsdTonePacket：dimId → 条数 → (key, open, close) × N。
+        ClientPlayNetworking.registerGlobalReceiver(SmoothLift.PSD_TONE_SYNC_CHANNEL, (client, handler, buf, responseSender) -> {
+            String dimId = buf.readUtf(256);
+            int n = buf.readVarInt();
+            final Map<Long, EscalatorSpeedData.PsdToneAudio> tones = new HashMap<>();
+            for (int i = 0; i < n; i++) {
+                long key = buf.readLong();
+                String open = buf.readUtf(128);
+                String close = buf.readUtf(128);
+                // 【1.20】这一扇门的其余覆盖项 —— ★ 读序必须与 buildPsdTonePacket 的写序一致。
+                //   先读进局部变量再构造：参数求值顺序虽然也保证是从左到右，但读写成对这种东西
+                //   写成一串嵌套调用以后没人看得出来哪一行对哪一行。
+                Boolean help = EscalatorSpeedManager.readDoorOptBool(buf);
+                Boolean openEnabled = EscalatorSpeedManager.readDoorOptBool(buf);
+                Boolean closeEnabled = EscalatorSpeedManager.readDoorOptBool(buf);
+                Integer volume = EscalatorSpeedManager.readDoorOptInt(buf);
+                Integer openVolume = EscalatorSpeedManager.readDoorOptInt(buf);
+                Integer closeVolume = EscalatorSpeedManager.readDoorOptInt(buf);
+                Integer closeWaitSeconds = EscalatorSpeedManager.readDoorOptInt(buf);
+                String midium = EscalatorSpeedManager.readDoorOptString(buf);
+                Integer midiumWaitSeconds = EscalatorSpeedManager.readDoorOptInt(buf);
+                // 【1.21】进站报站（读序同 buildPsdTonePacket 写序）
+                String arrive = EscalatorSpeedManager.readDoorOptString(buf);
+                Integer arriveSeconds = EscalatorSpeedManager.readDoorOptInt(buf);
+                // 【1.22】到站 / 进站各自那一项的音量（读序同 buildPsdTonePacket 写序）
+                Integer midiumVolume = EscalatorSpeedManager.readDoorOptInt(buf);
+                Integer arriveVolume = EscalatorSpeedManager.readDoorOptInt(buf);
+                tones.put(key, new EscalatorSpeedData.PsdToneAudio(open, close,
+                        help, openEnabled, closeEnabled,
+                        volume, openVolume, closeVolume, closeWaitSeconds,
+                        midium, midiumWaitSeconds, midiumVolume,
+                        arrive, arriveSeconds, arriveVolume));
+            }
+            final ResourceKey<Level> dimKey;
+            try {
+                dimKey = EscalatorSpeedManager.parseDimensionKey(dimId);
+            } catch (Exception e) {
+                return;
+            }
+            client.execute(() -> {
+                EscalatorSpeedManager.applyClientPsdTone(dimKey, tones);
+                LOGGER.info("[SmoothLift/PsdChime] 屏蔽门单独素材已同步（{}）：{} 条",
+                        dimKey.location(), tones.size());
+                PsdToneSetupScreen.notifyToneDataChanged();
             });
         });
 

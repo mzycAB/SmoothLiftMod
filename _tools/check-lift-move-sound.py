@@ -58,7 +58,7 @@ CHIME = os.path.join(CLIENT, "LiftChimePlayer.java")
 ACCESS = os.path.join(CLIENT, "MtrLiftAccess.java")
 SERVER_MAIN = os.path.join(ROOT, "src", "main", "java", "smooth", "lift", "SmoothLift.java")
 # 用户放在工作区根的原始素材（用它证明「打进工程的字节没变」）
-GIVEN = os.path.join(os.path.dirname(ROOT), "SmoothLiftMod-1.20.4")
+GIVEN = os.path.join(os.path.dirname(ROOT), "mzycBetterMTR-1.20.4")
 GIVEN_DIR = os.path.dirname(ROOT)
 
 FAILS = []
@@ -194,7 +194,7 @@ if body:
     check(re.search(r"liftToneVolume\(mc,\s*up\s*\?\s*\"up\"\s*:\s*\"down\"\)", body) is not None,
           "【1.48】上楼用 up 单项音量、下楼用 down 单项音量（没单独调过回落共用默认）")
     check(re.search(r"cachedSpeed", body) is not None,
-          "音高复用 `/lifthelpspeed`（cachedSpeed），不必为它再加指令")
+          "音高复用直梯倍速 cachedSpeed（【1.15】改了它的指令 /lifthelpspeed 已删除）")
     check(re.search(r"volume\s*<=\s*0\.0f", body) is not None,
           "音量为 0 时直接不播（/lifthelploud 0 时彻底静音，不留空转）")
 
@@ -216,14 +216,16 @@ check("lastMove.keySet().retainAll(seen)" in chime,
 check(re.search(r"lastMove\.clear\(\)", chime) is not None,
       "reset() 里清空 lastMove ⇒ 玩家进/出维度、重连后不会拿旧状态比")
 
-# 复用既有指令（没有为这条功能新增指令）
-for cmd in ("lifthelp", "lifthelploud", "lifthelpspeed"):
+# 复用既有指令（开关 / 音量都借用直梯那一套，不为准备移动音单独开指令）
+# 【1.15】/lifthelpspeed 已按用户要求删除，所以这里只剩两条。
+for cmd in ("lifthelp", "lifthelploud"):
     check(cmd in chime, "复用既有指令 /%s（本功能不新增指令）" % cmd)
 server_main = read(SERVER_MAIN)
-check(re.search(r'literal\(\s*"(up|down)"\s*\)', server_main) is None,
-      "指令树里没有新增 up/down 字面量 ⇒ 确认是复用而非新增")
-check(re.search(r'literal\(\s*"lifthelpspeed"', server_main) is not None,
-      "对照：脚本确实能读到指令树字面量（/lifthelpspeed 在）⇒ 上一条断言有鉴别力")
+check(re.search(r'literal\(\s*"lifthelpspeed"', server_main) is None,
+      "【1.15】/lifthelpspeed 已从指令树里删除（up/down 两项只跟着 /lifthelp 那套走）")
+check(re.search(r'liftToneBranch\(\s*"up"\s*,\s*"up"\s*\)', server_main) is not None
+      and re.search(r'liftToneBranch\(\s*"door"\s*,\s*"chime"\s*\)', server_main) is not None,
+      "对照：脚本确实能读到指令树构造（/lifthelp up|down|door 在）⇒ 上一条断言有鉴别力")
 
 
 # ----------------------------------------------------------------------
@@ -316,10 +318,10 @@ check(_ctl == len(_track),
 # 6) 打包：jar 里真的有这些
 # ----------------------------------------------------------------------
 print("\n== 6. 构建产物 ==")
-jars = sorted(glob.glob(os.path.join(ROOT, "build", "libs", "smooth-escalator-*.jar")),
+jars = sorted(glob.glob(os.path.join(ROOT, "build", "libs", "*.jar")),
               key=os.path.getmtime)
 if not jars:
-    print("[SKIP] build/libs 下没有 smooth-escalator-*.jar，跳过打包校验（先跑 gradlew build）")
+    print("[SKIP] build/libs 下没有任何 jar，跳过打包校验（先跑 gradlew build）")
 else:
     jar = jars[-1]
     print("      校验 %s（%d B）" % (os.path.relpath(jar, ROOT), os.path.getsize(jar)))

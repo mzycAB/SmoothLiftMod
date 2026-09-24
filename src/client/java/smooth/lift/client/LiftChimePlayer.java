@@ -83,7 +83,8 @@ import java.util.Set;
  * 「准备上行」打断（两者在时间上本来就是挨着的：关门 → 起步）。
  *
  * <p><b>受同一套开关管</b>：开关沿用 {@code /lifthelp}、音量沿用 {@code /lifthelploud}、
- * 音高沿用 {@code /lifthelpspeed}（默认 1.0 = 原样）。这样不必为它再加一条指令，
+ * 音高沿用倍速（{@code /lifthelpspeed}，【1.15】已删除该指令 ⇒ 新档恒为 1.0 = 原样）。
+ * 这样不必为它再加一条指令，
  * 而用户仍然能一键静音。可闻距离与开关门提示音同为 {@link #RANGE}。
  */
 public final class LiftChimePlayer {
@@ -277,7 +278,7 @@ public final class LiftChimePlayer {
         }
         seqCustomId = customId;
         if (customId != null) {
-            // 自定义素材按原速播（不能按 /lifthelpspeed 变速 —— 那是给内置素材连播用的）
+            // 自定义素材按原速播（不能按倍速变速 —— 那是给内置素材连播用的）
             seqPitch = 1.0f;
         }
         playsLeft = repeats;
@@ -334,12 +335,18 @@ public final class LiftChimePlayer {
      * 【1.45】这条直梯（竖井列）某一项提示音**实际要播的素材**：
      * <ul>
      *   <li>{@link EscalatorSpeedData#LIFT_TONE_OFF} → 不播：返回 {@code STOP}（调用方静默跳过）；</li>
-     *   <li>{@link EscalatorSpeedData#LIFT_TONE_DEFAULT}（或镜像里没有这条直梯）→ 内置素材：返回 {@code null}；</li>
+     *   <li>{@link EscalatorSpeedData#LIFT_TONE_DEFAULT} → 内置素材：返回 {@code null}；</li>
      *   <li>其它 → 音频库文件名（返回它，调用方用 {@code injectAudio} 分支播）。</li>
      * </ul>
      *
-     * <p>【1.46】在这之前先看**维度默认子开关**（{@code /lifthelpup|down|chime} 或石斧 UI 开关）：
+     * <p>【1.46】在这之前先看**维度默认子开关**（{@code /lifthelp up|down|door on|off} 或石斧 UI 开关）：
      * 该维度这项整体关了 → 直接返回 {@code STOP}（连单条素材都不用查）。
+     *
+     * <p><b>【1.15】两层查找</b>：先看这条直梯（竖井列）的单独设置；没有这一条、或者那一项正好是
+     * {@code default}（「跟上一层」），就回落到**维度默认素材**（{@code /lifthelp up|down|door <名字>}）；
+     * 维度默认再是 {@code default} 才是模组内置素材。
+     * 两层的 {@code default} 因此都是同一个意思（跟上一层），
+     * 不设任何东西时行为与 1.14 完全一致。
      */
     private static String liftToneCustomId(Minecraft mc, MtrLiftAccess.LiftView lift, String which) {
         // 【1.45】素材镜像的代数缓存：只在有同步变化时才真查。
@@ -354,18 +361,18 @@ public final class LiftChimePlayer {
         if (!EscalatorSpeedManager.isLiftToneEnabled(mc.level, which)) {
             return STOP_SENTINEL;
         }
+        // ① 这条直梯的单独设置
         long key = EscalatorSpeedManager.liftToneKeyNear(lift.x(), lift.z());
         EscalatorSpeedData.LiftToneAudio tone = EscalatorSpeedManager.getClientLiftTone(mc.level, key);
-        String value = switch (which) {
-            case "up" -> tone.up();
-            case "down" -> tone.down();
-            case "chime" -> tone.chime();
-            default -> EscalatorSpeedData.LIFT_TONE_DEFAULT;
-        };
+        String value = EscalatorSpeedManager.toneField(tone, which);
+        // ② default（含「没这一项」）= 跟维度默认
+        if (value == null || value.isEmpty() || EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(value)) {
+            value = EscalatorSpeedManager.getLiftToneAudio(mc.level, which);
+        }
         if (EscalatorSpeedData.LIFT_TONE_OFF.equals(value)) {
             return STOP_SENTINEL;
         }
-        if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(value)) {
+        if (value == null || value.isEmpty() || EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(value)) {
             return null;
         }
         return value;
