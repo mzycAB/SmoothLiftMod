@@ -34,6 +34,7 @@ MTR 3 与 MTR 4 的门值口径**不一样**，而且 MTR3 的那个很容易搞
   2. 一个完整周期里**恰好各触发一次**（不多不少），且在 [24,48] 空档里**不触发**；
   3. 触发时刻 == 门**可见**动作开始的那一 tick（±1 tick 容差，来自 eps 判据）；
   4. 连播节奏 = round(LIFT_HELP_INTERVAL_SECONDS × 20 / 倍速) ≥ 1 tick，对全速域成立；
+     ★【1.52】「关门 4 次 / 开门 2 次」**只对内置 liftmusic 成立** —— 玩家导入的 ogg 只播一次；
   5. `sounds.json` 里有 `audio/liftmusic` 条目、且 .ogg 文件存在（否则引擎拿不到声音，静默不响）。
 
 【1.42 修复】下面这两段是「直梯提示音完全没声音」那个 bug 的回归防线（症状与上述都不同：
@@ -283,6 +284,41 @@ check(CLOSE_REPEATS == 4 and OPEN_REPEATS == 2,
       "关门连播 4 次、开门连播 2 次（需求原文）",
       "关门跨度 %dtick(%.1fs) 开门跨度 %dtick(%.1fs) @最慢倍速"
       % (span_close, span_close / TPS, span_open, span_open / TPS))
+
+
+# ----------------------------------------------------------------------
+# 4b) 【1.52】「4 次 / 2 次」只对**内置素材**成立；玩家导入的 ogg 只播一次
+# ----------------------------------------------------------------------
+m = re.search(r"private static void detect\(.*?\n    \}", player_src, re.S)
+detect_body = m.group(0) if m else ""
+check(bool(detect_body), "找到 detect 方法体")
+if detect_body:
+    check(re.search(r"if \(customId != null\) \{\s*//[^\n]*\n\s*seqPitch = 1\.0f;\s*repeats = 1;",
+                    detect_body) is not None,
+          "*【1.52】导入的 ogg（customId != null）连播次数 = 1（只播一次），"
+          "与「自定义素材按原速播」写在同一个分支里")
+    check(re.search(r"repeats = closing \? EscalatorSpeedData\.LIFT_HELP_CLOSE_REPEATS\s*\n\s*"
+                    r": EscalatorSpeedData\.LIFT_HELP_OPEN_REPEATS;", detect_body) is not None,
+          "*【1.52】内置素材仍走「关门 4 次 / 开门 2 次」（次数分流在 else 分支里）")
+    check(re.search(r"int repeats = closing \?", detect_body) is None,
+          "老的「先无条件按 4/2 算、再被自定义情况覆盖」写法已消失"
+          "（留着就是两处规则并存，等着分叉）")
+
+
+def plays(closing, custom):
+    """detect() 的连播次数：内置 = 关门 4 / 开门 2；导入的 ogg = 1。"""
+    return 1 if custom else (CLOSE_REPEATS if closing else OPEN_REPEATS)
+
+
+check(plays(True, False) == 4 and plays(False, False) == 2,
+      "内置素材：关门 4 次、开门 2 次（用户点名的节奏，本次不动）")
+check(plays(True, True) == 1 and plays(False, True) == 1,
+      "*导入的 ogg：开门、关门都**只播一次**（【1.52】用户点名）")
+check(plays(False, True) != plays(False, False) and plays(True, True) != plays(True, False),
+      "对照：若不看素材来源（导入也按 4/2 次）⇒ 开关门各会多放 1 / 3 下"
+      " ⇒ 上面那条断言有鉴别力，不是恒真",
+      "若照旧 = 关门 %d 次 / 开门 %d 次；现在 = 1 次 / 1 次"
+      % (plays(True, False), plays(False, False)))
 print()
 
 
@@ -492,15 +528,29 @@ check(re.search(r'Commands\.literal\("lifthelploud"\)[\s\S]{0,1500}?liftToneLoud
       "/lifthelploud 挂了 up|down|door 三项分支 + 合并的 -f 节点（【1.48】形状，door = chime 别名）")
 
 # 7c) 同步包**读写顺序配对** —— 跨文件不变量，最容易被单边改坏
-def pkt_ops(src, marker, kind, span=900):
+def pkt_ops(src, marker, kind, end=None, span=900):
+    """截出「写侧方法体 / 读侧接收器」这一段的 buf.<kind>Xxx() 调用序列。
+
+    【1.15】`end` 是**结束标记**：光靠固定长度窗口（span=900）会漏掉包尾新追加的字段
+    —— 包一长，尾部那几个 writeUtf/readUtf 就滑出窗口，于是「读写顺序配对」这条断言
+    会在**悄悄变瞎**的情况下仍然显示通过（那比红更危险）。所以两侧都按各自的收尾符号截断：
+    写侧到方法右括号、读侧到接收器 lambda 的 `});`。
+    """
     i = src.find(marker)
     if i < 0:
         return None
-    return re.findall(r"buf\.%s([A-Z][A-Za-z]*)\(" % kind, src[i:i + span])
+    j = len(src)
+    if end is not None:
+        k = src.find(end, i)
+        if k > 0:
+            j = k
+    if end is None or j > i + span * 4:
+        j = min(j, i + span * 4)
+    return re.findall(r"buf\.%s([A-Z][A-Za-z]*)\(" % kind, src[i:j])
 
 
-w_ops = pkt_ops(mgr_src, "private static FriendlyByteBuf buildLiftChimePacket", "write")
-r_ops = pkt_ops(client_src, "SmoothLift.LIFT_CHIME_SYNC_CHANNEL", "read")
+w_ops = pkt_ops(mgr_src, "private static FriendlyByteBuf buildLiftChimePacket", "write", end="\n    }")
+r_ops = pkt_ops(client_src, "SmoothLift.LIFT_CHIME_SYNC_CHANNEL", "read", end="});")
 check(w_ops is not None and r_ops is not None,
       "找得到同步包的写侧（buildLiftChimePacket）与读侧（SmoothLiftClient）",
       "写 %s / 读 %s" % (w_ops, r_ops))
@@ -508,17 +558,22 @@ if w_ops and r_ops:
     check(w_ops == r_ops,
           "同步包写入顺序 == 读取顺序（dimId → enabled → speed → volume → up → down → chime → round → 单项音量×3）",
           "写 %s 读 %s" % (w_ops, r_ops))
-    check(w_ops[-7:] == ["Boolean", "Boolean", "Boolean", "VarInt", "VarInt", "VarInt", "VarInt"],
-          "【1.46~1.48】包尾 = 三子开关(up→down→chime) + 范围(round) + 三项各自音量(up→down→chime)",
-          "实际尾部 %s" % w_ops[-7:])
+    # 【1.15】包尾又追加了三个字符串（三项的维度默认素材）
+    check(w_ops[-13:] == ["Boolean", "Float", "VarInt", "Boolean", "Boolean", "Boolean",
+                          "VarInt", "VarInt", "VarInt", "VarInt", "Utf", "Utf", "Utf"],
+          "【1.46~1.48】三子开关(up→down→chime) + 范围(round) + 三项各自音量 + "
+          "【1.15】三项默认素材(up→down→chime)",
+          "实际尾部 %s" % w_ops[-13:])
 
 # 7d) applyClientLiftChime 的入参 == 读侧读到的值（【1.46】三个子开关，【1.47】范围，【1.48】三项各自音量）
 check(re.search(
     r"applyClientLiftChime\(ResourceKey<Level> dimension,\s*boolean enabled,\s*"
     r"float speed,\s*int volume,\s*boolean upEnabled,\s*boolean downEnabled,\s*"
     r"boolean chimeEnabled,\s*int round,\s*int toneVolumeUp,\s*int toneVolumeDown,\s*"
-    r"int toneVolumeChime\)", mgr_src) is not None,
-      "applyClientLiftChime 接收 (dimension, enabled, speed, volume, up, down, chime, round, 单项音量×3) —— 与读侧顺序一致")
+    r"int toneVolumeChime,\s*String toneAudioUp,\s*String toneAudioDown,\s*"
+    r"String toneAudioChime\)", mgr_src) is not None,
+      "applyClientLiftChime 接收 (dimension, enabled, speed, volume, up, down, chime, round, 单项音量×3, "
+      "【1.15】三项维度默认素材×3) —— 与读侧顺序一致")
 
 # 7e) 【1.47】播放端范围动态化：不再写死 16，而是从同步镜像读（默认 4 格）
 check("DEFAULT_LIFT_HELP_ROUND" in mgr_src or "defaultLiftHelpRound" in mgr_src,
@@ -530,8 +585,11 @@ check('lifthelpround' in cmd_src,
 
 # 7e) 音量真的要能放大：GainManagedSound + AL_MAX_GAIN 必须**成对**出现
 check(re.search(r"class LiftMusicInstance extends AbstractSoundInstance\s+"
-                r"implements GainManagedSound", player_src) is not None,
-      "LiftMusicInstance 实现 GainManagedSound（让 SoundEngineVolumeMixin 放行 [0,1] 夹取）")
+                r"implements\s+TickableSoundInstance,\s*"
+                r"GainManagedSound", player_src) is not None,
+      "LiftMusicInstance 实现 GainManagedSound（让 SoundEngineVolumeMixin 放行 [0,1] 夹取）"
+      "　★【1.51】同时实现 TickableSoundInstance —— AbstractSoundInstance 本身不实现它，"
+      "不实现就进不了 tickingSounds、引擎不会每 tick 回来读音量")
 check("AL10.alSourcef(ch.source, AL10.AL_MAX_GAIN, EscalatorAudioPlayer.MAX_GAIN)" in player_src,
       "开播时把该 OpenAL 源的 AL_MAX_GAIN 抬到 MAX_GAIN（缺这一步仍最多 1.0×）")
 check(re.search(r"clampLiftHelpVolume\(helpVolume\)\s*/\s*100\.0f", player_src) is not None,

@@ -58,7 +58,7 @@ CHIME = os.path.join(CLIENT, "LiftChimePlayer.java")
 ACCESS = os.path.join(CLIENT, "MtrLiftAccess.java")
 SERVER_MAIN = os.path.join(ROOT, "src", "main", "java", "smooth", "lift", "SmoothLift.java")
 # 用户放在工作区根的原始素材（用它证明「打进工程的字节没变」）
-GIVEN = os.path.join(os.path.dirname(ROOT), "SmoothLiftMod-1.20.4")
+GIVEN = os.path.join(os.path.dirname(ROOT), "mzycBetterMTR-1.20.4")
 GIVEN_DIR = os.path.dirname(ROOT)
 
 FAILS = []
@@ -189,14 +189,16 @@ if body:
           "detectMove 不碰连播排期（playsLeft/nextPlayTick）⇒ 不会顶掉正在进行的关门连播")
     check(re.search(r"up\s*\?\s*LIFT_UP\s*:\s*LIFT_DOWN", body) is not None,
           "方向 UP 放 LIFT_UP、DOWN 放 LIFT_DOWN（按方向选素材）")
-    check(re.search(r"gain\(distance\)\s*\*\s*volumeFactor\(toneVolume\)", body) is not None,
-          "音量复用 `/lifthelploud` 且按方向取单项（【1.48】gain(distance) × volumeFactor(liftToneVolume(…))）")
+    check(re.search(r"volumeFactor\(toneVolume\)\s*\*\s*spatialFactor\(playerPos\(mc\),\s*tonePos\)"
+                    r"\s*<=\s*0\.0f", body) is not None,
+          "音量复用 `/lifthelploud` 且按方向取单项；先按【1.51】空间系数判「当前位置还听得见吗」"
+          "（volumeFactor(toneVolume) × spatialFactor(playerPos(mc), tonePos)）")
     check(re.search(r"liftToneVolume\(mc,\s*up\s*\?\s*\"up\"\s*:\s*\"down\"\)", body) is not None,
           "【1.48】上楼用 up 单项音量、下楼用 down 单项音量（没单独调过回落共用默认）")
     check(re.search(r"cachedSpeed", body) is not None,
-          "音高复用 `/lifthelpspeed`（cachedSpeed），不必为它再加指令")
-    check(re.search(r"volume\s*<=\s*0\.0f", body) is not None,
-          "音量为 0 时直接不播（/lifthelploud 0 时彻底静音，不留空转）")
+          "音高复用直梯倍速 cachedSpeed（【1.15】改了它的指令 /lifthelpspeed 已删除）")
+    check(re.search(r"<=\s*0\.0f", body) is not None,
+          "音量为 0 时直接不播（/lifthelploud 0、或【1.51】轿厢外超出 /lifthelpround 范围 ⇒ 静音不留空转）")
 
 # 只对最近那条响
 m = re.search(r"if\s*\(lift\s*==\s*nearest\)\s*\{(.*?)\n            \}", chime, re.S)
@@ -216,19 +218,124 @@ check("lastMove.keySet().retainAll(seen)" in chime,
 check(re.search(r"lastMove\.clear\(\)", chime) is not None,
       "reset() 里清空 lastMove ⇒ 玩家进/出维度、重连后不会拿旧状态比")
 
-# 复用既有指令（没有为这条功能新增指令）
-for cmd in ("lifthelp", "lifthelploud", "lifthelpspeed"):
+# 复用既有指令（开关 / 音量都借用直梯那一套，不为准备移动音单独开指令）
+# 【1.15】/lifthelpspeed 已按用户要求删除，所以这里只剩两条。
+for cmd in ("lifthelp", "lifthelploud"):
     check(cmd in chime, "复用既有指令 /%s（本功能不新增指令）" % cmd)
 server_main = read(SERVER_MAIN)
-check(re.search(r'literal\(\s*"(up|down)"\s*\)', server_main) is None,
-      "指令树里没有新增 up/down 字面量 ⇒ 确认是复用而非新增")
-check(re.search(r'literal\(\s*"lifthelpspeed"', server_main) is not None,
-      "对照：脚本确实能读到指令树字面量（/lifthelpspeed 在）⇒ 上一条断言有鉴别力")
+check(re.search(r'literal\(\s*"lifthelpspeed"', server_main) is None,
+      "【1.15】/lifthelpspeed 已从指令树里删除（up/down 两项只跟着 /lifthelp 那套走）")
+check(re.search(r'liftToneBranch\(\s*"up"\s*,\s*"up"\s*\)', server_main) is not None
+      and re.search(r'liftToneBranch\(\s*"door"\s*,\s*"chime"\s*\)', server_main) is not None,
+      "对照：脚本确实能读到指令树构造（/lifthelp up|down|door 在）⇒ 上一条断言有鉴别力")
 
 
 # ----------------------------------------------------------------------
 # 4) MtrLiftAccess：方向解析与降级
 # ----------------------------------------------------------------------
+print("\n== 3b. 【1.51】轿厢内外分档 + 音量逐 tick 重算 ==")
+
+m = re.search(r"private static float spatialFactor\(Vec3 player, Vec3 sound\) \{(.*?)\n    \}", chime, re.S)
+sf = m.group(0) if m else ""
+check(bool(sf), "找到 spatialFactor 方法体")
+if sf:
+    check(re.search(r"Math\.sqrt\(dx \* dx \+ dz \* dz\) <= CABIN_RADIUS_H", sf) is not None,
+          "「在轿厢里」只按**水平**距离判（MTR4 的当前位置行进中会整层偏，竖直判据会误伤乘客）")
+    check(re.search(r"OUTSIDE_CABIN_FACTOR \* f \* f", sf) is not None,
+          "轿厢外 = OUTSIDE_CABIN_FACTOR × 平方淡出（淡出跨度从轿厢边缘起算）")
+    check("player == null" in sf, "拿不到玩家位置时不衰减（返回 1.0）")
+
+m = re.search(r"CABIN_RADIUS_H = ([0-9.]+);", chime)
+check(bool(m) and float(m.group(1)) == 1.5,
+      "CABIN_RADIUS_H = 1.5 格（盖住 1×1 轿厢的贴边与 2×2 轿厢的厢内中心）",
+      "实际 %s" % (m.group(1) if m else None))
+m = re.search(r"OUTSIDE_CABIN_FACTOR = ([0-9.]+)f;", chime)
+check(bool(m) and float(m.group(1)) == 0.2,
+      "OUTSIDE_CABIN_FACTOR = 0.2（用户点名的「原先的 20%」）",
+      "实际 %s" % (m.group(1) if m else None))
+
+check(re.search(r"class LiftMusicInstance extends AbstractSoundInstance implements TickableSoundInstance",
+                chime) is not None,
+      "* LiftMusicInstance 实现 TickableSoundInstance —— AbstractSoundInstance 本身**不**实现它"
+      "（javap 实测只实现 SoundInstance），不实现就进不了 SoundEngine.tickingSounds，"
+      "引擎一辈子不会回来读音量 ⇒ 音量永远是起播时那一个值（用户报的病）")
+check(re.search(r"public void tick\(\) \{\s*Minecraft mc = Minecraft\.getInstance\(\);\s*"
+                r"this\.volume = baseVolume \* spatialFactor\(playerPos\(mc\), "
+                r"new Vec3\(this\.x, this\.y, this\.z\)\);\s*\}", chime) is not None,
+      "* tick() 里按玩家当前位置重算 this.volume（引擎每 tick 把它写进 AL_GAIN）")
+check(re.search(r"public boolean isStopped\(\) \{\s*return false;\s*\}", chime) is not None,
+      "isStopped() 恒 false（一次性音效交回引擎，在通道播完时回收）")
+check(re.search(r"this\.volume = baseVolume \* spatialFactor\(playerPos\(Minecraft\.getInstance\(\)\), "
+                r"pos\);", chime) is not None,
+      "起播当刻也算一次（既不炸一下、也没有开头空白）")
+check("inst.setPosition(pos, baseVolume)" in chime,
+      "play() 传给实例的是**不含**空间系数的设置音量（空间系数由实例自己逐 tick 算）")
+
+# ---- 数值：把 spatialFactor 忠实搬到 Python 里跑 ----
+# * 两个常量**从源码解析**、不抄一份：源码一改，下面的数值断言跟着变（改错立刻红）
+CABIN_R = float(re.search(r"CABIN_RADIUS_H = ([0-9.]+);", chime).group(1))
+OUTSIDE = float(re.search(r"OUTSIDE_CABIN_FACTOR = ([0-9.]+)f;", chime).group(1))
+
+
+def spatial(d, round_=4.0, horiz=None, outside=OUTSIDE):
+    """忠实复刻：d = 3D 距离，horiz = 水平距离（默认同 d），round_ = /lifthelpround。"""
+    if horiz is None:
+        horiz = d
+    if horiz <= CABIN_R:
+        return 1.0
+    span = round_ - CABIN_R
+    beyond = d - CABIN_R
+    if not span > 0.0 or beyond >= span:
+        return 0.0
+    f = 1.0 - beyond / span
+    return outside * f * f
+
+
+check(abs(spatial(None, 4.0, horiz=0.7) - 1.0) < 1e-12,
+      "* 轿厢内（水平 0.7 格）= 100%")
+EPS_OUT = 1e-6   # 轿厢判定是 <=（正好 1.5 格仍算「在轿厢里」），所以「刚跨出」取 1.5+eps
+check(abs(spatial(1.5 + EPS_OUT, 4.0) - 0.20) < 1e-6,   # 容差按 Java 的 float32 算（0.2f = 0.2000000029）
+      "* 刚迈出轿厢（刚越过轿厢半径 1.5 格）= **正好 20%**（用户点名的数）",
+      "%.6f" % spatial(1.5 + EPS_OUT, 4.0))
+check(spatial(1.5, 4.0) == 1.0,
+      "边界包含在轿厢内（水平正好 1.5 格仍算『在轿厢里』= 100%），越过才降档")
+vals = [spatial(d, 4.0) for d in (1.5 + EPS_OUT, 2.0, 2.5, 3.0, 3.5)]
+check(all(vals[i] > vals[i + 1] for i in range(len(vals) - 1)) and vals[-1] > 0.0,
+      "* 越远越小：20% 起单调递减（还没到范围边界时不提前归零）",
+      " / ".join("%.4f" % v for v in vals))
+check(spatial(4.0, 4.0) == 0.0 and spatial(9.9, 4.0) == 0.0,
+      "* 到 /lifthelpround（默认 4 格）归零")
+check(spatial(2.0, 128.0) > 0.0,
+      "范围可调：round=128 时 2 格处仍可闻（乘客/旁观者都听得到，只是淡）",
+      "%.4f" % spatial(2.0, 128.0))
+check(spatial(2.0, 1.0) == 0.0,
+      "可预期降级：round=1（≤ 轿厢半径 1.5）时轿厢外一律静音 —— 可见范围已被轿厢占满")
+
+# ---- 对照 1：把「轿厢外 20%」改回 1.0（= 不区分轿厢内外的旧行为）----
+check(abs(spatial(1.5 + EPS_OUT, 4.0, outside=1.0) - 0.20) > 1e-6,
+      "对照 1：OUTSIDE_CABIN_FACTOR 改成 1.0 后「出轿厢 = 20%」不成立"
+      " ⇒ 上面那条断言有鉴别力，不是恒真",
+      "改后 %.4f" % spatial(1.5 + EPS_OUT, 4.0, outside=1.0))
+
+# ---- 对照 2：旧写法（音量只在起播时定死）在用户那条场景下的结果 ----
+_play_at = spatial(None, 4.0, horiz=0.7)      # 在轿厢里按下按钮那一刻
+_walk_to = spatial(3.0, 4.0)                  # 走出去 3 格之后
+check(abs(_play_at - _walk_to) > 1e-6,
+      "对照 2：旧写法会把 %.2f 一直播完，新写法走到 3 格处只剩 %.4f ⇒ 两者可区分"
+      "（这正是用户报的「不管走多远都清晰听到」）" % (_play_at, _walk_to))
+
+# ---- 编译产物（dev 目录、未 remap）：接口真的挂上去了 ----
+DEV = os.path.join(ROOT, "build", "classes", "java", "client", "smooth", "lift", "client",
+                   "LiftChimePlayer$LiftMusicInstance.class")
+if os.path.isfile(DEV):
+    with open(DEV, "rb") as fh:
+        blob = fh.read()
+    check(b"net/minecraft/client/resources/sounds/TickableSoundInstance" in blob,
+          "编译产物（dev、未 remap）里 LiftMusicInstance 真的 implements TickableSoundInstance")
+else:
+    check(False, "找不到 %s（先 ./gradlew compileClientJava）" % os.path.relpath(DEV, ROOT))
+
+
 print("\n== 4. MtrLiftAccess ==")
 access = read(ACCESS)
 
@@ -316,10 +423,10 @@ check(_ctl == len(_track),
 # 6) 打包：jar 里真的有这些
 # ----------------------------------------------------------------------
 print("\n== 6. 构建产物 ==")
-jars = sorted(glob.glob(os.path.join(ROOT, "build", "libs", "smooth-escalator-*.jar")),
+jars = sorted(glob.glob(os.path.join(ROOT, "build", "libs", "*.jar")),
               key=os.path.getmtime)
 if not jars:
-    print("[SKIP] build/libs 下没有 smooth-escalator-*.jar，跳过打包校验（先跑 gradlew build）")
+    print("[SKIP] build/libs 下没有任何 jar，跳过打包校验（先跑 gradlew build）")
 else:
     jar = jars[-1]
     print("      校验 %s（%d B）" % (os.path.relpath(jar, ROOT), os.path.getsize(jar)))

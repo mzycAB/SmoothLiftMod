@@ -1,6 +1,12 @@
 accessWidener	v2	named
 
 # ---------------------------------------------------------------------------
+# 【1.24】在模型烘烤前给 MTR 扶梯阶梯模型注入透明标记贴图（EscalatorModelOverride 替代
+# 18 个资源覆盖 JSON）：需要直接改写 BlockModel.textureMap（protected final）。
+# ---------------------------------------------------------------------------
+accessible	field	net/minecraft/client/renderer/block/model/BlockModel	textureMap	Ljava/util/Map;
+
+# ---------------------------------------------------------------------------
 # 逐条扶梯独立的阶梯动画需要「方块顶点格式 + 自定义贴图」的渲染类型：SmoothLift 把 MTR 的
 # 16 帧阶梯贴图作为一张普通贴图（320x5120）加载，然后按每条扶梯自己的速度选择帧号。
 # 但 1.20.4 里 RenderType.CompositeState 和 RenderStateShard 的各种状态片段是 protected，
@@ -43,3 +49,21 @@ accessible	field	net/minecraft/client/sounds/SoundEngine	instanceToChannel	Ljava
 # （实测：OpenAL Soft 1.23 支持 AL_SOFT_gain_clamp_ex，AL_GAIN_LIMIT_SOFT = 1000）。
 # ---------------------------------------------------------------------------
 accessible	field	com/mojang/blaze3d/audio/Channel	source	I
+
+# ---------------------------------------------------------------------------
+# 【1.28】「玩家看不见的扶梯不渲染」的最后一块：**遮挡剔除**（被墙 / 地形挡住，
+# 但仍在视锥内、仍在视距内的那些段）。
+#
+# 为什么必须借原版这个字段：[`LevelRenderer.renderSectionLayer`] **就是遍历
+# `visibleSections` 来画地形的** —— 换句话说这个列表的定义正好是
+# 「原版这一帧真的要画的段」。直接用它做判据，等于让我们的阶梯渲染和地形渲染
+# 服从同一个可见性判决，不会出现「地形被剔掉、台阶还画着」这种自相矛盾的画面。
+#
+# 而它是 `private final`，且 `LevelRenderer` 没有任何公开方法能回答
+# 「某个世界分段当前是否被遮挡」（公开的只有 `countRenderedSections()` 这类总数），
+# 遮挡状态锁在 `SectionOcclusionGraph` 的 private `currentGraph` 里、`update()`
+# 返回 void。所以只能把这个字段放开可见性（Fabric 的 access widener 就是干这个的）。
+#
+# 只读不写：渲染端只 `get(i).getOrigin()` 取原点换算段键，绝不改动这个列表。
+# ---------------------------------------------------------------------------
+accessible	field	net/minecraft/client/renderer/LevelRenderer	visibleSections	Lit/unimi/dsi/fastutil/objects/ObjectArrayList;
