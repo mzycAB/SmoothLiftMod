@@ -26,7 +26,7 @@ import java.util.List;
  *   <li><b>默认提示音（模组原声）</b>：= 模组原来的「咔啪」提示音（进扶梯端 10 次/秒、出扶梯端 1 次/秒，
  *       速率可用 {@code /futihelpspeed} 改）。<b>永远排在最顶端</b>（与运行底噪界面把「默认音乐」放最顶一致）。</li>
  *   <li><b>不播提示音</b>：这条扶梯**当前这一头**单独哑掉（比 {@code /futihelp off} 更细），其它不受影响。</li>
- *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG（**与运行底噪共用同一个文件夹**）：
+ *   <li>存档文件夹 {@code MBM_Audio} 里的 OGG（**与运行底噪共用同一个文件夹**）：
  *       点 = 导入存档并设为这条扶梯的提示音（之后删原文件仍可播）。</li>
  *   <li>已存入存档的音频：点名字 = 设为提示音；删除 = 从存档移除。</li>
  * </ol>
@@ -185,6 +185,11 @@ public class HelpAudioSetupScreen extends Screen {
             setStatus("已请求刷新，同步回来后列表会自动更新");
         }).bounds(this.width / 2 + 4, 24, 96, 20).build());
 
+        // 【1.55】右上角「同步所有」：这是二级菜单，射程只算「这条扶梯的无障碍提示音素材」，
+        //   进 / 出两端一起同步（服务端那一支自己会跑两端）。没有输入框 ⇒ beforeOpen 传 null。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_ESC_HELP_AUDIO,
+                pos.asLong(), null));
+
         // 列表：只为「完整可见 + 可点击」的行创建按钮。
         // （滚出可视区的行不建控件，避免按钮溢出到标题/底部文字上。）
         for (int i = 0; i < rows.size(); i++) {
@@ -240,7 +245,7 @@ public class HelpAudioSetupScreen extends Screen {
         rows.add(new Row(T_OFF, EscalatorSpeedData.HELP_AUDIO_OFF, "不播提示音（仅这条扶梯）"));
 
         // 第三段：存档文件夹里的 OGG（与运行底噪共用同一个文件夹），点=导入并设为提示音。
-        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并设为提示音）"));
+        rows.add(new Row(T_HEADER, null, "存档文件夹 MBM_Audio 待导入（点=导入并设为提示音）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {

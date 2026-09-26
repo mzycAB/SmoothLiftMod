@@ -27,7 +27,9 @@ import smooth.lift.EscalatorUtil;
 import javax.sound.sampled.AudioFormat;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -90,6 +92,13 @@ import java.util.concurrent.CompletableFuture;
  * 现在 play() 之前先把音量摆到 {@link #FADE_IN_FLOOR}（≈ -80 dB，听不见但不为 0），
  * 再用 {@link #FADE_IN_TICKS} tick 指数淡入到目标值。
  * 起点**不能取 0**：MC 见音量 ≤ 0 会直接 {@code channel.stop()} 把通道掐掉。
+ *
+ * <p><b>【1.15】「剪掉开头一截再播」</b>（给屏蔽门关门提示音做「结尾对齐门关上那一刻」用，
+ * 见 {@link PsdChimePlayer}）：{@link #offsetPlaybackId} 把起始偏移编进**播放 ID**；
+ * {@link #injectPlayback} 解码后按 {@link #sliceHead} 剪出尾部、以播放 ID 算出的缓存 key 注入；
+ * 播放实例的 {@code resolve} 用**同一个串**取 {@code Sound.getPath()}，于是正好命中那份尾部。
+ * 内置素材也要走这条路（原版事件没法从中间开始播），它们的字节从**模组自己的 jar** 读
+ * （{@link #bundledBytes}）—— 内置档在存档同步表里是没有字节的。
  *
  * <p>三个静态入口由 {@link SmoothLiftClient} 注册调用：
  * {@link #onClientTick(Minecraft)}（每 tick）、{@link #onDisconnect()}、{@link #onAudioReloaded()}。
@@ -193,6 +202,81 @@ public final class EscalatorAudioPlayer {
     /** 解码失败的音频：本次会话内不再反复尝试（避免每 tick 重复解码 + 刷屏）。 */
     private static final Set<String> DECODE_FAILED = new HashSet<>();
 
+    /**
+     * 模组自带素材在**自己 jar 内**的路径前缀（= {@code assets/smoothlift/sounds/audio/}）。
+     *
+     * <p>为什么用「从类路径读自己的资源」而不是问 {@code ResourceManager} 要：
+     * <ul>
+     *   <li>内置档在 {@link EscalatorSpeedManager#getAudioBytes} 里**没有字节**（那里只有玩家导入的音频），
+     *       所以想把内置素材投入「剪头播放」这条注入路径，就必须自己把 ogg 字节拿到手；</li>
+     *   <li>类路径读法**不依赖任何会随版本变的方法名**（{@code getResource}/{@code getResourceAsStream}
+     *       从 1.19 到 1.21 都一样，而 {@code ResourceManager#getResource} 的返回类型/构造方式
+     *       每个大版本都在变），移植到另外几个工程时零改动；</li>
+     *   <li>这份字节只用于**注入播放**（剪头那一档）。不剪头时内置档依旧走 sounds.json + 原版资源包，
+     *       资源包若能覆盖它，覆盖的也是那条原版路径（原版优先），行为不变。</li>
+     * </ul>
+     */
+    private static final String BUNDLED_AUDIO_PREFIX = "/assets/smoothlift/sounds/audio/";
+
+    /**
+     * 【1.15】已量出的音频总时长（ms）：素材键 → ms（{@code -1} = 量不出来，不再重试）。
+     *
+     * <p>给「把提示音的**结尾**对准某个时刻」用（见 {@link #bundledDurationMs} /
+     * {@link #customDurationMs}）：要算「该从第几毫秒开始播」，先得知道整段有多长。
+     * 首次真的要解一次 Ogg（量 {@code PCM 字节数 / 帧大小 / 采样率}），之后只查表。
+     */
+    private static final Map<String, Integer> DURATION_MS = new HashMap<>();
+
+    /**
+     * 【1.15】素材里「语音播报」与「嘀嘀声」的分界点（ms）：素材键 → 分界点（{@code -1} = 没有分界）。
+     *
+     * <p>为什么要在**音频层**算这个：屏蔽门的关门素材是「一整条真实的关门过程录音」——
+     * 前面是一段**语音播报**（音节不规则），后面是一串**嘀嘀声**（严格等间隔的脉冲），
+     * 中间夹一段安静（实测 mdoorclose.ogg：0~6.6s 语音、6.6~7.35s 静音、7.35~10.81s 嘀嘀）。
+     * 这一版把**整段素材**锚在「关门」那一瞬起播（听见的就是「关门人声 → 关门 → 关门嘀嘀」）；
+     * 分界点则有两个用处：① 判断这条素材**值不值得**整段起播（有这一段才值得），
+     * ② 「只嘀嘀」那一档剪头时**不许剪进人声里**
+     * （门只走 4 秒、素材 10.8 秒，两件事的取舍见 {@code PsdChimePlayer} 类注释）。
+     *
+     * <p>判据是**音频自身的性质**（最后一段够长的安静），与门速、与哪个版本无关，
+     * 所以对玩家导入的任何素材都成立，不是给这三个内置文件写死的时间点。
+     * 量不出来（素材本来就没有「播报+嘀嘀」这种结构）时返回 {@code -1}，调用方退回老行为。
+     */
+    private static final Map<String, Integer> ANNOUNCE_SPLIT_MS = new HashMap<>();
+
+    /**
+     * 【1.15】找「语音播报 / 嘀嘀声」分界用的安静判据。
+     *
+     * <p>取 -60dBFS（约 0.001 满量程）当「安静」：提示音的正片实测 RMS 在 0.07~0.16，
+     * 而分隔处是**数字静音**（采样值约 1e-5 量级），两者差两个数量级，阈值放中间足够安全。
+     *
+     * <p>★ 最短安静为什么取 {@value #SPLIT_MIN_SILENCE_MS}ms 而不是更大：**因为真正决定
+     * 「哪一段安静是分界」的不是这个阈值，而是下面那条「取**最后**一段合格的安静」**。
+     * 实测 {@code mdoorclose.ogg} 的语音段里存在 1150ms 的句间停顿（{@code doorclose.ogg} 里
+     * 甚至到 1440ms），两者都**超过** 500ms ⇒ 阈值本身**挡不住**它们；挡住的机制是
+     * 「分界点之后那串嘀嘀是 200ms 等间隔、其间安静只有 ~190ms」，所以**最后**一段≥阈值的
+     * 安静必定落在「播报结束」而不是语音句读上。
+     * 于是这个阈值只负责「比嘀嘀的间隙(190ms)宽、又要比真正的分界窄」——
+     * 而真正的分界实测只有 514ms（仅比 500 多 14ms），重新编码一下就可能掉到阈值之下。
+     * 取 {@value}（400ms）把余量从 14ms 抬到 114ms，且**不改变**任何现有素材的结果
+     * （两个文件的合格安静仍只有「最后那一段」这一处），故是纯增益。
+     *
+     * <p>另一个条件「安静**后面还剩** {@value #SPLIT_MIN_TAIL_MS}ms 有声内容」是为了保证
+     * 分界点之后确实还有「一整串嘀嘀」（实测 3.6~4.1 秒），而不是素材末尾的一点残留。
+     */
+    private static final float SPLIT_SILENCE_LEVEL = 1.0e-3f;
+    private static final int SPLIT_MIN_SILENCE_MS = 400;
+    private static final int SPLIT_MIN_TAIL_MS = 1500;
+
+    /**
+     * 【1.15】「从第 N 毫秒开始播」这个 N 的**量化步长**（ms）。
+     *
+     * <p>每剪一个偏移就要在声音引擎缓存里占一个条目（key 里带着偏移），不量化的话同一段音频
+     * 会被切出成百上千份。25ms 一档时最长的一段（10.8 秒）最多 ~430 份，而听感上 25ms 的
+     * 对齐误差根本听不出来（人耳对「声音与画面对齐」的容差在 **±50ms** 量级）。
+     */
+    static final int SLICE_STEP_MS = 25;
+
     /** 上一条「为什么没有声音」的说明；只在状态变化时打印，避免每 tick 刷日志。 */
     private static String lastNote;
 
@@ -290,7 +374,7 @@ public final class EscalatorAudioPlayer {
                 note("音频 " + bestId + " 解码失败（MC 只认 Ogg Vorbis），这条扶梯只能静音；详见之前的日志");
                 return;
             }
-            if (!inject(mc, bestId, bytes)) {
+            if (!inject(mc, bestId, bytes, 0)) {
                 stopAll(mc);
                 note("音频 " + bestId + " 解码失败（MC 只认 Ogg Vorbis：MP3/Opus/FLAC 都会失败）");
                 return;
@@ -526,6 +610,8 @@ public final class EscalatorAudioPlayer {
     public static void onDisconnect() {
         stopAll(Minecraft.getInstance());
         DECODE_FAILED.clear();
+        DURATION_MS.clear();
+        ANNOUNCE_SPLIT_MS.clear();
         clearChainCache();
         lastNote = null;
     }
@@ -533,10 +619,14 @@ public final class EscalatorAudioPlayer {
     /**
      * 服务端音频数据同步完成后：停掉旧实例，下一 tick 用新数据重新播放。
      * 顺带清掉「解码失败」记录 —— 玩家可能是重新导入了一个修好的文件，同名也要再试一次。
+     * 【1.15】把量过的时长也一起清掉：同名文件可能被换成了内容不同的另一个（时长变了，
+     * 「剪头对准结尾」的偏移必须跟着变），留着旧数就会一直剪错。
      */
     public static void onAudioReloaded() {
         stopAll(Minecraft.getInstance());
         DECODE_FAILED.clear();
+        DURATION_MS.clear();
+        ANNOUNCE_SPLIT_MS.clear();
         // 绑定/音量都可能刚变过，顺手让链缓存失效，下一 tick 重建。
         clearChainCache();
         lastNote = null;
@@ -557,9 +647,13 @@ public final class EscalatorAudioPlayer {
      * location -&gt; sounds/xxx.ogg），play() 才会命中 computeIfAbsent，
      * 否则会去资源包加载并失败（静音）。
      *
+     * @param audioId 声音缓存的 key 来源；**调进剪头播放时必须带上偏移后缀**
+     *                （{@link #offsetPlaybackId}）—— 缓存 key 由它算出来，
+     *                两个不同偏移就是两份不同的缓存条目，互不覆盖。
+     * @param startMs 从第几毫秒开始播（0 = 整段）。见 {@link #sliceHead}。
      * @return 是否已注入（缓存里已有同样算成功）
      */
-    private static boolean inject(Minecraft mc, String audioId, byte[] bytes) {
+    private static boolean inject(Minecraft mc, String audioId, byte[] bytes, int startMs) {
         SoundEngine engine = mc.getSoundManager().soundEngine;
         ResourceLocation key = soundCacheKey(audioId);
         if (engine.soundBuffers.cache.containsKey(key)) {
@@ -568,22 +662,269 @@ public final class EscalatorAudioPlayer {
         try (OggAudioStream stream = new OggAudioStream(new ByteArrayInputStream(bytes))) {
             ByteBuffer pcm = stream.readAll();
             AudioFormat format = stream.getFormat();
-            SoundBuffer buffer = new SoundBuffer(pcm, format);
+            int frames = pcm.limit() / Math.max(1, format.getFrameSize());
+            int totalMs = sampleRate(format) <= 0 ? 0
+                    : (int) Math.round(1000.0 * frames / sampleRate(format));
+            // 剪头：startMs 量化过、且调用方已保证 < totalMs，这里再夹一次防越界
+            int cutMs = Math.max(0, Math.min(startMs, Math.max(0, totalMs - 1)));
+            ByteBuffer data = sliceHead(pcm, format, cutMs);
+            SoundBuffer buffer = new SoundBuffer(data, format);
             engine.soundBuffers.cache.put(key, CompletableFuture.completedFuture(buffer));
-            LOGGER.info("[SmoothLift/Audio] {} 解码成功：{} 字节 -> {}Hz {} 声道，{}ms",
-                    audioId, bytes.length, (int) format.getSampleRate(), format.getChannels(),
-                    (int) (1000.0 * pcm.limit() / (format.getFrameSize() * format.getSampleRate())));
+            if (cutMs > 0) {
+                LOGGER.info("[SmoothLift/Audio] {} 解码成功：{} 字节 -> {}Hz {} 声道，{}ms"
+                                + "；已剪掉开头 {}ms（余 {}ms）",
+                        audioId, bytes.length, sampleRate(format), format.getChannels(), totalMs,
+                        cutMs, totalMs - cutMs);
+            } else {
+                LOGGER.info("[SmoothLift/Audio] {} 解码成功：{} 字节 -> {}Hz {} 声道，{}ms",
+                        audioId, bytes.length, sampleRate(format), format.getChannels(), totalMs);
+            }
             return true;
         } catch (IOException e) {
             // 解码失败：不注入，该音频不播放（保持静音）。
             // MC 用 stb_vorbis 解码，只认 Ogg 容器 + Vorbis 编码：
-            // MP3 改扩展名（"Failed to find Ogg header"）、Ogg Opus/FLAC 都会在这里失败。
+            // MP3 改扩展名（"Failed to find Ogg Header"）、Ogg Opus/FLAC 都会在这里失败。
+            // ★ 失败记录按**素材**记（去掉偏移后缀）：剪头那档失败 == 整段也播不出来，
+            //   记素材才能让 injectAudio 那条老路径也一起放弃重试，不至于每 tick 各失败一次。
             DECODE_FAILED.add(audioId);
+            DECODE_FAILED.add(baseOf(audioId));
             LOGGER.warn("[SmoothLift/Audio] 音频 {} 解码失败，这条扶梯将一直静音。原因：{}"
                     + "（MC 只支持 Ogg Vorbis；把 MP3 直接改名成 .ogg 或转成 Ogg Opus 都不行）",
                     audioId, e.getMessage());
             return false;
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.15】「剪掉开头一截再播」需要的几个小工具（时长 / 偏移编码 / 切片）
+    // ------------------------------------------------------------------
+
+    /** 采样率取整（{@link AudioFormat#getSampleRate()} 是 float，用它做除法要防 0）。 */
+    private static int sampleRate(AudioFormat format) {
+        return (int) format.getSampleRate();
+    }
+
+    /**
+     * 【1.15】模组自带素材（{@code dooropen / doorclose / mdoorclose} 这一类）的 ogg 字节。
+     *
+     * <p>读不到（打包漏了文件 / 开发环境没把 resources 挂上）返回 null —— 调用方一律
+     * 退回「不剪头」的老路径，不会因此静音。
+     */
+    static byte[] bundledBytes(String builtinKey) {
+        if (builtinKey == null || builtinKey.isEmpty()) {
+            return null;
+        }
+        try (InputStream in = EscalatorAudioPlayer.class
+                .getResourceAsStream(BUNDLED_AUDIO_PREFIX + builtinKey + ".ogg")) {
+            return in == null ? null : in.readAllBytes();
+        } catch (IOException e) {
+            LOGGER.warn("[SmoothLift/Audio] 读不到模组自带素材 {}.ogg：{}", builtinKey, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 【1.15】模组自带素材的时长（ms）；读不到/解不出来返回 {@code -1} 并缓存，不再重试。
+     *
+     * <p>只在**第一次**真从 jar 读字节 + 解一次 Ogg，之后连字节都不再读（先查表后取字节）。
+     */
+    static int bundledDurationMs(String builtinKey) {
+        String cacheKey = "builtin:" + builtinKey;
+        Integer cached = DURATION_MS.get(cacheKey);
+        return cached != null ? cached : measureAndCache(cacheKey, bundledBytes(builtinKey));
+    }
+
+    /**
+     * 【1.15】玩家导入素材的时长（ms）。
+     *
+     * <p>{@code bytes == null}（还没同步到）时**不缓存**，直接返回 {@code -1} —— 下一次数据到了还能再量。
+     * 这里不会再解一遍：只要量过一次，后面全是查表（每秒 20 次调用，绝不能每次都解码）。
+     */
+    static int customDurationMs(String audioId, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return -1;
+        }
+        Integer cached = DURATION_MS.get(audioId);
+        return cached != null ? cached : measureAndCache(audioId, bytes);
+    }
+
+    /**
+     * 【1.15】模组自带素材的「语音播报 / 嘀嘀声」分界点（ms）；没有这种结构返回 {@code -1}。
+     *
+     * <p>与 {@link #bundledDurationMs} 共用同一次解码与同一张表，所以调用它的代价只是查表。
+     */
+    static int bundledAnnounceSplitMs(String builtinKey) {
+        bundledDurationMs(builtinKey); // 先保证已经解过（没解过这里会解一次），表里才有分界点
+        Integer split = ANNOUNCE_SPLIT_MS.get("builtin:" + builtinKey);
+        return split != null ? split : -1;
+    }
+
+    /** 【1.15】玩家导入素材的「语音播报 / 嘀嘀声」分界点（ms）；没有这种结构返回 {@code -1}。 */
+    static int customAnnounceSplitMs(String audioId, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return -1;
+        }
+        customDurationMs(audioId, bytes); // 同上：先保证解过
+        Integer split = ANNOUNCE_SPLIT_MS.get(audioId);
+        return split != null ? split : -1;
+    }
+
+    /** 解码量一次时长并缓存（解不出来缓存 {@code -1}，避免反复重试）。 */
+    private static int measureAndCache(String cacheKey, byte[] bytes) {
+        if (bytes == null || bytes.length == 0) {
+            return -1;
+        }
+        int ms = -1;
+        try (OggAudioStream stream = new OggAudioStream(new ByteArrayInputStream(bytes))) {
+            ByteBuffer pcm = stream.readAll();
+            AudioFormat format = stream.getFormat();
+            int rate = sampleRate(format);
+            if (rate > 0) {
+                ms = (int) Math.round(1000.0 * (pcm.limit() / Math.max(1, format.getFrameSize())) / rate);
+            }
+            // 【1.15】同一次解码里顺手找出「语音播报 / 嘀嘀声」的分界点：
+            //   这里已经把整段 PCM 解出来了，再扫一遍是纯内存遍历（10.8 秒约 100 万次比较，
+            //   一次会话只做一次），比之后再解一遍便宜得多。
+            ANNOUNCE_SPLIT_MS.put(cacheKey, rate > 0 ? detectAnnounceSplitMs(pcm, format) : -1);
+        } catch (IOException e) {
+            ms = -1;
+            ANNOUNCE_SPLIT_MS.put(cacheKey, -1);
+        }
+        DURATION_MS.put(cacheKey, ms);
+        return ms;
+    }
+
+    /**
+     * 【1.15】在一整段 PCM 里找出「语音播报」与「嘀嘀声」的分界点（ms）；找不到返回 {@code -1}。
+     *
+     * <p>做法：找出**最后一段**够长的安静（≥ {@value #SPLIT_MIN_SILENCE_MS}ms），
+     * 且它**后面还剩**至少 {@value #SPLIT_MIN_TAIL_MS}ms 的有声内容，分界点取这段安静的**起点**。
+     * 于是「分界点之前」= 语音播报，「分界点之后」= 一整串嘀嘀。
+     *
+     * <p>★ 靠的是「**最后一段**」这个次序，不是阈值大小：实测语音句间停顿最长到 1440ms，
+     * 比阈值还长 —— 它们确实会被判成合格安静，但都会被后面那个真正的分界点**覆盖掉**
+     * （循环里 {@code split} 是不断被后一段改写的）。分界点之后那串嘀嘀是 200ms 等间隔、
+     * 其间安静只有 ~190ms，不可能再冒出一段 ≥400ms 的安静来把它顶掉。
+     *
+     * <p>只认 16bit PCM（stb_vorbis 解出来就是这个）。其它位深返回 {@code -1} —— 宁可退回
+     * 「不分段」的老行为，也不要去猜一种没验证过的采样格式。
+     */
+    private static int detectAnnounceSplitMs(ByteBuffer pcm, AudioFormat format) {
+        if (format.getSampleSizeInBits() != 16) {
+            return -1;
+        }
+        int rate = sampleRate(format);
+        int channels = Math.max(1, format.getChannels());
+        int frameSize = Math.max(2, format.getFrameSize());
+        if (rate <= 0) {
+            return -1;
+        }
+        ByteBuffer view = pcm.duplicate();
+        view.order(format.isBigEndian() ? ByteOrder.BIG_ENDIAN : ByteOrder.LITTLE_ENDIAN);
+        int frames = view.remaining() / frameSize;
+        if (frames <= 0) {
+            return -1;
+        }
+        int minSilenceFrames = (int) (SPLIT_MIN_SILENCE_MS / 1000.0 * rate);
+        int minTailFrames = (int) (SPLIT_MIN_TAIL_MS / 1000.0 * rate);
+        int split = -1;
+        int runStart = -1;          // 当前这段安静的起点（帧号）；-1 = 现在有声
+        for (int i = 0; i < frames; i++) {
+            int at = i * frameSize;
+            boolean silent = true;
+            for (int c = 0; c < channels; c++) {
+                short s = view.getShort(at + c * 2);
+                if (s > SPLIT_SILENCE_LEVEL * 32767.0f || s < -SPLIT_SILENCE_LEVEL * 32767.0f) {
+                    silent = false;
+                    break;
+                }
+            }
+            if (silent) {
+                if (runStart < 0) {
+                    runStart = i;
+                }
+            } else {
+                if (runStart >= 0) {
+                    // 这段安静刚刚结束：够长、且后面还剩够多的有声内容 → 是一个合法分界点
+                    if (i - runStart >= minSilenceFrames && frames - runStart >= minTailFrames) {
+                        split = (int) Math.round(1000.0 * runStart / rate);
+                    }
+                    runStart = -1;
+                }
+            }
+        }
+        // 收尾那段如果也是安静（素材末尾的静音），到这里 runStart 仍 >= 0：
+        // 它后面没有剩余有声内容，frames - runStart 必然不够 minTailFrames，自然不会被选中。
+        return split;
+    }
+
+    /**
+     * 【1.15】把「从第 startMs 毫秒开始播」编码进**播放 ID**；{@code startMs <= 0} 原样返回。
+     *
+     * <p>为什么编码进 ID 而不是另开一个参数：注入要用它算缓存 key、播放实例的 {@code resolve}
+     * 要用它算 {@code Sound.getPath()}，两边必须用**同一个串**；把偏移寄托在 ID 上就只有一处真相。
+     * 分隔符取 {@code \u0001}：它是控制字符，Windows 文件名里不可能出现，玩家导入的音频名不会撞上。
+     */
+    static String offsetPlaybackId(String audioId, int startMs) {
+        return startMs <= 0 ? audioId : audioId + '\u0001' + startMs;
+    }
+
+    /** 播放 ID 里携带的起始偏移（ms）；没有后缀 = 0。 */
+    static int offsetOf(String playbackId) {
+        int at = playbackId.indexOf('\u0001');
+        if (at < 0) {
+            return 0;
+        }
+        try {
+            return Math.max(0, Integer.parseInt(playbackId.substring(at + 1)));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** 播放 ID 对应的**素材 ID**（去掉偏移后缀）。 */
+    static String baseOf(String playbackId) {
+        int at = playbackId.indexOf('\u0001');
+        return at < 0 ? playbackId : playbackId.substring(0, at);
+    }
+
+    /** 起始偏移量化到最近的 {@link #SLICE_STEP_MS} 整数倍（理由见该字段注释）。 */
+    static int quantizeOffset(int ms) {
+        if (ms <= 0) {
+            return 0;
+        }
+        return (int) (Math.round(ms / (double) SLICE_STEP_MS) * SLICE_STEP_MS);
+    }
+
+    /**
+     * 剪掉 PCM 的**开头** cutMs 毫秒，返回余下部分的视图（共享同一块内存，不复制）。
+     *
+     * <p>按**帧**对齐：{@code bytes = round(cutMs/1000 * 采样率) * 帧大小}。
+     * 不对齐的话切点会落在半个采样帧中间，16bit 立体声下就是把左右声道错位、听感是「滋」的一声。
+     *
+     * <p>返回的 buffer {@code position()=0 / limit()=余下字节数} —— 正是
+     * {@code AL10.alBufferData} 期望的形态（它吃 {@code remaining()} 那一段）。
+     * {@code SoundBuffer} 只存引用、不碰 position/limit，所以这个视图能直接当整段用。
+     *
+     * <p>{@code cutMs <= 0} 或「剪完没剩东西」时**原样返回**（宁可不对齐，也不要不出声）。
+     */
+    private static ByteBuffer sliceHead(ByteBuffer pcm, AudioFormat format, int cutMs) {
+        if (cutMs <= 0) {
+            return pcm;
+        }
+        int rate = sampleRate(format);
+        if (rate <= 0) {
+            return pcm;
+        }
+        long bytes = Math.round(cutMs / 1000.0 * rate) * Math.max(1, format.getFrameSize());
+        if (bytes <= 0 || bytes >= pcm.limit()) {
+            return pcm;
+        }
+        ByteBuffer view = pcm.duplicate();
+        view.position((int) bytes);
+        ByteBuffer out = view.slice();
+        out.order(pcm.order());
+        return out;
     }
 
     /**
@@ -606,7 +947,29 @@ public final class EscalatorAudioPlayer {
         if (bytes == null) {
             return false;
         }
-        return inject(mc, audioId, bytes);
+        return inject(mc, audioId, bytes, 0);
+    }
+
+    /**
+     * 【1.15】按**播放 ID** 注入一段字节，支持「剪掉开头 startMs 毫秒」（偏移编码在 ID 里）。
+     *
+     * <p>与 {@link #injectAudio} 的区别只有一个：这里**由调用方给字节**。于是
+     * <ul>
+     *   <li>玩家导入的素材：字节来自存档同步（{@link EscalatorSpeedManager#getAudioBytes}）；</li>
+     *   <li>模组自带素材：字节来自自己的 jar（{@link #bundledBytes}）——
+     *       内置档在同步表里是没有字节的，原版那条路又没法「从中间开始播」，
+     *       所以想让内置素材也享受到剪头对齐，就必须把它拉进这条注入路径。</li>
+     * </ul>
+     * 两条路共用同一套缓存与解码，{@link #soundLocation} 会按播放 ID（含偏移）算出互不相同的路径。
+     */
+    static boolean injectPlayback(Minecraft mc, String playbackId, byte[] bytes) {
+        if (mc == null || mc.level == null || playbackId == null || bytes == null || bytes.length == 0) {
+            return false;
+        }
+        if (DECODE_FAILED.contains(baseOf(playbackId))) {
+            return false; // 同一段素材这次会话里已判死，别再每 tick 重解一遍
+        }
+        return inject(mc, playbackId, bytes, offsetOf(playbackId));
     }
 
     /**

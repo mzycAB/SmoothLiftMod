@@ -20,7 +20,7 @@ import java.util.List;
 /**
  * 石斧界面里的「选择扶梯音乐」子界面。列表从上到下三段：
  * <ol>
- *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li>存档文件夹 {@code MBM_Audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
  *   <li><b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
  *       由模组自己的 {@code sounds.json} 注册）。点一下即绑定，<b>不需要玩家准备任何文件、也不需要 ffmpeg</b>。</li>
  *   <li>已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
@@ -157,6 +157,11 @@ public class AudioSetupScreen extends Screen {
             setStatus("已请求刷新，同步回来后列表会自动更新");
         }).bounds(this.width / 2 + 4, 24, 96, 20).build());
 
+        // 【1.55】右上角「同步所有」：这是二级菜单，射程只算「这条扶梯的运行底噪素材」。
+        //   没有输入框 ⇒ beforeOpen 传 null。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_ESC_AUDIO,
+                pos.asLong(), null));
+
         // 列表：只为「完整可见 + 可点击」的行创建按钮。
         // （滚出可视区的行不建控件，避免按钮溢出到标题/底部文字上。）
         for (int i = 0; i < rows.size(); i++) {
@@ -214,7 +219,7 @@ public class AudioSetupScreen extends Screen {
         }
 
         // 第二段：存档文件夹里的 OGG（玩家自己导入的音乐），点=导入并绑定。
-        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
+        rows.add(new Row(T_HEADER, null, "存档文件夹 MBM_Audio 待导入（点=导入并绑定）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {

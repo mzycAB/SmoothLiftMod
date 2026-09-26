@@ -6,12 +6,15 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.player.PlayerBlockBreakEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.commands.CommandSourceStack;
@@ -20,6 +23,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -30,6 +34,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
 
 public class SmoothLift implements ModInitializer {
 
@@ -57,7 +62,7 @@ public class SmoothLift implements ModInitializer {
     public static final ResourceLocation UNBIND_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "unbind_audio");
     /** 客户端 -> 服务端：从存档删除一段音频（同时解绑所有引用它的扶梯）。 */
     public static final ResourceLocation DELETE_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "delete_audio");
-    /** 客户端 -> 服务端：把 <存档>/smoothlift_audio 里的一个 OGG 文件导入存档并绑定到扶梯。 */
+    /** 客户端 -> 服务端：把 <存档>/MBM_Audio 里的一个 OGG 文件导入存档并绑定到扶梯。 */
     public static final ResourceLocation IMPORT_FOLDER_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "import_folder_audio");
     /** 服务端 -> 客户端：分块同步音频库与扶梯-音频绑定。 */
     public static final ResourceLocation AUDIO_SYNC_CHANNEL = new ResourceLocation("smoothlift", "audio_sync");
@@ -88,7 +93,7 @@ public class SmoothLift implements ModInitializer {
     public static final ResourceLocation BIND_HELP_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "bind_help_audio");
     /** 【1.39】客户端 -> 服务端：清掉某条扶梯的提示音音乐单独设置（回到维度默认）。 */
     public static final ResourceLocation UNBIND_HELP_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "unbind_help_audio");
-    /** 【1.39】客户端 -> 服务端：把 smoothlift_audio 文件夹里的一个 OGG 导入存档并设为提示音音乐。 */
+    /** 【1.39】客户端 -> 服务端：把 MBM_Audio 文件夹里的一个 OGG 导入存档并设为提示音音乐。 */
     public static final ResourceLocation IMPORT_FOLDER_HELP_AUDIO_CHANNEL = new ResourceLocation("smoothlift", "import_folder_help_audio");
     /** 【1.39】服务端 -> 客户端：同步「默认提示音音乐 + 扶梯方块 → 提示音音乐」（小包）。 */
     public static final ResourceLocation HELP_AUDIO_SYNC_CHANNEL = new ResourceLocation("smoothlift", "help_audio_sync");
@@ -109,10 +114,171 @@ public class SmoothLift implements ModInitializer {
     public static final ResourceLocation SET_LIFT_TONE_VOLUME_CHANNEL = new ResourceLocation("smoothlift", "set_lift_tone_volume");
     /** 【1.46】客户端 -> 服务端：设置某类提示音（up/down/chime）的**维度默认子开关**（石斧 UI 开关）。 */
     public static final ResourceLocation SET_LIFT_TONE_SWITCH_CHANNEL = new ResourceLocation("smoothlift", "set_lift_tone_switch");
-    /** 【1.45】客户端 -> 服务端：把 smoothlift_audio 里的一个 OGG 导入并存为某条直梯的某一项提示音。 */
+    /** 【1.45】客户端 -> 服务端：把 MBM_Audio 里的一个 OGG 导入并存为某条直梯的某一项提示音。 */
     public static final ResourceLocation IMPORT_FOLDER_LIFT_TONE_CHANNEL = new ResourceLocation("smoothlift", "import_folder_lift_tone");
     /** 【1.45】服务端 -> 客户端：同步「竖井列 → 直梯提示音」表（小包，不含音频字节）。 */
     public static final ResourceLocation LIFT_TONE_SYNC_CHANNEL = new ResourceLocation("smoothlift", "lift_tone_sync");
+
+    // ------------------------------------------------------------------
+    // 【1.50】列车屏蔽门（PSD / APG）开关门提示音的频道
+    //   与直梯那一组（LIFT_*）**一一对应**，只是「项」从 up/down/chime 变成 open/close，
+    //   并且多了「每扇门单独素材」那一张表（直梯没有方块粒度）。
+    // ------------------------------------------------------------------
+
+    /** 【1.50】服务端 -> 客户端：同步屏蔽门提示音设置（总开关 + 音量 + 两项子开关 + 范围，按维度）。 */
+    public static final ResourceLocation PSD_CHIME_SYNC_CHANNEL = new ResourceLocation("smoothlift", "psd_chime_sync");
+    /** 【1.50】服务端 -> 客户端：同步「门锚点 → 屏蔽门提示音」表（小包，不含音频字节）。 */
+    public static final ResourceLocation PSD_TONE_SYNC_CHANNEL = new ResourceLocation("smoothlift", "psd_tone_sync");
+    /** 【1.50】客户端 -> 服务端：设置某一扇门的一项提示音（open / close）。 */
+    public static final ResourceLocation SET_PSD_TONE_CHANNEL = new ResourceLocation("smoothlift", "set_psd_tone");
+    /** 【1.50】客户端 -> 服务端：设置屏蔽门提示音的开关（which = master / open / close）。 */
+    public static final ResourceLocation SET_PSD_TONE_SWITCH_CHANNEL = new ResourceLocation("smoothlift", "set_psd_tone_switch");
+    /** 【1.50】客户端 -> 服务端：设置屏蔽门提示音的**共用默认音量**（石斧 UI 主界面输入框 = /pbmloud <音量>）。 */
+    public static final ResourceLocation SET_PSD_CHIME_VOLUME_CHANNEL = new ResourceLocation("smoothlift", "set_psd_chime_volume");
+    /** 【1.50】客户端 -> 服务端：设置某一项（open/close）的**单项音量**（石斧 UI 列表输入框 = /pbmloud open|close <音量>）。 */
+    public static final ResourceLocation SET_PSD_TONE_VOLUME_CHANNEL = new ResourceLocation("smoothlift", "set_psd_tone_volume");
+    /** 【1.50】客户端 -> 服务端：把 MBM_Audio 里的一个 OGG 导入并存为某一扇门的一项提示音。 */
+    public static final ResourceLocation IMPORT_FOLDER_PSD_TONE_CHANNEL = new ResourceLocation("smoothlift", "import_folder_psd_tone");
+    /**
+     * 【1.16】客户端 -> 服务端：设置**关门提示音的强制等待时长**
+     * （石斧 UI 主界面「关门提示音强制等待时长」输入框 = {@code /pbmclosewait <秒>}）。
+     */
+    public static final ResourceLocation SET_PSD_CLOSE_WAIT_CHANNEL = new ResourceLocation("smoothlift", "set_psd_close_wait");
+
+    /** 【1.23】客户端 -> 服务端：设「开门提示」行的等待秒数（对称项）。buf：key(long) → seconds(varInt)。 */
+    public static final ResourceLocation SET_PSD_OPEN_WAIT_CHANNEL = new ResourceLocation("smoothlift", "set_psd_open_wait");
+    /**
+     * 【1.17】客户端 -> 服务端：设置**到站播报**
+     * （石斧 UI 主界面「到站播放音频」+「等待几秒后播放」输入框 = {@code /pbmmidium <名字> <秒>}）。
+     *
+     * <p>buf 顺序：{@code name(utf128) → seconds(varInt)}。
+     */
+    public static final ResourceLocation SET_PSD_MIDIUM_CHANNEL = new ResourceLocation("smoothlift", "set_psd_midium");
+    /**
+     * 【1.19】客户端 -> 服务端：把 {@code MBM_Audio} 文件夹里的一段 OGG **只导入存档音频库、
+     * 不改变任何设置**（石斧 UI 到站播报页左列「点一下」= 导入）。
+     *
+     * <p>为什么与 {@link #SET_PSD_MIDIUM_CHANNEL} 分成两条：用户点名「导入的**不直接选用**，
+     * 要在导入的音频的右侧加 2 个按钮，一个是选用，一个是删除」—— 导入与选用从此是两件事，
+     * 「点一下左列」只负责把素材搬进存档。
+     *
+     * <p>buf 顺序：{@code name(utf128)}。
+     */
+    public static final ResourceLocation IMPORT_PSD_MIDIUM_AUDIO_CHANNEL =
+            new ResourceLocation("smoothlift", "import_psd_midium_audio");
+    /**
+     * 【1.21】客户端 -> 服务端：设置**进站报站**
+     * （石斧 UI 主界面「进站播放音频」+「到站前秒数」输入框
+     * = {@code /pbmarrive <名字> <X>}）。
+     *
+     * <p>buf 顺序：{@code key(long) → name(utf128) → seconds(varInt)}，与
+     * {@link #SET_PSD_MIDIUM_CHANNEL} 同形（{@code seconds} 是**负**的秒数：
+     * {@code -10} = 最近一班车还剩 10 秒到站时起播）。
+     */
+    public static final ResourceLocation SET_PSD_ARRIVE_CHANNEL =
+            new ResourceLocation("smoothlift", "set_psd_arrive");
+    /**
+     * 【1.22】客户端 -> 服务端：设置**到站播报自己那一项**的音量
+     * （石斧 UI 主界面「到站播放音频」右边那个「音量:」输入框
+     * = {@code /pbmmidiumloud <音量>}）。
+     *
+     * <p>buf 顺序：{@code key(long) → volume(varInt)}，与
+     * {@link #SET_PSD_CHIME_VOLUME_CHANNEL} 同形。
+     */
+    public static final ResourceLocation SET_PSD_MIDIUM_LOUD_CHANNEL =
+            new ResourceLocation("smoothlift", "set_psd_midium_loud");
+    /**
+     * 【1.22】客户端 -> 服务端：设置**进站报站自己那一项**的音量
+     * （= {@code /pbmarriveloud <音量>}）。buf 同上。
+     */
+    public static final ResourceLocation SET_PSD_ARRIVE_LOUD_CHANNEL =
+            new ResourceLocation("smoothlift", "set_psd_arrive_loud");
+
+    // ------------------------------------------------------------------
+    // 【1.53】「预设选择」界面（/MBM help）与三个「港铁预设」
+    //   预设的做法是**把用户点名的那几条指令原样派发一遍**
+    //   （{@code performPrefixedCommand}），不是把各条的效果手抄成 setter 调用。
+    //   这样「界面上按一下」与「自己敲那几条」在语义上**永远是同一件事**：
+    //   指令树里 on/off/<名字> 到底落到哪个分支，由 Brigadier 自己决定，不靠人猜。
+    // ------------------------------------------------------------------
+
+    /** 【1.53】服务端 -> 客户端：打开「预设选择」界面（无数据）。 */
+    public static final ResourceLocation MBM_HELP_OPEN_CHANNEL =
+            new ResourceLocation("smoothlift", "mbm_help_open");
+    /** 【1.53】客户端 -> 服务端：应用一个「港铁预设」（buf：presetId(utf16)）。 */
+    public static final ResourceLocation MBM_PRESET_CHANNEL =
+            new ResourceLocation("smoothlift", "mbm_preset");
+    /**
+     * 【1.53】客户端 -> 服务端：把**模组的所有音量**一起设成同一个值
+     * （buf：volume(varInt)，1~1000）。
+     *
+     * <p>走到 {@code /futiloud -f}、{@code /futihelploud -f}、{@code /lifthelploud -f
+     * [up|down|door]}、{@code /pbmloud -f [open|close]}、{@code /pbmmidiumloud -f}、
+     * {@code /pbmarriveloud -f} 这一组指令上 —— 同样靠派发指令，不另写一套 setter。
+     */
+    public static final ResourceLocation MBM_ALL_VOLUME_CHANNEL =
+            new ResourceLocation("smoothlift", "mbm_all_volume");
+
+    // ------------------------------------------------------------------
+    // 【1.57】「列车音效」界面（**石斧右键侧线铁轨**打开，不再是指令）
+    //
+    //   ★【1.57】用户点名改了三件事：
+    //     ① 入口：`/MBM train music` **撤销**；改成**石斧右键侧线的轨道节点**
+    //        （{@code mtr:rail}，属于侧线时被 MTR 染成黄色 —— 判据见 {@link #isMtrRail}）。
+    //        轨道连接处同时连着两段轨道时，开的是**玩家面向的那一段**那个界面
+    //        （MTR 自带 {@code MinecraftClientData.getFacingRailAndBlockPos}，客户端直接用）。
+    //     ② 射程：**每条侧线各自一份**，不是全局 —— 身份 = MTR 侧线 id
+    //        （客户端 {@code MtrSidingAccess} 认出来，随界面带着走；见 {@link #syncSettings}）。
+    //     ③ 每个音效按钮点进去是**二级列表页**（与屏蔽门「站台音效」同款两列版式：
+    //        左列未导入存档 / 中间竖线 / 右列已导入存档，右列第 0 行 =「MTR自带音效」），
+    //        底部一个「淡入淡出:」秒数框。
+    //   ★ 用户点名「这些按钮的功能先不做」⇒ 仍然**没有数据层**：{@link #syncTrain} 只回话不写，
+    //     不会假装成功（假成功比不实现更糟）。
+    // ------------------------------------------------------------------
+
+    /**
+     * 【1.57】「列车音效」五个二级页的**射程编号**（等于客户端那五个页的页号）。
+     *
+     * <p>★ 必须与客户端 {@code TrainSoundScreen} 的「页号 = 序号 + 1、顺序 = 用户给的按钮顺序」
+     * **同序同内容**（回归里单独成节断言）。客户端把页号原样当 scope 发下来，
+     * 错位是**不报错**的 —— 只是同步到了另一项。
+     */
+    public static final int SYNC_TRAIN_RUN = 1;
+    public static final int SYNC_TRAIN_TURN = 2;
+    public static final int SYNC_TRAIN_SWITCH = 3;
+    public static final int SYNC_TRAIN_ARRIVE = 4;
+    public static final int SYNC_TRAIN_DEPART = 5;
+
+    // ------------------------------------------------------------------
+    // 【1.55】「同步」：扶梯 / 直梯 / 屏蔽门三个界面右上角的「同步所有」按钮
+    //
+    //   数据模型是两层：**维度默认**（或服务端默认）+ **按项单独设置**（若干 Map）。
+    //   两个按钮就落在这两层上 ——
+    //     · 「同步所有」  = 把**当前这一项**此刻生效的值写进「默认」那一层。
+    //       没单独设置过的项都跟着默认走 ⇒ 自动获得同一个值；单独设置过的项
+    //       保留自己的值 ⇒ 就是用户说的「不包括修改过的」。**不需要枚举所有项。**
+    //     · 「强制同步」  = 同样写默认，**外加清掉这一项的单独设置** —— 正是指令里
+    //       `-f` 那一支（如 {@code /futiloud -f}、{@code /pbmmusic open -f}）。
+    //       于是连「修改过的」也一起变成同一个值。
+    //   ★ 两个按钮的**射程完全一样**，都由界面传来的 {@code scope} 决定；差别只在 force。
+    //   ★ 射程 = 玩家当前所在的那一层菜单：一级菜单 = 该域在那一页的全部设定；
+    //     二级菜单（单项提示音 / 素材页）= 只同步那一项。详见 {@link #syncSettings}。
+    // ------------------------------------------------------------------
+
+    /**
+     * 【1.55】客户端 -> 服务端：执行一次「同步」。
+     *
+     * <p>buf 顺序：{@code domain(utf16) · scope(varInt) · force(boolean) · key(long)}
+     * <ul>
+     *   <li>{@code domain} = {@code esc} 扶梯 / {@code lift} 直梯 / {@code psd} 屏蔽门；</li>
+     *   <li>{@code scope} = 0 一级菜单；≥1 二级菜单（各域的子页编号，见 {@code syncSettings}）；</li>
+     *   <li>{@code force} = false 只写默认（等于不带 -f 的指令）；true 连单独设置一起清（等于 -f）；</li>
+     *   <li>{@code key} = 当前这一项的身份：扶梯 = {@code BlockPos.asLong}；
+     *       直梯 = 竖井列 key（{@code liftToneKey}）；屏蔽门 = {@code PsdDoorTracker.runKeyOf}。</li>
+     * </ul>
+     */
+    public static final ResourceLocation SYNC_SETTINGS_CHANNEL =
+            new ResourceLocation("smoothlift", "sync_settings");
 
     @Override
     public void onInitialize() {
@@ -138,6 +304,11 @@ public class SmoothLift implements ModInitializer {
             }
             if (player.getMainHandItem().is(Items.STONE_AXE)
                     && EscalatorUtil.isEscalator(world.getBlockState(hitResult.getBlockPos()))) {
+                return InteractionResult.FAIL;
+            }
+            // 【1.50】石斧右键屏蔽门 = 打开提示音设置界面（在客户端），这里同样拦掉默认交互。
+            if (player.getMainHandItem().is(Items.STONE_AXE)
+                    && isPsdDoor(world.getBlockState(hitResult.getBlockPos()))) {
                 return InteractionResult.FAIL;
             }
             // 【1.45】石斧右键直梯楼层轨道 = 打开提示音设置界面（在客户端），这里同样拦掉默认交互。
@@ -167,12 +338,9 @@ public class SmoothLift implements ModInitializer {
                 }
                 int count = EscalatorSpeedManager.applyChain(level, pos, setRun, run, setStep, step);
                 if (count > 0) {
-                    StringBuilder message = new StringBuilder("已更新这条扶梯（" + count + " 格）");
+                    StringBuilder message = new StringBuilder("已更新这条扶梯");
                     if (setRun) {
                         message.append("：扶梯速度 ").append(EscalatorSpeedData.format(run));
-                        if (!setStep) {
-                            message.append("（阶梯速度跟随）");
-                        }
                     }
                     if (setStep) {
                         message.append(setRun ? "，" : "：")
@@ -218,7 +386,7 @@ public class SmoothLift implements ModInitializer {
                 int count = EscalatorSpeedManager.setStepSpeed(level, pos, step);
                 if (count > 0) {
                     player.displayClientMessage(
-                        Component.literal("已把这条扶梯（" + count + " 格）的阶梯动画速度设为 "
+                        Component.literal("已把这条扶梯的阶梯动画速度设为 "
                                 + EscalatorSpeedData.format(step) + " 格/秒"),
                         true
                     );
@@ -237,7 +405,7 @@ public class SmoothLift implements ModInitializer {
                 int count = EscalatorSpeedManager.alignStepToRunning(level, pos);
                 if (count > 0) {
                     player.displayClientMessage(
-                        Component.literal("已把这条扶梯（" + count + " 格）的阶梯动画对齐到运行速度"),
+                        Component.literal("已把这条扶梯的阶梯动画对齐到运行速度"),
                         true
                     );
                     EscalatorSpeedManager.syncToAll(server);
@@ -255,7 +423,7 @@ public class SmoothLift implements ModInitializer {
                 int count = EscalatorSpeedManager.clearStepSpeed(level, pos);
                 if (count > 0) {
                     player.displayClientMessage(
-                        Component.literal("已清除这条扶梯（" + count + " 格）的单独阶梯动画设置，改为跟随维度默认（运行速度不变）"),
+                        Component.literal("已清除这条扶梯的单独阶梯动画设置，改为跟随维度默认"),
                         true
                     );
                     EscalatorSpeedManager.syncToAll(server);
@@ -277,9 +445,7 @@ public class SmoothLift implements ModInitializer {
                 }
                 if (!EscalatorSpeedManager.storeAudio(level, audioId, complete)) {
                     player.displayClientMessage(Component.literal(
-                            "音频上传失败：文件过大（最大 "
-                                    + (EscalatorSpeedData.MAX_AUDIO_BYTES / 1024 / 1024)
-                                    + "MB）或不是 MC 能播的 Ogg Vorbis（MP3/Opus 都不行）"), true);
+                            "音频上传失败：文件过大或不是 MC 能播的 Ogg Vorbis"), true);
                     return;
                 }
                 player.displayClientMessage(Component.literal("音频已上传并存入存档"), true);
@@ -311,7 +477,7 @@ public class SmoothLift implements ModInitializer {
             server.execute(() -> {
                 ServerLevel level = player.serverLevel();
                 if (EscalatorSpeedManager.unbindAudio(level, pos)) {
-                    player.displayClientMessage(Component.literal("已解除这条扶梯的自定义声音（不再播放）"), true);
+                    player.displayClientMessage(Component.literal("已解除这条扶梯的自定义声音"), true);
                     EscalatorSpeedManager.syncAudioToAll(server);
                 }
             });
@@ -323,15 +489,26 @@ public class SmoothLift implements ModInitializer {
             server.execute(() -> {
                 ServerLevel level = player.serverLevel();
                 if (EscalatorSpeedManager.deleteAudio(level, audioId)) {
-                    player.displayClientMessage(Component.literal("已从存档删除音频（引用它的扶梯已静音）"), true);
+                    player.displayClientMessage(Component.literal("已从存档删除音频"), true);
                     EscalatorSpeedManager.syncAudioToAll(server);
                     // 【1.39】提示音那边也可能引用过这一段（共用同一个库），单独设置也要一起刷新
                     EscalatorSpeedManager.syncHelpAudioToAll(server);
+                    // 【1.17】「到站播报」也可能正指着这一段 —— 不加这一步会留下一个指向空文件的引用
+                    if (EscalatorSpeedManager.clearPsdMidiumIfRemoved(server, audioId) > 0) {
+                        player.displayClientMessage(Component.literal(
+                                "到站播报原样用的是这段音频，已一并改成「不播」"), true);
+                    }
+                    // 【1.21】「进站报站」同理：不一起清就会留下一个指向空文件的引用
+                    if (EscalatorSpeedManager.clearPsdArriveIfRemoved(server, audioId) > 0) {
+                        player.displayClientMessage(Component.literal(
+                                "进站报站原样用的是这段音频，已一并改成「不播」"), true);
+                    }
+                    EscalatorSpeedManager.syncPsdChimeToAll(server);
                 }
             });
         });
 
-        // 客户端把存档 smoothlift_audio 文件夹里的一个 OGG 导入存档并绑定到扶梯（融入存档，删原文件仍可播）
+        // 客户端把存档 MBM_Audio 文件夹里的一个 OGG 导入存档并绑定到扶梯（融入存档，删原文件仍可播）
         ServerPlayNetworking.registerGlobalReceiver(IMPORT_FOLDER_AUDIO_CHANNEL, (server, player, handler, buf, responseSender) -> {
             BlockPos pos = buf.readBlockPos();
             String fileName = buf.readUtf(128);
@@ -343,7 +520,7 @@ public class SmoothLift implements ModInitializer {
                 String problem = EscalatorSpeedManager.importAudioToStore(level, fileName);
                 if (problem == null) {
                     EscalatorSpeedManager.bindAudio(level, pos, fileName);
-                    player.displayClientMessage(Component.literal("已从文件夹导入并与这条扶梯绑定（原文件删除后仍可播放）"), true);
+                    player.displayClientMessage(Component.literal("已从文件夹导入并与这条扶梯绑定"), true);
                     EscalatorSpeedManager.syncAudioToAll(server);
                 } else {
                     player.displayClientMessage(Component.literal("导入失败：" + problem), true);
@@ -369,7 +546,7 @@ public class SmoothLift implements ModInitializer {
                             : "已把这段声音设为这条扶梯" + helpEndLabel(in) + "的无障碍提示音"), true);
                     EscalatorSpeedManager.syncHelpAudioToAll(server);
                 } else {
-                    player.displayClientMessage(Component.literal("设置失败：音频不存在（先在提示音选择界面里导入 .ogg）"), true);
+                    player.displayClientMessage(Component.literal("设置失败：音频不存在"), true);
                 }
             });
         });
@@ -389,7 +566,7 @@ public class SmoothLift implements ModInitializer {
             });
         });
 
-        // 【1.41】客户端把存档 smoothlift_audio 文件夹里的一个 OGG 导入存档并设为提示音音乐
+        // 【1.41】客户端把存档 MBM_Audio 文件夹里的一个 OGG 导入存档并设为提示音音乐
         //（与运行底噪共用同一个文件夹与同一个库：导入一次，两边都能选）
         //   buf 顺序：pos, fileName, in
         ServerPlayNetworking.registerGlobalReceiver(IMPORT_FOLDER_HELP_AUDIO_CHANNEL, (server, player, handler, buf, responseSender) -> {
@@ -405,7 +582,7 @@ public class SmoothLift implements ModInitializer {
                 if (problem == null) {
                     EscalatorSpeedManager.bindHelpAudio(level, pos, fileName, in);
                     player.displayClientMessage(Component.literal(
-                            "已从文件夹导入并设为这条扶梯" + helpEndLabel(in) + "的无障碍提示音（原文件删除后仍可播放）"), true);
+                            "已从文件夹导入并设为这条扶梯" + helpEndLabel(in) + "的无障碍提示音"), true);
                     EscalatorSpeedManager.syncAudioToAll(server);
                     EscalatorSpeedManager.syncHelpAudioToAll(server);
                 } else {
@@ -482,7 +659,7 @@ public class SmoothLift implements ModInitializer {
                                     : "「" + truncateForMsg(audioId, 20) + "」")), true);
                     EscalatorSpeedManager.syncLiftToneToAll(server);
                 } else {
-                    player.displayClientMessage(Component.literal("设置失败：音频不存在（先在提示音选择界面里导入 .ogg）"), true);
+                    player.displayClientMessage(Component.literal("设置失败：音频不存在"), true);
                 }
             });
         });
@@ -514,7 +691,7 @@ public class SmoothLift implements ModInitializer {
                 EscalatorSpeedManager.setDefaultLiftHelpVolume(level, volume);
                 int applied = EscalatorSpeedManager.getLiftHelpVolume(level);
                 player.displayClientMessage(Component.literal(
-                        "本维度直梯提示音默认音量已设为 " + applied + "（100 = 原始音量）"), true);
+                        "本维度直梯提示音默认音量已设为 " + applied), true);
                 EscalatorSpeedManager.syncLiftChimeToAll(server);
             });
         });
@@ -533,12 +710,12 @@ public class SmoothLift implements ModInitializer {
                 int applied = EscalatorSpeedManager.getLiftToneVolume(level, which);
                 player.displayClientMessage(Component.literal(
                         "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量已设为 "
-                                + applied + "（100 = 原始音量）"), true);
+                                + applied), true);
                 EscalatorSpeedManager.syncLiftChimeToAll(server);
             });
         });
 
-        // 【1.45】客户端把 smoothlift_audio 文件夹里的一个 OGG 导入存档并设为某条直梯的某一项提示音。
+        // 【1.45】客户端把 MBM_Audio 文件夹里的一个 OGG 导入存档并设为某条直梯的某一项提示音。
         //   buf 顺序：key(long), which(utf), fileName(utf)
         ServerPlayNetworking.registerGlobalReceiver(IMPORT_FOLDER_LIFT_TONE_CHANNEL, (server, player, handler, buf, responseSender) -> {
             long key = buf.readLong();
@@ -550,10 +727,264 @@ public class SmoothLift implements ModInitializer {
                 if (problem == null) {
                     if (EscalatorSpeedManager.setServerLiftTone(level, key, which, fileName)) {
                         player.displayClientMessage(Component.literal(
-                                "已从文件夹导入并设为这条直梯的" + liftToneLabel(which, fileName)
-                                        + "（原文件删除后仍可播放）"), true);
+                                "已从文件夹导入并设为这条直梯的" + liftToneLabel(which, fileName)), true);
                         EscalatorSpeedManager.syncAudioToAll(server);
                         EscalatorSpeedManager.syncLiftToneToAll(server);
+                    } else {
+                        player.displayClientMessage(Component.literal("设置失败：导入成功但绑定失败"), true);
+                        EscalatorSpeedManager.syncAudioToAll(server);
+                    }
+                } else {
+                    player.displayClientMessage(Component.literal("导入失败：" + problem), true);
+                }
+            });
+        });
+
+        // 【1.50】客户端把**某一扇屏蔽门**的某一项提示音设为「音频库里的某段 / 默认素材 / 不播」。
+        //   门身份 = 客户端算好的「门锚点」（左右/上下半格都折到同一格，见 PsdDoorTracker.anchorOf）。
+        //   buf 顺序：key(long), which(utf: open|close), audioId(utf)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_TONE_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String which = buf.readUtf(32);
+            String audioId = buf.readUtf(128);
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                if (EscalatorSpeedManager.setServerPsdTone(level, key, which, audioId)) {
+                    player.displayClientMessage(Component.literal(
+                            "已把这一扇屏蔽门的" + EscalatorSpeedData.psdToneLabel(which) + "设为"
+                                    + (EscalatorSpeedData.PSD_TONE_OFF.equals(audioId) ? "「不播」"
+                                    : psdToneAudioLabel(audioId))), true);
+                    EscalatorSpeedManager.syncPsdToneToAll(server);
+                } else {
+                    player.displayClientMessage(Component.literal(
+                            "设置失败：音频不存在"), true);
+                }
+            });
+        });
+
+        // 【1.50】石斧 UI 的屏蔽门开关：which = master / open / close（总开关 / 两项子开关）。
+        //   buf 顺序（★【1.20】前面多了 key）：key(long) → which(utf) → enabled(boolean)
+        //   ★ key = 右键那一扇门的**锚点**（PsdDoorTracker.anchorOf）。带上它之后这条改动只落到
+        //   **这一扇门**上（写 psdToneAudio 那条记录的覆盖项），不再写本维度默认
+        //   —— 用户点名「石斧 UI 改的（要）全部都是玩家右键的连在一起的屏蔽门，
+        //     而不是修改全部屏蔽门，只有指令才是修改全部」。
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_TONE_SWITCH_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String which = buf.readUtf(32);
+            boolean enabled = buf.readBoolean();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                if ("master".equals(which)) {
+                    EscalatorSpeedManager.setDoorPsdHelp(level, key, enabled);
+                    player.displayClientMessage(Component.literal(
+                            "这一扇屏蔽门的开关门提示音已" + (enabled ? "开启" : "关闭")), true);
+                } else if ("open".equals(which) || "close".equals(which)) {
+                    EscalatorSpeedManager.setDoorPsdToneEnabled(level, key, which, enabled);
+                    player.displayClientMessage(Component.literal(
+                            "这一扇屏蔽门的「" + EscalatorSpeedData.psdToneLabel(which) + "」已"
+                                    + (enabled ? "开启" : "关闭")), true);
+                } else {
+                    return;
+                }
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.50】石斧 UI 主界面「默认音量」。
+        //   buf 顺序（★【1.20】前面多了 key）：key(long) → volume(VarInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_CHIME_VOLUME_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            int volume = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdHelpVolume(level, key, volume);
+                int applied = EscalatorSpeedManager.getDoorPsdHelpVolume(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一扇屏蔽门的音量已设为 " + applied), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.22】石斧 UI 主界面「到站播放音频」右边的「音量:」输入框。
+        //   buf 顺序：key(long) → volume(VarInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_MIDIUM_LOUD_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            int volume = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdMidiumVolume(level, key, volume);
+                int applied = EscalatorSpeedManager.getDoorPsdMidiumVolume(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一串屏蔽门的到站播报音量已设为 " + applied), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.22】石斧 UI 主界面「进站播放音频」右边的「音量:」输入框。
+        //   buf 顺序：key(long) → volume(VarInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_ARRIVE_LOUD_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            int volume = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdArriveVolume(level, key, volume);
+                int applied = EscalatorSpeedManager.getDoorPsdArriveVolume(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一串屏蔽门的进站报站音量已设为 " + applied), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.16】石斧 UI 主界面「关门提示音强制等待时长」。
+        //   buf 顺序（★【1.20】前面多了 key）：key(long) → seconds(VarInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_CLOSE_WAIT_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            int seconds = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdCloseWaitSeconds(level, key, seconds);
+                int applied = EscalatorSpeedManager.getDoorPsdCloseWaitSeconds(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一扇屏蔽门的关门提示音强制等待时长已设为 " + applied + " 秒"), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.23】石斧 UI「开门提示」行：设开门提示音等待秒数（对称项）。
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_OPEN_WAIT_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            int seconds = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdOpenWaitSeconds(level, key, seconds);
+                int applied = EscalatorSpeedManager.getDoorPsdOpenWaitSeconds(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一扇屏蔽门的开门提示音等待秒数已设为 " + applied), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.17】石斧 UI 主界面「到站播放音频 / 等待几秒后播放」。
+        //   buf 顺序（★【1.20】前面多了 key）：key(long) → name(utf128) → seconds(varInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_MIDIUM_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String name = buf.readUtf(128);
+            int seconds = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                // ★【1.19】导入前先记下音频库大小：resolvePsdMidiumName 会在库里没有这个名字时
+                //   **顺手导一次**。导入只发生在服务端，而客户端那张「已导入」列表来自
+                //   音频库同步包（AUDIO_SYNC_CHANNEL）—— 不补发这一包，刚导入的曲子会一直挂在
+                //   左列（表现为「点了没反应，重启游戏之后才跑到右边」）。
+                int libBefore = EscalatorSpeedManager.getServerData(level).audioLibrary.size();
+                String resolved = EscalatorSpeedManager.resolvePsdMidiumName(level, name);
+                if (resolved == null) {
+                    player.displayClientMessage(Component.literal(
+                            "到站播报设置失败：找不到名为「" + name + "」的音频"), true);
+                    return;
+                }
+                EscalatorSpeedManager.setDoorPsdMidium(level, key, resolved, seconds);
+                int applied = EscalatorSpeedManager.getDoorPsdMidiumWaitSeconds(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一扇屏蔽门的到站播报已设为 "
+                                + (EscalatorSpeedData.isPsdMidiumOff(resolved) ? "不播" : "「" + resolved + "」")
+                                + "、等待 " + applied + " 秒"), true);
+                // ★【1.20】按门设置走的是**按门那张表**（PSD_TONE_SYNC_CHANNEL），
+                //   不是维度设置那个小包 —— 改成 syncPsdChimeToAll 的话客户端镜像不会更新。
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+                if (EscalatorSpeedManager.getServerData(level).audioLibrary.size() != libBefore) {
+                    EscalatorSpeedManager.sendAudioSyncTo(player, level);
+                }
+            });
+        });
+
+        // 【1.21】石斧 UI 主界面「进站播放音频 / 到站前秒数」。
+        //   形状与 SET_PSD_MIDIUM_CHANNEL 逐字对称，差别只有「秒数允许为负」。
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_ARRIVE_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String name = buf.readUtf(128);
+            int seconds = buf.readVarInt();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                // 与到站播报同一条教训：resolvePsdArriveName 可能**顺手导入**一次，
+                // 而客户端的「已导入」列表来自音频库同步包 —— 不补发这一包，
+                // 刚导入的曲子会一直挂在左列（表现为「点了没反应」）。
+                int libBefore = EscalatorSpeedManager.getServerData(level).audioLibrary.size();
+                String resolved = EscalatorSpeedManager.resolvePsdArriveName(level, name);
+                if (resolved == null) {
+                    player.displayClientMessage(Component.literal(
+                            "进站报站设置失败：找不到名为「" + name + "」的音频"), true);
+                    return;
+                }
+                EscalatorSpeedManager.setDoorPsdArrive(level, key, resolved, seconds);
+                int applied = EscalatorSpeedManager.getDoorPsdArriveSeconds(level, key);
+                player.displayClientMessage(Component.literal(
+                        "这一串屏蔽门的进站报站已设为 "
+                                + (EscalatorSpeedData.isPsdArriveOff(resolved) ? "不播" : "「" + resolved + "」")
+                                + "、到站前 " + (-applied) + " 秒"), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+                if (EscalatorSpeedManager.getServerData(level).audioLibrary.size() != libBefore) {
+                    EscalatorSpeedManager.sendAudioSyncTo(player, level);
+                }
+            });
+        });
+
+        // 【1.19】客户端把 MBM_Audio 文件夹里的一段 OGG **只导入存档音频库**（不改设置）。
+        //   buf 顺序：name(utf128)
+        ServerPlayNetworking.registerGlobalReceiver(IMPORT_PSD_MIDIUM_AUDIO_CHANNEL,
+                (server, player, handler, buf, responseSender) -> {
+            String name = buf.readUtf(128);
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                String problem = EscalatorSpeedManager.importAudioToStore(level, name);
+                if (problem == null) {
+                    player.displayClientMessage(Component.literal(
+                            "已导入存档音频库：「" + name + "」"), true);
+                    // ★ 必须补发音频库同步包：客户端右列（已导入）就是从它来的，
+                    //   否则导入完左列不会空、右列不会出现这一条。
+                    EscalatorSpeedManager.sendAudioSyncTo(player, level);
+                } else {
+                    player.displayClientMessage(Component.literal("导入失败：" + problem), true);
+                }
+            });
+        });
+
+        // 【1.50】石斧 UI 单项列表「音量」：这一项自己的音量（-1 = 跟随共用）。
+        //   buf 顺序（★【1.20】前面多了 key）：key(long) → which(utf) → volume(VarInt)
+        ServerPlayNetworking.registerGlobalReceiver(SET_PSD_TONE_VOLUME_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String which = buf.readUtf(32);
+            int volume = buf.readVarInt();
+            server.execute(() -> {
+                if (!"open".equals(which) && !"close".equals(which)) {
+                    return;
+                }
+                ServerLevel level = player.serverLevel();
+                EscalatorSpeedManager.setDoorPsdToneVolume(level, key, which, volume);
+                int applied = EscalatorSpeedManager.getDoorPsdToneVolume(level, key, which);
+                player.displayClientMessage(Component.literal(
+                        "这一扇屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」音量已设为 "
+                                + applied), true);
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+            });
+        });
+
+        // 【1.50】客户端把 MBM_Audio 文件夹里的一个 OGG 导入存档并设为某一扇门的一项提示音。
+        //   buf 顺序：key(long), which(utf), fileName(utf)
+        ServerPlayNetworking.registerGlobalReceiver(IMPORT_FOLDER_PSD_TONE_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            long key = buf.readLong();
+            String which = buf.readUtf(32);
+            String fileName = buf.readUtf(128);
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                String problem = EscalatorSpeedManager.importAudioToStore(level, fileName);
+                if (problem == null) {
+                    if (EscalatorSpeedManager.setServerPsdTone(level, key, which, fileName)) {
+                        player.displayClientMessage(Component.literal(
+                                "已从文件夹导入并设为这一扇屏蔽门的"
+                                        + EscalatorSpeedData.psdToneLabel(which)), true);
+                        EscalatorSpeedManager.syncAudioToAll(server);
+                        EscalatorSpeedManager.syncPsdToneToAll(server);
                     } else {
                         player.displayClientMessage(Component.literal("设置失败：导入成功但绑定失败"), true);
                         EscalatorSpeedManager.syncAudioToAll(server);
@@ -579,6 +1010,9 @@ public class SmoothLift implements ModInitializer {
             EscalatorSpeedManager.syncLiftChimeToAll(server);
             // 【1.45】直梯楼层轨道提示音（石斧右键设置的三列表）
             EscalatorSpeedManager.syncLiftToneToAll(server);
+            // 【1.50】屏蔽门开关门提示音（开关 + 每扇门单独素材）
+            EscalatorSpeedManager.syncPsdChimeToAll(server);
+            EscalatorSpeedManager.syncPsdToneToAll(server);
         });
 
         // 服务端启动时确保存档音频来源文件夹存在（没有就自动新建）
@@ -606,6 +1040,55 @@ public class SmoothLift implements ModInitializer {
                 for (ServerLevel level : server.getAllLevels()) {
                     EscalatorSpeedManager.sendLiftToneSyncTo(player, level);
                 }
+                // 【1.50】屏蔽门提示音（设置 + 每扇门单独素材）同样**每个维度都发一遍**。
+                for (ServerLevel level : server.getAllLevels()) {
+                    EscalatorSpeedManager.sendPsdChimeSyncTo(player, level);
+                    EscalatorSpeedManager.sendPsdToneSyncTo(player, level);
+                }
+            });
+        });
+
+        // 【1.53】「预设选择」界面：应用一个「港铁预设」（界面上按一下按钮）。
+        //   buf：presetId(utf16) —— classic / simple / blank
+        //   ★ 预设 = 依次派发该预设的那几条指令（见 PRESET_* 与 runCommandBatch 的注释）。
+        //   每条指令自己会 syncXxxToAll，所以这里不用再补同步包。
+        ServerPlayNetworking.registerGlobalReceiver(MBM_PRESET_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            String presetId = buf.readUtf(16);
+            server.execute(() -> {
+                int count = applyPreset(player, presetId);
+                if (count == 0) {
+                    player.displayClientMessage(Component.literal(
+                            "未知预设：" + presetId), false);
+                    return;
+                }
+                player.displayClientMessage(Component.literal(
+                        "已应用" + presetLabel(presetId) + "（依次执行 " + count + " 条指令）"), false);
+            });
+        });
+
+        // 【1.53】「预设选择」界面底部那个「全音量」输入框：按 ESC 退出界面时自动发来。
+        //   buf：volume(varInt)，1~1000（越界夹取）。
+        ServerPlayNetworking.registerGlobalReceiver(MBM_ALL_VOLUME_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            int volume = buf.readVarInt();
+            server.execute(() -> {
+                int applied = applyAllVolumes(player, volume);
+                player.displayClientMessage(Component.literal(
+                        "模组所有音量已一起设为 " + applied + "（100 = 原始音量）"), false);
+            });
+        });
+
+        // 【1.55】三个界面右上角「同步所有」按钮 -> 弹窗里的「同步所有 / 强制同步」。
+        //   buf：domain(utf16) · scope(varInt) · force(boolean) · key(long)，语义见 SYNC_SETTINGS_CHANNEL。
+        ServerPlayNetworking.registerGlobalReceiver(SYNC_SETTINGS_CHANNEL, (server, player, handler, buf, responseSender) -> {
+            String domain = buf.readUtf(16);
+            int scope = buf.readVarInt();
+            boolean force = buf.readBoolean();
+            long key = buf.readLong();
+            server.execute(() -> {
+                ServerLevel level = player.serverLevel();
+                String answer = syncSettings(server, level, domain, scope, force, key);
+                // false = 走聊天栏：退出界面之后还看得见这次同步到底做了什么
+                player.displayClientMessage(Component.literal(answer), false);
             });
         });
 
@@ -658,16 +1141,14 @@ public class SmoothLift implements ModInitializer {
         BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
         if (pos == null) {
             source.sendSuccess(() -> Component.literal(
-                    "当前扶梯速度：" + EscalatorSpeedData.format(global) + " 格/秒（全局默认）"), false);
+                    "当前扶梯速度：" + EscalatorSpeedData.format(global) + " 格/秒"), false);
             return 1;
         }
         double speed = EscalatorSpeedManager.getSpeed(level, pos);
         boolean individual = EscalatorSpeedManager.getIndividualRunSpeed(level, pos) != null;
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前扶梯速度：" + EscalatorSpeedData.format(speed) + " 格/秒（这条扶梯，共 " + blocks + " 格，"
-                        + (individual ? "单独设置" : "跟随全局")
-                        + "）；全局默认 " + EscalatorSpeedData.format(global) + " 格/秒"), false);
+                "当前扶梯速度：" + EscalatorSpeedData.format(speed) + " 格/秒；全局默认 " + EscalatorSpeedData.format(global) + " 格/秒"), false);
         return 1;
     }
 
@@ -704,7 +1185,7 @@ public class SmoothLift implements ModInitializer {
         if (!EscalatorSpeedManager.same(current, from)) {
             source.sendSuccess(
                     () -> Component.literal("全局扶梯速度没有" + EscalatorSpeedData.format(from)
-                            + "，未做修改（当前为 " + EscalatorSpeedData.format(current) + "）"),
+                            + "，未做修改"),
                     false);
             return 0;
         }
@@ -767,7 +1248,7 @@ public class SmoothLift implements ModInitializer {
         double global = EscalatorSpeedManager.getGlobalStepSpeed(level);
         String globalNote = enabled
                 ? "全局阶梯速度 " + EscalatorSpeedData.format(global) + " 格/秒"
-                : "全局阶梯速度未单独设置，跟随扶梯速度（" + EscalatorSpeedData.format(global) + " 格/秒）";
+                : "全局阶梯速度未单独设置，跟随扶梯速度";
         ServerPlayer player = source.getPlayer();
         BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
         if (pos == null) {
@@ -777,7 +1258,7 @@ public class SmoothLift implements ModInitializer {
         double step = EscalatorSpeedManager.getAnimationSpeed(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前阶梯速度：" + EscalatorSpeedData.format(step) + " 格/秒（这条扶梯，共 " + blocks + " 格）；"
+                "当前阶梯速度：" + EscalatorSpeedData.format(step) + " 格/秒；"
                         + globalNote), false);
         return 1;
     }
@@ -815,7 +1296,7 @@ public class SmoothLift implements ModInitializer {
         if (!EscalatorSpeedManager.same(current, from)) {
             source.sendSuccess(
                     () -> Component.literal("全局扶梯阶梯速度没有" + EscalatorSpeedData.format(from)
-                            + "，未做修改（当前为 " + EscalatorSpeedData.format(current) + "）"),
+                            + "，未做修改"),
                     false);
             return 0;
         }
@@ -872,19 +1353,40 @@ public class SmoothLift implements ModInitializer {
     private static LiteralArgumentBuilder<CommandSourceStack> futiMusicForce(String literal) {
         return Commands.literal(literal)
                 .then(Commands.argument("name", StringArgumentType.string())
+                        .suggests(SmoothLift::futiMusicNameSuggestions)
                         .executes(SmoothLift::futiMusicForceSet)
                         .then(Commands.literal("to")
                                 .then(Commands.argument("target", StringArgumentType.string())
+                                        .suggests(SmoothLift::futiMusicNameSuggestions)
                                         .executes(SmoothLift::futiMusicForceFromTo))));
     }
 
     /** 音频 ID 在指令反馈里的显示名：内置音频显示中文名 + ID，玩家上传的直接显示文件名。 */
     private static String audioLabel(String audioId) {
         if (audioId == null) {
-            return "无（静音）";
+            return "无";
         }
         String name = EscalatorSpeedManager.displayName(audioId);
-        return name.equals(audioId) ? audioId : name + "（" + audioId + "）";
+        return name.equals(audioId) ? audioId : name;
+    }
+
+    /** 【1.23】/futimusic 名字参数补全：default / off / 内置音频 / 已导入存档的音频。 */
+    private static CompletableFuture<Suggestions> futiMusicNameSuggestions(
+            final CommandContext<CommandSourceStack> context, final SuggestionsBuilder builder) {
+        ServerLevel level = context.getSource().getLevel();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        seen.add("default");
+        seen.add("off");
+        seen.addAll(EscalatorSpeedManager.builtinAudioIds());
+        for (java.util.Map.Entry<String, byte[]> e : EscalatorSpeedManager.getServerData(level).audioLibrary.entrySet()) {
+            seen.add(e.getKey());
+        }
+        for (String s : seen) {
+            if (s.startsWith(builder.getRemainingLowerCase())) {
+                builder.suggest(s);
+            }
+        }
+        return builder.buildFuture();
     }
 
     /** /futimusic（不带参数）—— 显示当前扶梯播放的音频名。 */
@@ -905,11 +1407,10 @@ public class SmoothLift implements ModInitializer {
         final boolean own = individual;
         if (id == null) {
             source.sendSuccess(() -> Component.literal(
-                    "当前扶梯（共 " + blocks + " 格）没有音频：没有单独绑定，也没有设置默认音频"), false);
+                    "当前扶梯没有音频：没有单独绑定，也没有设置默认音频"), false);
         } else {
             source.sendSuccess(() -> Component.literal(
-                    "当前扶梯音频：" + audioLabel(id) + "（这条扶梯，共 " + blocks + " 格，"
-                            + (own ? "单独绑定" : "使用默认音频") + "）"), false);
+                    "当前扶梯音频：" + audioLabel(id)), false);
         }
         return 1;
     }
@@ -928,12 +1429,12 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncAudioToAll(source.getServer());
         if (arg.off()) {
             source.sendSuccess(() -> Component.literal(
-                    "已清除默认扶梯音频：没有单独绑定音频的扶梯将静音（已单独绑定的不受影响）"), false);
+                    "已清除默认扶梯音频：没有单独绑定音频的扶梯将静音"), false);
             return 1;
         }
         source.sendSuccess(() -> Component.literal(
                 "默认扶梯音频已设为 " + audioLabel(arg.id())
-                        + "；没有单独绑定音频的扶梯都会播放它（已单独绑定的不受影响）"), false);
+                        + "；没有单独绑定音频的扶梯都会播放它"), false);
         return 1;
     }
 
@@ -956,8 +1457,7 @@ public class SmoothLift implements ModInitializer {
         String current = EscalatorSpeedManager.getDefaultAudio(level);
         if (!java.util.Objects.equals(current, from.id())) {
             source.sendSuccess(() -> Component.literal(
-                    "默认扶梯音频不是 " + audioLabel(from.id()) + "，未做修改（当前为 "
-                            + audioLabel(current) + "）；已单独绑定音频的扶梯不受本指令影响"), false);
+                    "默认扶梯音频不是 " + audioLabel(from.id()) + "，未做修改；已单独绑定音频的扶梯不受本指令影响"), false);
             return 0;
         }
         EscalatorSpeedManager.replaceDefaultAudio(level, from.id(), to.id());
@@ -982,11 +1482,11 @@ public class SmoothLift implements ModInitializer {
         final int clearedCount = cleared;
         if (arg.off()) {
             source.sendSuccess(() -> Component.literal(
-                    "已强制所有扶梯静音（清掉 " + clearedCount + " 处单独绑定）"), false);
+                    "已强制所有扶梯静音"), false);
             return 1;
         }
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯播放 " + audioLabel(arg.id()) + "（清掉 " + clearedCount + " 处单独绑定）"), false);
+                "已强制所有扶梯播放 " + audioLabel(arg.id())), false);
         return 1;
     }
 
@@ -1016,7 +1516,7 @@ public class SmoothLift implements ModInitializer {
         final int changedCount = changed;
         source.sendSuccess(() -> Component.literal(
                 "已把所有音频为 " + audioLabel(from.id()) + " 的扶梯换成 "
-                        + audioLabel(to.id()) + "（共 " + changedCount + " 条）"), false);
+                        + audioLabel(to.id())), false);
         return 1;
     }
 
@@ -1061,13 +1561,13 @@ public class SmoothLift implements ModInitializer {
     /** 提示音音乐 ID 在指令反馈里的显示名。 */
     private static String helpAudioLabel(String audioId) {
         if (audioId == null) {
-            return "无（静音）";
+            return "无";
         }
         if (EscalatorSpeedData.HELP_AUDIO_DEFAULT.equals(audioId)) {
-            return "模组原来的提示音（default，速率见 /futihelpspeed）";
+            return "模组原来的提示音";
         }
         if (EscalatorSpeedData.HELP_AUDIO_OFF.equals(audioId)) {
-            return "不播提示音（off）";
+            return "不播提示音";
         }
         return audioLabel(audioId);
     }
@@ -1093,9 +1593,7 @@ public class SmoothLift implements ModInitializer {
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
                 "当前扶梯的无障碍提示音：进入扶梯 " + helpAudioLabel(inId)
-                        + "（" + (ownIn ? "单独设置" : "使用默认") + "）、离开扶梯 " + helpAudioLabel(outId)
-                        + "（" + (ownOut ? "单独设置" : "使用默认") + "）（这条扶梯，共 " + blocks + " 格；开关 "
-                        + (EscalatorSpeedManager.isHelpEnabled(level, pos) ? "开" : "关") + "）"), false);
+                        + "、离开扶梯 " + helpAudioLabel(outId)), false);
         return 1;
     }
 
@@ -1113,7 +1611,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
                 "默认" + helpEndLabel(in) + "的无障碍提示音已设为 " + helpAudioLabel(arg.id())
-                        + "；没有单独设置过的扶梯都会用它（已单独设置的不受影响）"), false);
+                        + "；没有单独设置过的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1137,8 +1635,7 @@ public class SmoothLift implements ModInitializer {
         if (!java.util.Objects.equals(current, from.id())) {
             source.sendSuccess(() -> Component.literal(
                     "默认" + helpEndLabel(in) + "的无障碍提示音不是 " + helpAudioLabel(from.id())
-                            + "，未做修改（当前为 " + helpAudioLabel(current)
-                            + "）；已单独设置的扶梯不受本指令影响"), false);
+                            + "，未做修改；已单独设置的扶梯不受本指令影响"), false);
             return 0;
         }
         EscalatorSpeedManager.replaceDefaultHelpAudio(level, from.id(), to.id(), in);
@@ -1163,8 +1660,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpAudioToAll(source.getServer());
         final int clearedCount = cleared;
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音为 " + helpAudioLabel(arg.id())
-                        + "（清掉 " + clearedCount + " 处这一头的单独设置）"), false);
+                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音为 " + helpAudioLabel(arg.id())), false);
         return 1;
     }
 
@@ -1194,7 +1690,7 @@ public class SmoothLift implements ModInitializer {
         final int changedCount = changed;
         source.sendSuccess(() -> Component.literal(
                 "已把所有" + helpEndLabel(in) + "提示音为 " + helpAudioLabel(from.id()) + " 的扶梯换成 "
-                        + helpAudioLabel(to.id()) + "（共 " + changedCount + " 条）"), false);
+                        + helpAudioLabel(to.id())), false);
         return 1;
     }
 
@@ -1227,16 +1723,14 @@ public class SmoothLift implements ModInitializer {
         BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
         if (pos == null) {
             source.sendSuccess(() -> Component.literal(
-                    "没有站在扶梯上。默认扶梯音量：" + global + "（100 = 原始音量）"), false);
+                    "没有站在扶梯上。默认扶梯音量：" + global), false);
             return 1;
         }
         int volume = EscalatorSpeedManager.getVolume(level, pos);
         boolean individual = EscalatorSpeedManager.hasIndividualVolume(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前扶梯音量：" + volume + "（这条扶梯，共 " + blocks + " 格，"
-                        + (individual ? "单独设置" : "使用默认音量")
-                        + "）；默认音量 " + global), false);
+                "当前扶梯音量：" + volume + "；默认音量 " + global), false);
         return 1;
     }
 
@@ -1249,8 +1743,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncVolumeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultVolume(level);
         source.sendSuccess(() -> Component.literal(
-                "默认扶梯音量已设为 " + applied + "（100 = 原始音量）；"
-                        + "没有单独设置过音量的扶梯都会用它（单独设置过的不受影响）"), false);
+                "默认扶梯音量已设为 " + applied + "；"
+                        + "没有单独设置过音量的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1263,7 +1757,7 @@ public class SmoothLift implements ModInitializer {
         int current = EscalatorSpeedManager.getDefaultVolume(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认扶梯音量不是 " + from + "（当前为 " + current + "），未做修改；"
+                    "默认扶梯音量不是 " + from + "，未做修改；"
                             + "单独设置过音量的扶梯不受本指令影响"), false);
             return 0;
         }
@@ -1284,7 +1778,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncVolumeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultVolume(level);
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯音量 = " + applied + "（清掉 " + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯音量 = " + applied), false);
         return 1;
     }
 
@@ -1302,7 +1796,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有音量正好是 " + from + " 的扶梯改成 " + to + "（共 " + changed + " 处）"), false);
+                "已把所有音量正好是 " + from + " 的扶梯改成 " + to), false);
         return 1;
     }
 
@@ -1345,17 +1839,14 @@ public class SmoothLift implements ModInitializer {
         BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
         if (pos == null) {
             source.sendSuccess(() -> Component.literal(
-                    "没有站在扶梯上。默认无障碍提示音：" + helpLabel(global)
-                            + "（开 = 进扶梯一端急促咔咔、出扶梯一端缓慢咔咔）"), false);
+                    "没有站在扶梯上。默认无障碍提示音：" + helpLabel(global)), false);
             return 1;
         }
         boolean enabled = EscalatorSpeedManager.isHelpEnabled(level, pos);
         boolean own = EscalatorSpeedManager.hasOwnHelp(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前扶梯无障碍提示音：" + helpLabel(enabled) + "（这条扶梯，共 " + blocks + " 格，"
-                        + (own ? "单独设置" : "使用默认开关")
-                        + "）；默认开关 " + helpLabel(global)), false);
+                "当前扶梯无障碍提示音：" + helpLabel(enabled) + "；默认开关 " + helpLabel(global)), false);
         return 1;
     }
 
@@ -1367,7 +1858,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
                 "默认无障碍提示音已设为 " + helpLabel(enabled)
-                        + "；没有单独设置过的扶梯都会用它（单独设置过的不受影响）"), false);
+                        + "；没有单独设置过的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1378,8 +1869,7 @@ public class SmoothLift implements ModInitializer {
         boolean current = EscalatorSpeedManager.getDefaultHelp(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认无障碍提示音不是 " + helpLabel(from) + "（当前为 " + helpLabel(current)
-                            + "），未做修改；单独设置过的扶梯不受本指令影响"), false);
+                    "默认无障碍提示音不是 " + helpLabel(from) + "，未做修改；单独设置过的扶梯不受本指令影响"), false);
             return 0;
         }
         EscalatorSpeedManager.replaceDefaultHelp(level, from, to);
@@ -1396,8 +1886,7 @@ public class SmoothLift implements ModInitializer {
         int cleared = EscalatorSpeedManager.forceDefaultHelp(level, enabled);
         EscalatorSpeedManager.syncHelpToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯的无障碍提示音 = " + helpLabel(enabled)
-                        + "（清掉 " + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯的无障碍提示音 = " + helpLabel(enabled)), false);
         return 1;
     }
 
@@ -1414,7 +1903,7 @@ public class SmoothLift implements ModInitializer {
         }
         source.sendSuccess(() -> Component.literal(
                 "已把所有无障碍提示音为 " + helpLabel(from) + " 的扶梯改成 "
-                        + helpLabel(to) + "（共 " + changed + " 处）"), false);
+                        + helpLabel(to)), false);
         return 1;
     }
 
@@ -1446,16 +1935,14 @@ public class SmoothLift implements ModInitializer {
         BlockPos pos = player == null ? null : EscalatorSpeedManager.currentEscalator(player);
         if (pos == null) {
             source.sendSuccess(() -> Component.literal(
-                    "没有站在扶梯上。默认无障碍提示音音量：" + global + "（100 = 原始音量）"), false);
+                    "没有站在扶梯上。默认无障碍提示音音量：" + global), false);
             return 1;
         }
         int volume = EscalatorSpeedManager.getHelpVolume(level, pos);
         boolean own = EscalatorSpeedManager.hasOwnHelpVolume(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前扶梯无障碍提示音音量：" + volume + "（这条扶梯，共 " + blocks + " 格，"
-                        + (own ? "单独设置" : "使用默认音量")
-                        + "）；默认音量 " + global), false);
+                "当前扶梯无障碍提示音音量：" + volume + "；默认音量 " + global), false);
         return 1;
     }
 
@@ -1468,8 +1955,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpVolumeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultHelpVolume(level);
         source.sendSuccess(() -> Component.literal(
-                "默认无障碍提示音音量已设为 " + applied + "（100 = 原始音量）；"
-                        + "没有单独设置过音量的扶梯都会用它（单独设置过的不受影响）"), false);
+                "默认无障碍提示音音量已设为 " + applied + "；"
+                        + "没有单独设置过音量的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1482,7 +1969,7 @@ public class SmoothLift implements ModInitializer {
         int current = EscalatorSpeedManager.getDefaultHelpVolume(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认无障碍提示音音量不是 " + from + "（当前为 " + current + "），未做修改；"
+                    "默认无障碍提示音音量不是 " + from + "，未做修改；"
                             + "单独设置过音量的扶梯不受本指令影响"), false);
             return 0;
         }
@@ -1503,7 +1990,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpVolumeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultHelpVolume(level);
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯的无障碍提示音音量 = " + applied + "（清掉 " + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯的无障碍提示音音量 = " + applied), false);
         return 1;
     }
 
@@ -1521,7 +2008,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有无障碍提示音音量正好是 " + from + " 的扶梯改成 " + to + "（共 " + changed + " 处）"), false);
+                "已把所有无障碍提示音音量正好是 " + from + " 的扶梯改成 " + to), false);
         return 1;
     }
 
@@ -1535,6 +2022,56 @@ public class SmoothLift implements ModInitializer {
     /** /futiround 的范围参数：1~128 格。 */
     private static IntegerArgumentType roundArg() {
         return IntegerArgumentType.integer(EscalatorSpeedData.ROUND_MIN, EscalatorSpeedData.ROUND_MAX);
+    }
+
+    /**
+     * 【1.16】{@code /pbmclosewait} 的秒数参数：0~999999 秒（【1.23】按点名放宽到 [0,+∞)）。
+     *
+     * <p>★ 参数类型这里**再夹一次**（数据层 {@code clampPsdCloseWaitSeconds} 还会夹一次）：
+     * 指令层夹是为了让 Brigadier 直接在 Tab 补全/报错上就挡住越界值，
+     * 数据层夹是为了挡住「存档被外部改坏」与「UI 输入框绕过参数类型」两条路。
+     * 两处都留不是冗余 —— {@code _tools/check-close-wait.py} 把两处都钉住了。
+     */
+    private static IntegerArgumentType closeWaitArg() {
+        return IntegerArgumentType.integer(
+                EscalatorSpeedData.PSD_CLOSE_WAIT_MIN, EscalatorSpeedData.PSD_CLOSE_WAIT_MAX);
+    }
+
+    /**
+     * 【1.17】{@code /pbmmidium} 的等待秒数参数：**0 ~ 正无穷**（{@code [0, +∞)}）。
+     *
+     * <p>★ 与 {@link #closeWaitArg()} 的差别就是**没有上界** —— 用户点名
+     * 「pbmmidium 指令和 ui 允许输入 0 到正无穷的数字」。
+     * {@code IntegerArgumentType.integer(0)} 的默认上界就是 {@code Integer.MAX_VALUE}
+     * （≈ 68 年），已经是「正无穷」在 int 里的全部空间。
+     *
+     * <p>下界 0 仍然要显式写：不写就是 {@code Integer.MIN_VALUE}，负值会被接住，
+     * 而「等 -3 秒」在语义上没有意义（会让计划 tick 落到过去）。
+     */
+    private static IntegerArgumentType midiumWaitArg() {
+        return IntegerArgumentType.integer(EscalatorSpeedData.PSD_MIDIUM_WAIT_MIN);
+    }
+
+    /** 【1.17】{@code /pbmmidium} 的素材名参数（带音频库补全，含 {@code off}）。 */
+    private static StringArgumentType midiumNameArg() {
+        return StringArgumentType.string();
+    }
+
+    /**
+     * 【1.21】{@code /pbmarrive} 的秒数参数：{@code (-∞, 0]}。
+     *
+     * <p>★ 与 {@link #midiumWaitArg()}（{@code [0, +∞)}）**正好相反**：那一个只给下界，
+     * 这一个只给上界 —— 用户点名「输入框范围：(-无穷,0]」，例子 {@code X=-10} =
+     * 「最近一班车还剩 10 秒到站」时起播进站提示音。
+     * {@code IntegerArgumentType.integer(Integer.MIN_VALUE, 0)} 就是「负无穷到 0」。
+     */
+    private static IntegerArgumentType arriveArg() {
+        return IntegerArgumentType.integer(Integer.MIN_VALUE, EscalatorSpeedData.PSD_ARRIVE_SECONDS_MAX);
+    }
+
+    /** 【1.21】{@code /pbmarrive} 的素材名参数（带音频库补全，含 {@code off}）。 */
+    private static StringArgumentType arriveNameArg() {
+        return StringArgumentType.string();
     }
 
     /** 注册 `/futiround` 的 `-f` 分支：`-f <范围>` 与 `-f <X> to <Y>`。 */
@@ -1563,9 +2100,7 @@ public class SmoothLift implements ModInitializer {
         boolean own = EscalatorSpeedManager.hasOwnRound(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前扶梯音效淡入淡出范围：" + round + " 格（这条扶梯，共 " + blocks + " 格，"
-                        + (own ? "单独设置" : "使用默认范围")
-                        + "）；默认范围 " + global + " 格"), false);
+                "当前扶梯音效淡入淡出范围：" + round + " 格；默认范围 " + global + " 格"), false);
         return 1;
     }
 
@@ -1579,7 +2114,7 @@ public class SmoothLift implements ModInitializer {
         int applied = EscalatorSpeedManager.getDefaultRound(level);
         source.sendSuccess(() -> Component.literal(
                 "默认扶梯音效淡入淡出范围已设为 " + applied + " 格；"
-                        + "没有单独设置过范围的扶梯都会用它（单独设置过的不受影响）"), false);
+                        + "没有单独设置过范围的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1592,7 +2127,7 @@ public class SmoothLift implements ModInitializer {
         int current = EscalatorSpeedManager.getDefaultRound(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认扶梯音效淡入淡出范围不是 " + from + " 格（当前为 " + current + " 格），未做修改；"
+                    "默认扶梯音效淡入淡出范围不是 " + from + " 格，未做修改；"
                             + "单独设置过范围的扶梯不受本指令影响"), false);
             return 0;
         }
@@ -1613,7 +2148,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncRoundToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultRound(level);
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯音效的淡入淡出范围 = " + applied + " 格（清掉 " + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯音效的淡入淡出范围 = " + applied + " 格"), false);
         return 1;
     }
 
@@ -1631,7 +2166,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有扶梯音效淡入淡出范围正好是 " + from + " 格的扶梯改成 " + to + " 格（共 " + changed + " 处）"), false);
+                "已把所有扶梯音效淡入淡出范围正好是 " + from + " 格的扶梯改成 " + to + " 格"), false);
         return 1;
     }
 
@@ -1668,9 +2203,7 @@ public class SmoothLift implements ModInitializer {
         boolean own = EscalatorSpeedManager.hasOwnHelpRound(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前无障碍提示音淡入淡出范围：" + round + " 格（这条扶梯，共 " + blocks + " 格，"
-                        + (own ? "单独设置" : "使用默认范围")
-                        + "）；默认范围 " + global + " 格"), false);
+                "当前无障碍提示音淡入淡出范围：" + round + " 格；默认范围 " + global + " 格"), false);
         return 1;
     }
 
@@ -1684,7 +2217,7 @@ public class SmoothLift implements ModInitializer {
         int applied = EscalatorSpeedManager.getDefaultHelpRound(level);
         source.sendSuccess(() -> Component.literal(
                 "默认无障碍提示音淡入淡出范围已设为 " + applied + " 格；"
-                        + "没有单独设置过范围的扶梯都会用它（单独设置过的不受影响）"), false);
+                        + "没有单独设置过范围的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1697,7 +2230,7 @@ public class SmoothLift implements ModInitializer {
         int current = EscalatorSpeedManager.getDefaultHelpRound(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认无障碍提示音淡入淡出范围不是 " + from + " 格（当前为 " + current + " 格），未做修改；"
+                    "默认无障碍提示音淡入淡出范围不是 " + from + " 格，未做修改；"
                             + "单独设置过范围的扶梯不受本指令影响"), false);
             return 0;
         }
@@ -1718,7 +2251,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncHelpRoundToAll(source.getServer());
         int applied = EscalatorSpeedManager.getDefaultHelpRound(level);
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯无障碍提示音的淡入淡出范围 = " + applied + " 格（清掉 " + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯无障碍提示音的淡入淡出范围 = " + applied + " 格"), false);
         return 1;
     }
 
@@ -1736,7 +2269,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有无障碍提示音淡入淡出范围正好是 " + from + " 格的扶梯改成 " + to + " 格（共 " + changed + " 处）"), false);
+                "已把所有无障碍提示音淡入淡出范围正好是 " + from + " 格的扶梯改成 " + to + " 格"), false);
         return 1;
     }
 
@@ -1761,7 +2294,7 @@ public class SmoothLift implements ModInitializer {
 
     /** 指令文案里用的端头名（/futihelpspeed 与 /futihelpmusic 共用）。 */
     private static String helpEndLabel(boolean in) {
-        return in ? "进入扶梯（上客端）" : "离开扶梯（落客端）";
+        return in ? "进入扶梯" : "离开扶梯";
     }
 
     /**
@@ -1772,6 +2305,54 @@ public class SmoothLift implements ModInitializer {
     public static boolean isLiftTrackFloor(BlockState state) {
         String path = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
         return path.startsWith("lift_track_floor");
+    }
+
+    /**
+     * 【1.50】判定「屏蔽门（可开合的那一格）」—— 按注册名判，不依赖 MTR 编译期。
+     *
+     * <p>MTR 的屏蔽门方块注册名（MTR3 3.2.2 与 MTR4 4.0.5 的 blockstates 都是这一组）：
+     * {@code psd_door} / {@code psd_door_2}（站台幕门，两代样式）、{@code apg_door}
+     * （半高安全门 = Automatic Platform Gate，和 PSD 共用同一套方块实体与门值逻辑）。
+     *
+     * <p><b>刻意不收玻璃与顶板</b>（{@code psd_glass*} / {@code psd_top} / {@code apg_glass*}）：
+     * 那些方块的 {@code side}/{@code half} 与门**不是同一对**，拿它们算出来的「门锚点」
+     * 会落到另一格上 ⇒ 玩家右键玻璃配好、门开的时候却查不到这份设置（症状是「配了不响」）。
+     * 宁可「右键玻璃没反应」，也不要「看起来配上了但不生效」。
+     */
+    public static boolean isPsdDoor(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        String path = registryPathOf(state);
+        return path.startsWith("psd_door") || path.startsWith("apg_door");
+    }
+
+    /** 方块注册名（{@code psd_door_2} 之类）；取不到返回空串。 */
+    public static String registryPathOf(BlockState state) {
+        if (state == null) {
+            return "";
+        }
+        return BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+    }
+
+    /**
+     * 【1.57】是不是 MTR 的**轨道节点**方块（{@code mtr:rail}）—— 侧线铁轨在世界里落的那一格。
+     *
+     * <p>用户原话：<b>「石斧右键侧线铁路轨道连接处（就是黄色的那个）」</b>。
+     * 「黄色」是 MTR **渲染时**给侧线铁轨上的色（{@code RailType.SIDING} 的 MapColor = 黄，
+     * 已反汇编核实），**不在方块状态里** ⇒ 这里只能认「是轨道节点」，
+     * 「这一格是不是侧线」由客户端 {@code MtrSidingAccess} 去读 MTR 的轨道数据（那里有 isSiding）。
+     *
+     * <p>★★ 判据必须**同时**看命名空间与路径：原版就有一个 {@code minecraft:rail}
+     * （普通铁轨），只比路径 {@code "rail"} 会把它一起命中 —— 那样玩家拿石斧右键
+     * **普通铁轨**也会开界面。这正是「按注册名筛方块」最容易漏的一问：**这判据还会命中谁？**
+     */
+    public static boolean isMtrRail(BlockState state) {
+        if (state == null) {
+            return false;
+        }
+        ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+        return "mtr".equals(id.getNamespace()) && "rail".equals(id.getPath());
     }
 
     /**
@@ -1832,9 +2413,7 @@ public class SmoothLift implements ModInitializer {
         boolean ownOut = EscalatorSpeedManager.hasOwnHelpSpeedOut(level, pos);
         int blocks = EscalatorUtil.countChainSteps(level, pos);
         source.sendSuccess(() -> Component.literal(
-                "当前无障碍提示音速率：进入扶梯 " + in + " 次/秒（" + (ownIn ? "单独设置" : "使用默认速率")
-                        + "）、离开扶梯 " + out + " 次/秒（" + (ownOut ? "单独设置" : "使用默认速率")
-                        + "）（这条扶梯，共 " + blocks + " 格）；默认 进入 " + globalIn + "、离开 "
+                "当前无障碍提示音速率：进入扶梯 " + in + " 次/秒、离开扶梯 " + out + " 次/秒；默认 进入 " + globalIn + "、离开 "
                         + globalOut + " 次/秒"), false);
         return 1;
     }
@@ -1854,7 +2433,7 @@ public class SmoothLift implements ModInitializer {
                 : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
         source.sendSuccess(() -> Component.literal(
                 "默认" + helpEndLabel(in) + "无障碍提示音速率已设为 " + applied + " 次/秒；"
-                        + "没有单独设置过速率的扶梯都会用它（单独设置过的不受影响）"), false);
+                        + "没有单独设置过速率的扶梯都会用它"), false);
         return 1;
     }
 
@@ -1868,8 +2447,7 @@ public class SmoothLift implements ModInitializer {
                 : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "默认" + helpEndLabel(in) + "无障碍提示音速率不是 " + from + " 次/秒（当前为 " + current
-                            + " 次/秒），未做修改；单独设置过速率的扶梯不受本指令影响"), false);
+                    "默认" + helpEndLabel(in) + "无障碍提示音速率不是 " + from + " 次/秒，未做修改；单独设置过速率的扶梯不受本指令影响"), false);
             return 0;
         }
         if (in) {
@@ -1896,8 +2474,7 @@ public class SmoothLift implements ModInitializer {
         int applied = in ? EscalatorSpeedManager.getDefaultHelpSpeedIn(level)
                 : EscalatorSpeedManager.getDefaultHelpSpeedOut(level);
         source.sendSuccess(() -> Component.literal(
-                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音速率 = " + applied + " 次/秒（清掉 "
-                        + cleared + " 处单独设置）"), false);
+                "已强制所有扶梯" + helpEndLabel(in) + "的无障碍提示音速率 = " + applied + " 次/秒"), false);
         return 1;
     }
 
@@ -1917,30 +2494,31 @@ public class SmoothLift implements ModInitializer {
         }
         source.sendSuccess(() -> Component.literal(
                 "已把所有" + helpEndLabel(in) + "无障碍提示音速率正好是 " + from + " 次/秒的扶梯改成 " + to
-                        + " 次/秒（共 " + changed + " 处）"), false);
+                        + " 次/秒"), false);
         return 1;
     }
 
     // ==================================================================
     // 【1.42】直梯（Lift）开关门提示音 liftmusic.ogg
     //
-    //   /lifthelp        显示 / on|off / on to off / -f on|off / -f on to off
-    //   /lifthelpspeed   显示 / <倍速> / <X> to <Y> / -f <倍速> / -f <X> to <Y>
+    //   /lifthelp                     显示 / on|off / on to off / -f on|off / -f on to off
+    //   /lifthelp up|down|door        三提示音子命令（子开关 + 默认素材），详见下面那一段
+    //   /lifthelploud                 音量（共用默认 + up|down|door 单项）
+    //   /lifthelpround                淡入淡出范围（三项共用）
     //
-    //   ★ 为什么是 lifthelp / lifthelpspeed 而不是需求原文里的 futihelp / futihelpspeed：
-    //     那两条指令**早就存在**、管的是**扶梯**的无障碍提示音（进/出口「咔啪」声），
-    //     直接复用会把扶梯那套设置顶掉。直梯提示音是完全另一件事，所以另开两条指令，
+    //   ★ 为什么是 lifthelp 而不是需求原文里的 futihelp：
+    //     那条指令**早就存在**、管的是**扶梯**的无障碍提示音（进/出口「咔啪」声），
+    //     直接复用会把扶梯那套设置顶掉。直梯提示音是完全另一件事，所以另开一条指令，
     //     扶梯的 futihelp / futihelpspeed 一个字节都不动。
     //
-    //   ★ 直梯提示音只有「维度默认」一层数据（没有单条直梯的单独设置），所以 `-f`
-    //     取「**对所有维度**强制」的含义 —— 见 EscalatorSpeedManager 里那一段的说明。
+    //   ★ 直梯提示音的「开关 / 音量 / 范围」只有「维度默认」一层数据（没有单条直梯的
+    //     单独设置），所以那几条的 `-f` 取「**对所有维度**强制」的含义 ——
+    //     见 EscalatorSpeedManager 里那一段的说明。
+    //
+    //   ★【1.15】`/lifthelpspeed` 已按用户要求**删除**：倍速数据（defaultLiftHelpSpeed）
+    //     与播放端的 pitch 逻辑都留着（旧存档里可能存着非 1.0 的值），只是不再提供改它的
+    //     入口（石斧界面本来也没有）。显示里仍会报出当前倍速，那是**实际生效的值**。
     // ==================================================================
-
-    /** 直梯提示音倍速的取值参数（0.5~2.0，允许小数；上限来自原版 pitch 夹取，见 EscalatorSpeedData）。 */
-    private static FloatArgumentType liftHelpSpeedArg() {
-        return FloatArgumentType.floatArg(
-                EscalatorSpeedData.LIFT_HELP_SPEED_MIN, EscalatorSpeedData.LIFT_HELP_SPEED_MAX);
-    }
 
     /** 倍速在指令反馈里的显示（两位小数就够，1.0 显示成 1）。 */
     private static String liftSpeedLabel(float speed) {
@@ -1957,11 +2535,7 @@ public class SmoothLift implements ModInitializer {
         boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
         float speed = EscalatorSpeedManager.getLiftHelpSpeed(level);
         source.sendSuccess(() -> Component.literal(
-                "当前维度直梯开关门提示音：" + helpLabel(enabled) + "，倍速 " + liftSpeedLabel(speed)
-                        + "（关门连播 " + EscalatorSpeedData.LIFT_HELP_CLOSE_REPEATS + " 次、开门连播 "
-                        + EscalatorSpeedData.LIFT_HELP_OPEN_REPEATS + " 次；倍速范围 "
-                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MIN) + "~"
-                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MAX) + "）"), false);
+                "当前维度直梯开关门提示音：" + helpLabel(enabled) + "，倍速 " + liftSpeedLabel(speed)), false);
         return 1;
     }
 
@@ -1972,8 +2546,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.setDefaultLiftHelp(level, enabled);
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯开关门提示音已设为 " + helpLabel(enabled)
-                        + "；其它维度不变（要对所有维度生效用 /lifthelp -f " + (enabled ? "on" : "off") + "）"), false);
+                "本维度直梯开关门提示音已设为 " + helpLabel(enabled)
+                        + "；其它维度不变"), false);
         return 1;
     }
 
@@ -1984,8 +2558,7 @@ public class SmoothLift implements ModInitializer {
         if (!EscalatorSpeedManager.replaceDefaultLiftHelp(level, from, to)) {
             boolean current = EscalatorSpeedManager.isLiftHelpEnabled(level);
             source.sendSuccess(() -> Component.literal(
-                    "本维度直梯开关门提示音不是 " + helpLabel(from) + "（当前为 " + helpLabel(current)
-                            + "），未做修改"), false);
+                    "本维度直梯开关门提示音不是 " + helpLabel(from) + "，未做修改"), false);
             return 0;
         }
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
@@ -2000,7 +2573,7 @@ public class SmoothLift implements ModInitializer {
         int changed = EscalatorSpeedManager.setDefaultLiftHelpAll(source.getServer(), enabled);
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
-                "已强制**所有维度**的直梯开关门提示音 = " + helpLabel(enabled) + "（改动 " + changed + " 个维度）"), false);
+                "已强制**所有维度**的直梯开关门提示音 = " + helpLabel(enabled)), false);
         return 1;
     }
 
@@ -2015,89 +2588,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有直梯开关门提示音为 " + helpLabel(from) + " 的维度改成 " + helpLabel(to)
-                        + "（共 " + changed + " 个维度）"), false);
-        return 1;
-    }
-
-    /** /lifthelpspeed（不带参数）—— 显示当前维度生效的倍速。 */
-    private static int liftHelpSpeedShow(CommandContext<CommandSourceStack> context) {
-        CommandSourceStack source = context.getSource();
-        ServerLevel level = source.getLevel();
-        float speed = EscalatorSpeedManager.getLiftHelpSpeed(level);
-        boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
-        source.sendSuccess(() -> Component.literal(
-                "当前维度直梯提示音倍速：" + liftSpeedLabel(speed) + "（提示音：" + helpLabel(enabled)
-                        + "；范围 " + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MIN) + "~"
-                        + liftSpeedLabel(EscalatorSpeedData.LIFT_HELP_SPEED_MAX)
-                        + "，1 = 原速。上限 2 是原版对播放速率的硬夹取）"), false);
-        return 1;
-    }
-
-    /** /lifthelpspeed &lt;倍速&gt; —— 设置**本维度**的倍速。 */
-    private static int liftHelpSpeedGlobal(CommandContext<CommandSourceStack> context) {
-        float speed = FloatArgumentType.getFloat(context, "speed");
-        CommandSourceStack source = context.getSource();
-        ServerLevel level = source.getLevel();
-        EscalatorSpeedManager.setDefaultLiftHelpSpeed(level, speed);
-        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
-        float applied = EscalatorSpeedManager.getLiftHelpSpeed(level);
-        source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯提示音倍速已设为 "
-                        + liftSpeedLabel(applied) + "；其它维度不变"), false);
-        return 1;
-    }
-
-    /** /lifthelpspeed &lt;X&gt; to &lt;Y&gt; —— 本维度倍速正好是 X 时才改成 Y。 */
-    private static int liftHelpSpeedFromTo(CommandContext<CommandSourceStack> context) {
-        float from = FloatArgumentType.getFloat(context, "speed");
-        float to = FloatArgumentType.getFloat(context, "target");
-        CommandSourceStack source = context.getSource();
-        ServerLevel level = source.getLevel();
-        if (!EscalatorSpeedManager.replaceDefaultLiftHelpSpeed(level, from, to)) {
-            float current = EscalatorSpeedManager.getLiftHelpSpeed(level);
-            source.sendSuccess(() -> Component.literal(
-                    "本维度直梯提示音倍速不是 " + liftSpeedLabel(from) + "（当前为 "
-                            + liftSpeedLabel(current) + "），未做修改"), false);
-            return 0;
-        }
-        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
-        float applied = EscalatorSpeedManager.getLiftHelpSpeed(level);
-        source.sendSuccess(() -> Component.literal(
-                "本维度直梯提示音倍速从 " + liftSpeedLabel(from) + " 改为 "
-                        + liftSpeedLabel(applied)), false);
-        return 1;
-    }
-
-    /** /lifthelpspeed -f &lt;倍速&gt; —— **所有维度**都设成该倍速。 */
-    private static int liftHelpSpeedForceAll(CommandContext<CommandSourceStack> context) {
-        float speed = FloatArgumentType.getFloat(context, "speed");
-        CommandSourceStack source = context.getSource();
-        int changed = EscalatorSpeedManager.setDefaultLiftHelpSpeedAll(source.getServer(), speed);
-        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
-        float applied = EscalatorSpeedData.clampLiftHelpSpeed(speed);
-        source.sendSuccess(() -> Component.literal(
-                "已强制**所有维度**的直梯提示音倍速 = " + liftSpeedLabel(applied)
-                        + "（改动 " + changed + " 个维度）"), false);
-        return 1;
-    }
-
-    /** /lifthelpspeed -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里倍速正好是 X 的那些改成 Y。 */
-    private static int liftHelpSpeedForceFromTo(CommandContext<CommandSourceStack> context) {
-        float from = FloatArgumentType.getFloat(context, "speed");
-        float to = FloatArgumentType.getFloat(context, "target");
-        CommandSourceStack source = context.getSource();
-        int changed = EscalatorSpeedManager.replaceDefaultLiftHelpSpeedAll(source.getServer(), from, to);
-        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
-        if (changed == 0) {
-            source.sendSuccess(() -> Component.literal(
-                    "没有任何维度的直梯提示音倍速是 " + liftSpeedLabel(from) + "，未做修改"), false);
-            return 0;
-        }
-        float applied = EscalatorSpeedData.clampLiftHelpSpeed(to);
-        source.sendSuccess(() -> Component.literal(
-                "已把所有直梯提示音倍速为 " + liftSpeedLabel(from) + " 的维度改成 " + liftSpeedLabel(applied)
-                        + "（共 " + changed + " 个维度）"), false);
+                "已把所有直梯开关门提示音为 " + helpLabel(from) + " 的维度改成 " + helpLabel(to)), false);
         return 1;
     }
 
@@ -2108,10 +2599,10 @@ public class SmoothLift implements ModInitializer {
         int volume = EscalatorSpeedManager.getLiftHelpVolume(level);
         boolean enabled = EscalatorSpeedManager.isLiftHelpEnabled(level);
         source.sendSuccess(() -> Component.literal(
-                "当前维度直梯提示音音量：" + volume + "（提示音：" + helpLabel(enabled)
-                        + "；范围 " + EscalatorSpeedData.HELP_VOLUME_MIN + "~"
-                        + EscalatorSpeedData.HELP_VOLUME_MAX
-                        + "，100 = 原始音量、1000 = 10× 放大）"), false);
+                "当前维度直梯提示音音量：" + volume + "，提示音开关："
+                        + helpLabel(enabled) + "，范围 "
+                        + EscalatorSpeedData.HELP_VOLUME_MIN + "~"
+                        + EscalatorSpeedData.HELP_VOLUME_MAX), false);
         return 1;
     }
 
@@ -2124,9 +2615,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getLiftHelpVolume(level);
         source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯提示音音量已设为 " + applied
-                        + "（100 = 原始音量）；其它维度不变（要对所有维度生效用 /lifthelploud -f "
-                        + applied + "）"), false);
+                "本维度直梯提示音音量已设为 " + applied
+                        + "；其它维度不变"), false);
         return 1;
     }
 
@@ -2139,7 +2629,7 @@ public class SmoothLift implements ModInitializer {
         if (!EscalatorSpeedManager.replaceDefaultLiftHelpVolume(level, from, to)) {
             int current = EscalatorSpeedManager.getLiftHelpVolume(level);
             source.sendSuccess(() -> Component.literal(
-                    "本维度直梯提示音音量不是 " + from + "（当前为 " + current + "），未做修改"), false);
+                    "本维度直梯提示音音量不是 " + from + "，未做修改"), false);
             return 0;
         }
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
@@ -2157,7 +2647,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         int applied = EscalatorSpeedData.clampLiftHelpVolume(volume);
         source.sendSuccess(() -> Component.literal(
-                "已强制**所有维度**的直梯提示音音量 = " + applied + "（改动 " + changed + " 个维度）"), false);
+                "已强制**所有维度**的直梯提示音音量 = " + applied), false);
         return 1;
     }
 
@@ -2175,8 +2665,7 @@ public class SmoothLift implements ModInitializer {
         }
         int applied = EscalatorSpeedData.clampLiftHelpVolume(to);
         source.sendSuccess(() -> Component.literal(
-                "已把所有直梯提示音音量为 " + from + " 的维度改成 " + applied
-                        + "（共 " + changed + " 个维度）"), false);
+                "已把所有直梯提示音音量为 " + from + " 的维度改成 " + applied), false);
         return 1;
     }
 
@@ -2226,10 +2715,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getLiftToneVolume(level, which);
         source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯"
-                        + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量已设为 " + applied
-                        + "（100 = 原始音量；其它维度不变，要对所有维度生效用 /lifthelploud "
-                        + literalName(which) + " -f " + applied + "）"), false);
+                "本维度直梯"
+                        + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量已设为 " + applied), false);
         return 1;
     }
 
@@ -2243,7 +2730,7 @@ public class SmoothLift implements ModInitializer {
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
                     "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量不是 " + from
-                            + "（当前为 " + current + "），未做修改"), false);
+                            + "，未做修改"), false);
             return 0;
         }
         EscalatorSpeedManager.replaceDefaultLiftToneVolume(level, which, from, to);
@@ -2264,7 +2751,7 @@ public class SmoothLift implements ModInitializer {
         int applied = EscalatorSpeedData.clampLiftToneVolume(volume);
         source.sendSuccess(() -> Component.literal(
                 "已强制**所有维度**的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量 = "
-                        + applied + "（改动 " + changed + " 个维度）"), false);
+                        + applied), false);
         return 1;
     }
 
@@ -2284,7 +2771,7 @@ public class SmoothLift implements ModInitializer {
         int applied = EscalatorSpeedData.clampLiftToneVolume(to);
         source.sendSuccess(() -> Component.literal(
                 "已把所有直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "音量为 " + from
-                        + " 的维度改成 " + applied + "（共 " + changed + " 个维度）"), false);
+                        + " 的维度改成 " + applied), false);
         return 1;
     }
 
@@ -2316,10 +2803,7 @@ public class SmoothLift implements ModInitializer {
         ServerLevel level = source.getLevel();
         int round = EscalatorSpeedManager.getLiftHelpRound(level);
         source.sendSuccess(() -> Component.literal(
-                "当前维度直梯提示音（上楼 / 下楼 / 开关门共用）淡入淡出范围：" + round + " 格"
-                        + "（范围 "
-                        + EscalatorSpeedData.LIFT_HELP_ROUND_MIN + "~"
-                        + EscalatorSpeedData.LIFT_HELP_ROUND_MAX + "）"), false);
+                "当前维度直梯提示音淡入淡出范围：" + round + " 格"), false);
         return 1;
     }
 
@@ -2332,8 +2816,8 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getLiftHelpRound(level);
         source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯提示音淡入淡出范围已设为 " + applied + " 格；"
-                        + "其它维度不变（要对所有维度生效用 /lifthelpround -f " + applied + "）"), false);
+                "本维度直梯提示音淡入淡出范围已设为 " + applied + " 格；"
+                        + "其它维度不变"), false);
         return 1;
     }
 
@@ -2346,7 +2830,7 @@ public class SmoothLift implements ModInitializer {
         int current = EscalatorSpeedManager.getLiftHelpRound(level);
         if (current != from) {
             source.sendSuccess(() -> Component.literal(
-                    "本维度直梯提示音淡入淡出范围不是 " + from + " 格（当前为 " + current + " 格），未做修改"), false);
+                    "本维度直梯提示音淡入淡出范围不是 " + from + " 格，未做修改"), false);
             return 0;
         }
         EscalatorSpeedManager.replaceDefaultLiftHelpRound(level, from, to);
@@ -2365,7 +2849,7 @@ public class SmoothLift implements ModInitializer {
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         int applied = EscalatorSpeedManager.getLiftHelpRound(source.getLevel());
         source.sendSuccess(() -> Component.literal(
-                "已强制**所有维度**的直梯提示音淡入淡出范围 = " + applied + " 格（改动 " + changed + " 个维度）"), false);
+                "已强制**所有维度**的直梯提示音淡入淡出范围 = " + applied + " 格"), false);
         return 1;
     }
 
@@ -2382,7 +2866,7 @@ public class SmoothLift implements ModInitializer {
             return 0;
         }
         source.sendSuccess(() -> Component.literal(
-                "已把所有直梯提示音淡入淡出范围为 " + from + " 格的维度改成 " + to + " 格（共 " + changed + " 个维度）"), false);
+                "已把所有直梯提示音淡入淡出范围为 " + from + " 格的维度改成 " + to + " 格"), false);
         return 1;
     }
 
@@ -2402,44 +2886,127 @@ public class SmoothLift implements ModInitializer {
     }
 
     // ------------------------------------------------------------------
-    // 【1.46】三提示音独立子开关：/lifthelpup / /lifthelpdown / /lifthelpchime
-    //   形状与 /lifthelp 完全一致（无参显示 / on|off / X to Y / -f 全维度），
-    //   只是把「总开关」换成「up / down / chime 各自的子开关」。总开关与子开关是「与」的关系。
+    // 【1.46】三提示音的子命令：/lifthelp up / /lifthelp down / /lifthelp door
+    //
+    //   【1.15】结构改动（用户点名）：原来是三条**顶级**指令
+    //   /lifthelpup、/lifthelpdown、/lifthelpchime；现在收进 /lifthelp 下面变成子命令，
+    //   并且把 chime 的**对外名字**改成 door（= 开关门）——
+    //   数据层（EscalatorSpeedData / Manager / 石斧 UI）继续叫 chime，一个字节都没动，
+    //   只有指令这一层做别名映射（literal "door" → which "chime"）。
+    //
+    //   每一条子命令的形状（与 /lifthelp 本身一致）：
+    //     /lifthelp up                      显示：子开关 + 本维度默认素材
+    //     /lifthelp up on|off               本维度子开关
+    //     /lifthelp up on to off            本维度子开关正好是 on 才改成 off（off to on 同理）
+    //     /lifthelp up <名字>               本维度**默认素材**（config：default / none / 导入的 .ogg）
+    //     /lifthelp up <名字> to <另一个>   本维度默认素材正好是它才改掉
+    //     /lifthelp up -f on|off            强制**所有维度**子开关（含 on to off / off to on）
+    //     /lifthelp up -f <名字>            强制**所有维度**默认素材，并清掉按竖井列的单独设置
+    //     /lifthelp up -f <名字> to <另一个> 所有维度里默认素材正好是它的改成另一个（单独设置的一起改）
+    //
+    //   ★ 同一层上「字面量 on/off/-f」与「音频名字参数」会**同时**匹配（StringArgumentType
+    //     把 on 也读成一个字符串），Brigadier 取的是**先注册**的那个子节点。
+    //     所以下面一律**先 literal 后 argument**，顺序不能调 —— 由
+    //     _tools/CmdTreeCheck.java 的 expectNode 断言钉住（`lifthelp up on` 必须落在字面量上）。
+    //   ★ 也正因为 on/off 被字面量占了，「这一项不播」在指令里写成 `none`。
     // ------------------------------------------------------------------
 
-    /** /lifthelpup|down|chime（不带参数）—— 显示当前维度这项子开关。 */
-    private static int liftToneSwitchShow(CommandContext<CommandSourceStack> context, String which) {
+    /** 直梯提示音素材 id 在指令反馈里的显示名。 */
+    private static String liftToneAudioLabel(String audioId) {
+        if (audioId == null) {
+            return "无";
+        }
+        if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(audioId)) {
+            return "default";
+        }
+        if (EscalatorSpeedData.LIFT_TONE_OFF.equals(audioId)) {
+            return "none";
+        }
+        return "「" + audioId + "」";
+    }
+
+    /** 【1.15】屏蔽门提示音素材 id 在指令反馈里的显示名。 */
+    private static String psdToneAudioLabel(String audioId) {
+        if (audioId == null) {
+            return "无";
+        }
+        if (EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN.equals(audioId)) {
+            return "default";
+        }
+        if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE.equals(audioId)) {
+            return "default-c";
+        }
+        if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M.equals(audioId)) {
+            return "default-m";
+        }
+        if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S.equals(audioId)) {
+            return "default-s：同素材但不播语音播报段，只播嘀嘀";
+        }
+        if (EscalatorSpeedData.PSD_TONE_OFF.equals(audioId)) {
+            return "none";
+        }
+        return "「" + audioId + "」";
+    }
+
+    /**
+     * 音频名字参数的 Tab 补全：**default / none + 玩家导入的每一个 .ogg 文件名**（字典序）。
+     * 服务端算好发给客户端（指令树与补全都在服务端算）。
+     *
+     * <p>source 为 null 时（{@code _tools/CmdTreeCheck} 故意用 null source 脱离游戏环境解析
+     * 真·指令树 —— 见 {@code registerCommands} 的说明）直接给空补全项，
+     * 不要在这里抛 NPE：补全异常不会被 Brigadier 的 {@code CommandSyntaxException} 兜住。
+     */
+    private static CompletableFuture<Suggestions> liftToneNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+        CommandSourceStack source = context.getSource();
+        if (source == null) {
+            return builder.buildFuture();
+        }
+        String typed = builder.getRemainingLowerCase();
+        for (String candidate : EscalatorSpeedManager.liftToneNameCandidates(source.getLevel())) {
+            if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                builder.suggest(candidate);
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    /** /lifthelp up|down|door（不带参数）—— 显示当前维度这项的子开关与默认素材。 */
+    private static int liftToneShow(CommandContext<CommandSourceStack> context, String literal, String which) {
         CommandSourceStack source = context.getSource();
         ServerLevel level = source.getLevel();
         boolean enabled = EscalatorSpeedManager.isLiftToneEnabled(level, which);
+        String audio = EscalatorSpeedManager.getLiftToneAudio(level, which);
         source.sendSuccess(() -> Component.literal(
-                "当前维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "：" + helpLabel(enabled)),
-                false);
+                "当前维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "：开关 " + helpLabel(enabled)
+                        + "，默认素材 " + liftToneAudioLabel(audio)), false);
         return 1;
     }
 
-    /** /lifthelpup|down|chime &lt;on|off&gt; —— 设置**本维度**这项子开关。 */
-    private static int liftToneSwitchGlobal(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+    /** /lifthelp up|down|door &lt;on|off&gt; —— 设置**本维度**这项子开关。 */
+    private static int liftToneSwitchGlobal(CommandContext<CommandSourceStack> context, String literal,
+                                            String which, boolean enabled) {
         CommandSourceStack source = context.getSource();
         ServerLevel level = source.getLevel();
         EscalatorSpeedManager.setDefaultLiftToneEnabled(level, which, enabled);
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
-                "本维度（" + level.dimension().location() + "）直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which)
+                "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which)
                         + "已设为 " + helpLabel(enabled)
-                        + "；其它维度不变（要对所有维度生效用 /lifthelp" + which + " -f " + (enabled ? "on" : "off") + "）"), false);
+                        + "；其它维度不变"), false);
         return 1;
     }
 
-    /** /lifthelpup|down|chime &lt;X&gt; to &lt;Y&gt; —— 本维度这项子开关正好是 X 时才改成 Y。 */
-    private static int liftToneSwitchFromTo(CommandContext<CommandSourceStack> context, String which, boolean from, boolean to) {
+    /** /lifthelp up|down|door &lt;X&gt; to &lt;Y&gt; —— 本维度这项子开关正好是 X 时才改成 Y。 */
+    private static int liftToneSwitchFromTo(CommandContext<CommandSourceStack> context, String which,
+                                            boolean from, boolean to) {
         CommandSourceStack source = context.getSource();
         ServerLevel level = source.getLevel();
         if (!EscalatorSpeedManager.replaceDefaultLiftToneEnabled(level, which, from, to)) {
             boolean current = EscalatorSpeedManager.isLiftToneEnabled(level, which);
             source.sendSuccess(() -> Component.literal(
                     "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "不是 " + helpLabel(from)
-                            + "（当前为 " + helpLabel(current) + "），未做修改"), false);
+                            + "，未做修改"), false);
             return 0;
         }
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
@@ -2449,19 +3016,19 @@ public class SmoothLift implements ModInitializer {
         return 1;
     }
 
-    /** /lifthelpup|down|chime -f &lt;on|off&gt; —— **所有维度**这项子开关都设成该值。 */
+    /** /lifthelp up|down|door -f &lt;on|off&gt; —— **所有维度**这项子开关都设成该值。 */
     private static int liftToneSwitchForceAll(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
         CommandSourceStack source = context.getSource();
         int changed = EscalatorSpeedManager.setDefaultLiftToneEnabledAll(source.getServer(), which, enabled);
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
         source.sendSuccess(() -> Component.literal(
-                "已强制**所有维度**的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + " = " + helpLabel(enabled)
-                        + "（改动 " + changed + " 个维度）"), false);
+                "已强制**所有维度**的直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + " = " + helpLabel(enabled)), false);
         return 1;
     }
 
-    /** /lifthelpup|down|chime -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里这项子开关正好是 X 的那些改成 Y。 */
-    private static int liftToneSwitchForceFromTo(CommandContext<CommandSourceStack> context, String which, boolean from, boolean to) {
+    /** /lifthelp up|down|door -f &lt;X&gt; to &lt;Y&gt; —— 所有维度里这项子开关正好是 X 的那些改成 Y。 */
+    private static int liftToneSwitchForceFromTo(CommandContext<CommandSourceStack> context, String which,
+                                                 boolean from, boolean to) {
         CommandSourceStack source = context.getSource();
         int changed = EscalatorSpeedManager.replaceDefaultLiftToneEnabledAll(source.getServer(), which, from, to);
         EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
@@ -2473,21 +3040,138 @@ public class SmoothLift implements ModInitializer {
         }
         source.sendSuccess(() -> Component.literal(
                 "已把所有直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "为 " + helpLabel(from)
-                        + " 的维度改成 " + helpLabel(to) + "（共 " + changed + " 个维度）"), false);
+                        + " 的维度改成 " + helpLabel(to)), false);
         return 1;
     }
 
-    /** 注册某条子开关指令的完整树（含 `-f` 分支）。{@code which} ∈ {"up","down","chime"}。 */
-    private static LiteralArgumentBuilder<CommandSourceStack> liftToneSwitchCommand(String which) {
-        return Commands.literal("lifthelp" + which)
-                .executes(context -> liftToneSwitchShow(context, which))
+    /**
+     * /lifthelp up|down|door &lt;名字&gt; —— 设置**本维度**这项的默认素材。
+     * 名字：{@code default}（模组内置）/ {@code none}（这一项不播）/ 玩家导入的 .ogg 文件名。
+     */
+    private static int liftToneAudioSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveLiftToneName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.setDefaultLiftToneAudio(level, which, arg.id());
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯" + label + "的默认素材已设为 "
+                        + liftToneAudioLabel(arg.id())
+                        + "；没有单独设置过这项的直梯都会用它"), false);
+        return 1;
+    }
+
+    /** /lifthelp up|down|door &lt;X&gt; to &lt;Y&gt; —— 本维度默认素材正好是 X 时才改成 Y。 */
+    private static int liftToneAudioFromTo(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveLiftToneName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveLiftToneName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        if (!EscalatorSpeedManager.replaceDefaultLiftToneAudio(level, which, from.id(), to.id())) {
+            String current = EscalatorSpeedManager.getLiftToneAudio(level, which);
+            // 「不是 X 就没改」按惯例用 sendSuccess（不是错误，只是没命中），与 /futimusic X to Y 一致
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "的默认素材不是 "
+                            + liftToneAudioLabel(from.id()) + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "的默认素材从 "
+                        + liftToneAudioLabel(from.id()) + " 改为 " + liftToneAudioLabel(to.id())), false);
+        return 1;
+    }
+
+    /**
+     * /lifthelp up|down|door -f &lt;名字&gt; —— **所有维度**这项的默认素材都设成它，
+     * 并清掉「按竖井列单独设置」里的这一项（那些直梯从此跟维度默认）。
+     */
+    private static int liftToneAudioForceSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveLiftToneName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.setDefaultLiftToneAudioAll(source.getServer(), which, arg.id());
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        EscalatorSpeedManager.syncLiftToneToAll(source.getServer());
+        String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的直梯" + label + "默认素材 = " + liftToneAudioLabel(arg.id())
+                        + "，并清掉按直梯的单独设置"), false);
+        return 1;
+    }
+
+    /** /lifthelp up|down|door -f &lt;X&gt; to &lt;Y&gt; —— 所有维度（含单独设置）里这项是 X 的改成 Y。 */
+    private static int liftToneAudioForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveLiftToneName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveLiftToneName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.replaceDefaultLiftToneAudioAll(
+                source.getServer(), which, from.id(), to.id());
+        EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+        EscalatorSpeedManager.syncLiftToneToAll(source.getServer());
+        String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的直梯" + label + "默认素材是 " + liftToneAudioLabel(from.id())
+                            + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有直梯" + label + "默认素材为 " + liftToneAudioLabel(from.id()) + " 的维度改成 "
+                        + liftToneAudioLabel(to.id())), false);
+        return 1;
+    }
+
+    /**
+     * 注册 `/lifthelp` 下面的一条子命令树：{@code up} / {@code down} / {@code door}。
+     *
+     * @param literal 指令里写的名字（{@code up} / {@code down} / {@code door}）
+     * @param which   数据层用的项目名（{@code up} / {@code down} / {@code chime}）
+     *                —— 只有 door 需要映射成 chime，其余两个同名。
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> liftToneBranch(String literal, String which) {
+        return Commands.literal(literal)
+                .executes(context -> liftToneShow(context, literal, which))
+                // ★ 顺序即优先级：字面量必须排在字符串参数前面（详见本节开头那段说明）。
                 .then(Commands.literal("on")
-                        .executes(context -> liftToneSwitchGlobal(context, which, true))
+                        .executes(context -> liftToneSwitchGlobal(context, literal, which, true))
                         .then(Commands.literal("to")
                                 .then(Commands.literal("off")
                                         .executes(context -> liftToneSwitchFromTo(context, which, true, false)))))
                 .then(Commands.literal("off")
-                        .executes(context -> liftToneSwitchGlobal(context, which, false))
+                        .executes(context -> liftToneSwitchGlobal(context, literal, which, false))
                         .then(Commands.literal("to")
                                 .then(Commands.literal("on")
                                         .executes(context -> liftToneSwitchFromTo(context, which, false, true)))))
@@ -2501,29 +3185,1839 @@ public class SmoothLift implements ModInitializer {
                                 .executes(context -> liftToneSwitchForceAll(context, which, false))
                                 .then(Commands.literal("to")
                                         .then(Commands.literal("on")
-                                                .executes(context -> liftToneSwitchForceFromTo(context, which, false, true))))));
+                                                .executes(context -> liftToneSwitchForceFromTo(context, which, false, true)))))
+                        .then(Commands.argument("name", StringArgumentType.string())
+                                .suggests(SmoothLift::liftToneNameSuggestions)
+                                .executes(context -> liftToneAudioForceSet(context, literal, which))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", StringArgumentType.string())
+                                                .suggests(SmoothLift::liftToneNameSuggestions)
+                                                .executes(context -> liftToneAudioForceFromTo(context, which))))))
+                .then(Commands.argument("name", StringArgumentType.string())
+                        .suggests(SmoothLift::liftToneNameSuggestions)
+                        .executes(context -> liftToneAudioSet(context, literal, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", StringArgumentType.string())
+                                        .suggests(SmoothLift::liftToneNameSuggestions)
+                                        .executes(context -> liftToneAudioFromTo(context, literal, which)))));
     }
 
-    /** 注册 `/lifthelpspeed` 的 `-f` 分支：`-f <倍速>` 与 `-f <X> to <Y>`。 */
-    private static LiteralArgumentBuilder<CommandSourceStack> liftHelpSpeedForce(String literal) {
+    // ==================================================================
+    // 【1.50】屏蔽门（MTR 平台幕门 / 半高安全门）开关门提示音指令：
+    //   /pbmmusic  —— 总开关 + open/close 两项子开关
+    //   /pbmloud   —— 共用默认音量 + open/close 两项各自的音量
+    //   /pbmround  —— 淡入淡出范围（两项共用一份）
+    // 【1.23】另加三条「按条音频各存一份」的范围指令（形状与 /pbmround 同构）：
+    //   /pbmmusicround   —— 同上（点名用法；与 /pbmround 读写同一份数据）
+    //   /pbmmidiumround  —— 到站播报那条音频的范围
+    //   /pbmarriveround  —— 进站报站那条音频的范围
+    // 结构与直梯那几套（/lifthelp[up|down|chime] + /lifthelploud + /lifthelpround）**完全对称**，
+    // 只是把「up / down / chime 三项」换成「open / close 两项」。
+    // ★ 数据是**每个维度一份**（与直梯同），所以：不带 -f 只改当前维度；带 -f 改所有维度。
+    // ★ 与 /futihelp（扶梯无障碍提示音）、/lifthelp（直梯）互不影响，各存各的。
+    // ==================================================================
+
+    /** 注册 `/pbmmusic` 的 `-f` 分支：`-f on|off` 与 `-f on to off` / `-f off to on`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMusicForce(String literal) {
         return Commands.literal(literal)
-                .then(Commands.argument("speed", liftHelpSpeedArg())
-                        .executes(SmoothLift::liftHelpSpeedForceAll)
+                .then(Commands.literal("on")
+                        .executes(context -> pbmMusicForceAll(context, true))
                         .then(Commands.literal("to")
-                                .then(Commands.argument("target", liftHelpSpeedArg())
-                                        .executes(SmoothLift::liftHelpSpeedForceFromTo))));
+                                .then(Commands.literal("off")
+                                        .executes(context -> pbmMusicForceFromTo(context, true, false)))))
+                .then(Commands.literal("off")
+                        .executes(context -> pbmMusicForceAll(context, false))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("on")
+                                        .executes(context -> pbmMusicForceFromTo(context, false, true)))));
+    }
+
+    /**
+     * `/pbmmusic open|close` 子树的完整形状：显示 / on|off / X to Y / -f on|off / -f X to Y，
+     * 以及【1.15】改素材的 &lt;名字&gt; / &lt;X&gt; to &lt;Y&gt; / -f &lt;名字&gt; / -f &lt;X&gt; to &lt;Y&gt;。
+     *
+     * <p>★ 字面量（on / off / -f）必须排在字符串参数 {@code name} 前面 —— Brigadier 里
+     * 字面量优先于参数匹配，顺序即优先级（与 {@link #liftToneBranch} 完全同一套理由）。
+     *
+     * @param literal 指令里出现的字面名（open / close）
+     * @param which   数据用名（open / close，与 {@code EscalatorSpeedManager} 一致）
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMusicItemCommand(String literal, String which) {
+        return Commands.literal(literal)
+                .executes(context -> pbmMusicItemShow(context, which))
+                .then(Commands.literal("on")
+                        .executes(context -> pbmMusicItemGlobal(context, which, true))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("off")
+                                        .executes(context -> pbmMusicItemFromTo(context, which, true, false)))))
+                .then(Commands.literal("off")
+                        .executes(context -> pbmMusicItemGlobal(context, which, false))
+                        .then(Commands.literal("to")
+                                .then(Commands.literal("on")
+                                        .executes(context -> pbmMusicItemFromTo(context, which, false, true)))))
+                .then(Commands.literal("-f")
+                        .then(Commands.literal("on")
+                                .executes(context -> pbmMusicItemForceAll(context, which, true))
+                                .then(Commands.literal("to")
+                                        .then(Commands.literal("off")
+                                                .executes(context -> pbmMusicItemForceFromTo(context, which, true, false)))))
+                        .then(Commands.literal("off")
+                                .executes(context -> pbmMusicItemForceAll(context, which, false))
+                                .then(Commands.literal("to")
+                                        .then(Commands.literal("on")
+                                                .executes(context -> pbmMusicItemForceFromTo(context, which, false, true)))))
+                        // 【1.15】-f <名字> / -f <X> to <Y>
+                        .then(Commands.argument("name", StringArgumentType.string())
+                                .suggests(SmoothLift::psdToneNameSuggestions)
+                                .executes(context -> pbmMusicItemAudioForceSet(context, literal, which))
+                                .then(Commands.literal("to")
+                                        .then(Commands.argument("target", StringArgumentType.string())
+                                                .suggests(SmoothLift::psdToneNameSuggestions)
+                                                .executes(context -> pbmMusicItemAudioForceFromTo(context, which))))))
+                // 【1.15】<名字> / <X> to <Y>（不带 -f = 只改本维度）
+                .then(Commands.argument("name", StringArgumentType.string())
+                        .suggests(SmoothLift::psdToneNameSuggestions)
+                        .executes(context -> pbmMusicItemAudioSet(context, literal, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", StringArgumentType.string())
+                                        .suggests(SmoothLift::psdToneNameSuggestions)
+                                        .executes(context -> pbmMusicItemAudioFromTo(context, literal, which)))));
+    }
+
+    /**
+     * 【1.15】屏蔽门素材名参数的 Tab 补全：**四段内置名排最前 + none + 玩家导入的每个 .ogg**。
+     * 与 {@link #liftToneNameSuggestions} 同一套「source 为 null 时给空补全」的保护。
+     */
+    private static CompletableFuture<Suggestions> psdToneNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+        CommandSourceStack source = context.getSource();
+        if (source == null) {
+            return builder.buildFuture();
+        }
+        String typed = builder.getRemainingLowerCase();
+        for (String candidate : EscalatorSpeedManager.psdNameCandidates(source.getLevel())) {
+            if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                builder.suggest(candidate);
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    /** `/pbmmusic`（不带参数）—— 显示当前维度的总开关与两项子开关。 */
+    private static int pbmMusicShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        source.sendSuccess(() -> Component.literal(
+                "当前维度屏蔽门开关门提示音：" + helpLabel(EscalatorSpeedManager.isPsdHelpEnabled(level))
+                        + "；音量 " + EscalatorSpeedManager.getPsdHelpVolume(level)
+                        + "、范围 " + EscalatorSpeedManager.getPsdHelpRound(level) + " 格"), false);
+        return 1;
+    }
+
+    /** `/pbmmusic <on|off>` —— 设置**本维度**的总开关。 */
+    private static int pbmMusicGlobal(CommandContext<CommandSourceStack> context, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultPsdHelp(level, enabled);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门开关门提示音已设为 " + helpLabel(enabled)
+                        + "；其它维度不变"), false);
+        return 1;
+    }
+
+    /** `/pbmmusic <X> to <Y>` —— 本维度总开关正好是 X 时才改成 Y。 */
+    private static int pbmMusicFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultPsdHelp(level, from, to)) {
+            boolean current = EscalatorSpeedManager.isPsdHelpEnabled(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门开关门提示音不是 " + helpLabel(from) + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门开关门提示音从 " + helpLabel(from) + " 改为 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic -f <on|off>` —— **所有维度**的总开关都设成该值。 */
+    private static int pbmMusicForceAll(CommandContext<CommandSourceStack> context, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultPsdHelpAll(source.getServer(), enabled);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门开关门提示音 = " + helpLabel(enabled)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic -f <X> to <Y>` —— 所有维度里总开关正好是 X 的那些改成 Y。 */
+    private static int pbmMusicForceFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultPsdHelpAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门开关门提示音是 " + helpLabel(from) + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门开关门提示音为 " + helpLabel(from) + " 的维度改成 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic open|close`（不带参数）—— 显示当前维度这一项子开关与默认素材。 */
+    private static int pbmMusicItemShow(CommandContext<CommandSourceStack> context, String which) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        boolean enabled = EscalatorSpeedManager.isPsdToneEnabled(level, which);
+        String audio = EscalatorSpeedManager.getPsdToneAudio(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音：开关 " + helpLabel(enabled)
+                        + "，默认素材 " + psdToneAudioLabel(audio)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic open|close <on|off>` —— 设置**本维度**这一项子开关。 */
+    private static int pbmMusicItemGlobal(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultPsdToneEnabled(level, which, enabled);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「"
+                        + EscalatorSpeedData.psdToneLabel(which) + "」提示音已设为 " + helpLabel(enabled)
+                        + "；其它维度不变"), false);
+        return 1;
+    }
+
+    /** `/pbmmusic open|close <X> to <Y>` —— 本维度这一项子开关正好是 X 时才改成 Y。 */
+    private static int pbmMusicItemFromTo(CommandContext<CommandSourceStack> context, String which,
+                                          boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!EscalatorSpeedManager.replaceDefaultPsdToneEnabled(level, which, from, to)) {
+            boolean current = EscalatorSpeedManager.isPsdToneEnabled(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音不是 " + helpLabel(from)
+                            + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音从 " + helpLabel(from)
+                        + " 改为 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic -f open|close <on|off>` —— **所有维度**这一项子开关都设成该值。 */
+    private static int pbmMusicItemForceAll(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultPsdToneEnabledAll(source.getServer(), which, enabled);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音 = "
+                        + helpLabel(enabled)), false);
+        return 1;
+    }
+
+    /** `/pbmmusic -f open|close <X> to <Y>` —— 所有维度里这一项子开关正好是 X 的改成 Y。 */
+    private static int pbmMusicItemForceFromTo(CommandContext<CommandSourceStack> context, String which,
+                                               boolean from, boolean to) {
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultPsdToneEnabledAll(source.getServer(), which, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音是 "
+                            + helpLabel(from) + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音为 " + helpLabel(from)
+                        + " 的维度改成 " + helpLabel(to)), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.15】/pbmmusic open|close <名字>：屏蔽门提示音的**默认素材**（与 /lifthelp up|down|door 对称）。
+    //   数据层在维度默认那一份里（open → defaultPsdToneAudioOpen、close → defaultPsdToneAudioClose），
+    //   走 chime 同步包下发；-f 还会清/改「按扇门单独设置」那一张表，所以额外再走一次 tone 同步包。
+    // ------------------------------------------------------------------
+
+    /**
+     * {@code /pbmmusic open|close <名字>} —— 设置**本维度**这一项的默认素材。
+     * 名字：{@code default}（跟内置，按端别落 dooropen/mdoorclose）/ {@code default-c}（doorclose.ogg）
+     * / {@code default-m}（mdoorclose.ogg）/ {@code none}（这一项不播）/ 玩家导入的 .ogg 文件名。
+     */
+    private static int pbmMusicItemAudioSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolvePsdToneName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.setDefaultPsdToneAudio(level, which, arg.id());
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「"
+                        + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材已设为 "
+                        + psdToneAudioLabel(arg.id())
+                        + "；没有单独设置过这一项的门都会用它"), false);
+        return 1;
+    }
+
+    /** {@code /pbmmusic open|close <X> to <Y>} —— 本维度默认素材正好是 X 时才改成 Y。 */
+    private static int pbmMusicItemAudioFromTo(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolvePsdToneName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolvePsdToneName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        if (!EscalatorSpeedManager.replaceDefaultPsdToneAudio(level, which, from.id(), to.id())) {
+            String current = EscalatorSpeedManager.getPsdToneAudio(level, which);
+            // 「不是 X 就没改」按惯例用 sendSuccess（不是错误，只是没命中），与直梯那套一致
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材不是 "
+                            + psdToneAudioLabel(from.id()) + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材从 "
+                        + psdToneAudioLabel(from.id()) + " 改为 " + psdToneAudioLabel(to.id())), false);
+        return 1;
+    }
+
+    /**
+     * {@code /pbmmusic open|close -f <名字>} —— **所有维度**这一项的默认素材都设成它，
+     * 并清掉「按扇门单独设置」里的这一项（那些门从此跟维度默认）。
+     */
+    private static int pbmMusicItemAudioForceSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolvePsdToneName(level, name);
+        if (!arg.ok()) {
+            source.sendFailure(Component.literal(arg.error()));
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.setDefaultPsdToneAudioAll(source.getServer(), which, arg.id());
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        EscalatorSpeedManager.syncPsdToneToAll(source.getServer());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材 = "
+                        + psdToneAudioLabel(arg.id())
+                        + "，并清掉按扇门的单独设置"), false);
+        return 1;
+    }
+
+    /** {@code /pbmmusic open|close -f <X> to <Y>} —— 所有维度（含单独设置）里这项是 X 的改成 Y。 */
+    private static int pbmMusicItemAudioForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+        String name = StringArgumentType.getString(context, "name");
+        String targetName = StringArgumentType.getString(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolvePsdToneName(level, name);
+        if (!from.ok()) {
+            source.sendFailure(Component.literal(from.error()));
+            return 0;
+        }
+        EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolvePsdToneName(level, targetName);
+        if (!to.ok()) {
+            source.sendFailure(Component.literal(to.error()));
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.replaceDefaultPsdToneAudioAll(
+                source.getServer(), which, from.id(), to.id());
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        EscalatorSpeedManager.syncPsdToneToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材是 "
+                            + psdToneAudioLabel(from.id()) + "，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材为 "
+                        + psdToneAudioLabel(from.id()) + " 的维度改成 " + psdToneAudioLabel(to.id())), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.50】/pbmloud：屏蔽门提示音音量（1~1000，100 = 原始音量，1000 = 10×）
+    //   形状与 /lifthelploud 完全一致，只是「三项」变「两项」。
+    // ------------------------------------------------------------------
+
+    /** 注册 `/pbmloud` 的 `-f` 分支：`-f <音量>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(SmoothLift::pbmLoudForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(SmoothLift::pbmLoudForceFromTo))));
+    }
+
+    /** `/pbmloud open|close` 的音量子树（不带 -f）：`<音量>` 与 `<X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudItemCommand(String literal, String which) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(context -> pbmLoudItemGlobal(context, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(context -> pbmLoudItemFromTo(context, which)))));
+    }
+
+    /** `-f` 节点下的单项分支：`open|close <音量>` 与 `open|close <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudItemForceBranch(String literal, String which) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(context -> pbmLoudItemForceAll(context, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(context -> pbmLoudItemForceFromTo(context, which)))));
+    }
+
+    /** `/pbmloud`（不带参数）—— 显示当前维度生效的共用默认音量。 */
+    private static int pbmLoudShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int volume = EscalatorSpeedManager.getPsdHelpVolume(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度屏蔽门提示音共用音量：" + volume
+                        + "，100 = 原始音量；开=" + pbmVolumeText(level, "open")
+                        + "、关=" + pbmVolumeText(level, "close")
+                        + "，范围 " + EscalatorSpeedData.AUDIO_VOLUME_MIN + "~"
+                        + EscalatorSpeedData.AUDIO_VOLUME_MAX), false);
+        return 1;
+    }
+
+    /** 单项音量的显示文本：没单独调过就标「跟随共用」。 */
+    private static String pbmVolumeText(ServerLevel level, String which) {
+        int v = EscalatorSpeedManager.getPsdToneVolume(level, which);
+        return EscalatorSpeedManager.hasOwnPsdToneVolume(level, which) ? String.valueOf(v) : v + "跟随共用";
+    }
+
+    /** `/pbmloud <音量>` —— 设置**本维度**的共用默认音量。 */
+    private static int pbmLoudGlobal(CommandContext<CommandSourceStack> context) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultPsdHelpVolume(level, volume);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdHelpVolume(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门提示音共用音量已设为 " + applied
+                        + "；其它维度不变"),
+                false);
+        return 1;
+    }
+
+    /** `/pbmloud <X> to <Y>` —— 本维度共用音量正好是 X 时才改成 Y。 */
+    private static int pbmLoudFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getPsdHelpVolume(level);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门提示音共用音量不是 " + from + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultPsdHelpVolume(level, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdHelpVolume(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门提示音共用音量从 " + from + " 改为 " + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud -f <音量>` —— **所有维度**的共用音量都设成该值。 */
+    private static int pbmLoudForceAll(CommandContext<CommandSourceStack> context) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultPsdHelpVolumeAll(source.getServer(), volume);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedData.clampLiftHelpVolume(volume);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门提示音共用音量 = " + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud -f <X> to <Y>` —— 所有维度里共用音量正好是 X 的那些改成 Y。 */
+    private static int pbmLoudForceFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultPsdHelpVolumeAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门提示音共用音量是 " + from + "，未做修改"), false);
+            return 0;
+        }
+        int applied = EscalatorSpeedData.clampLiftHelpVolume(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门提示音共用音量为 " + from + " 的维度改成 " + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud open|close <音量>` —— 设置**本维度**这一项的音量。 */
+    private static int pbmLoudItemGlobal(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultPsdToneVolume(level, which, volume);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdToneVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「"
+                        + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量已设为 " + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud open|close <X> to <Y>` —— 本维度这一项音量正好是 X 时才改成 Y。 */
+    private static int pbmLoudItemFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getPsdToneVolume(level, which);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量不是 " + from
+                            + "，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultPsdToneVolume(level, which, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdToneVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量从 " + from
+                        + " 改为 " + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud -f open|close <音量>` —— **所有维度**这一项都设成该音量。 */
+    private static int pbmLoudItemForceAll(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultPsdToneVolumeAll(source.getServer(), which, volume);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedData.clampPsdToneVolume(volume);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量 = "
+                        + applied), false);
+        return 1;
+    }
+
+    /** `/pbmloud -f open|close <X> to <Y>` —— 所有维度里这一项音量正好是 X 的改成 Y。 */
+    private static int pbmLoudItemForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultPsdToneVolumeAll(source.getServer(), which, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量是 "
+                            + from + "，未做修改"), false);
+            return 0;
+        }
+        int applied = EscalatorSpeedData.clampPsdToneVolume(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量为 " + from
+                        + " 的维度改成 " + applied), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.22】/pbmmidiumloud / /pbmarriveloud：到站播报 / 进站报站
+    //   **各自那一项**的音量。形状与 /pbmloud 完全一致。
+    // ------------------------------------------------------------------
+
+    /** 这一项的中文名（反馈文案用）。 */
+    private static String pbmItemLabel(String which) {
+        return "midium".equals(which) ? "到站播报" : "进站报站";
+    }
+
+    /** 这一项音量指令的名字（反馈里提示 -f 用哪个指令）。 */
+    private static String pbmItemCommand(String which) {
+        return "midium".equals(which) ? "/pbmmidiumloud" : "/pbmarriveloud";
+    }
+
+    /** 注册 `-f` 分支：`-f <音量>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmItemLoudForce(String literal, String which) {
+        return Commands.literal(literal)
+                .then(Commands.argument("volume", volumeArg())
+                        .executes(context -> pbmItemLoudForceAll(context, which))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", volumeArg())
+                                        .executes(context -> pbmItemLoudForceFromTo(context, which)))));
+    }
+
+    /** 无参数——显示当前维度这一项生效的音量。 */
+    private static int pbmItemLoudShow(CommandContext<CommandSourceStack> context, String which) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int v = EscalatorSpeedManager.getPsdItemVolume(level, which);
+        boolean own = EscalatorSpeedManager.hasOwnPsdItemVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度屏蔽门" + pbmItemLabel(which) + "音量：" + v
+                        + (own ? "" : " 跟随共用")
+                        + "；范围 " + EscalatorSpeedData.AUDIO_VOLUME_MIN + "~"
+                        + EscalatorSpeedData.AUDIO_VOLUME_MAX), false);
+        return 1;
+    }
+
+    /** `<音量>` —— 设置**本维度**这一项的音量。 */
+    private static int pbmItemLoudGlobal(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if ("midium".equals(which)) {
+            EscalatorSpeedManager.setDefaultPsdMidiumVolume(level, volume);
+        } else {
+            EscalatorSpeedManager.setDefaultPsdArriveVolume(level, volume);
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdItemVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度 " + level.dimension().location() + " 屏蔽门" + pbmItemLabel(which)
+                        + "音量已设为 " + applied
+                        + "；其它维度不变，要对所有维度生效用 "
+                        + pbmItemCommand(which) + " -f " + applied), false);
+        return 1;
+    }
+
+    /** `<X> to <Y>` —— 本维度这一项音量正好是 X 时才改成 Y。 */
+    private static int pbmItemLoudFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getPsdItemVolume(level, which);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门" + pbmItemLabel(which) + "音量不是 " + from
+                            + "，当前为 " + current + "，未做修改"), false);
+            return 0;
+        }
+        if ("midium".equals(which)) {
+            EscalatorSpeedManager.replaceDefaultPsdMidiumVolume(level, from, to);
+        } else {
+            EscalatorSpeedManager.replaceDefaultPsdArriveVolume(level, from, to);
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdItemVolume(level, which);
+        source.sendSuccess(() -> Component.literal(
+                "本维度屏蔽门" + pbmItemLabel(which) + "音量从 " + from
+                        + " 改为 " + applied), false);
+        return 1;
+    }
+
+    /** `-f <音量>` —— **所有维度**这一项都设成该音量。 */
+    private static int pbmItemLoudForceAll(CommandContext<CommandSourceStack> context, String which) {
+        int volume = IntegerArgumentType.getInteger(context, "volume");
+        CommandSourceStack source = context.getSource();
+        int changed = "midium".equals(which)
+                ? EscalatorSpeedManager.setDefaultPsdMidiumVolumeAll(source.getServer(), volume)
+                : EscalatorSpeedManager.setDefaultPsdArriveVolumeAll(source.getServer(), volume);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedData.clampPsdToneVolume(volume);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的屏蔽门" + pbmItemLabel(which)
+                        + "音量 = " + applied + "，改动 " + changed + " 个维度"), false);
+        return 1;
+    }
+
+    /** `-f <X> to <Y>` —— 所有维度里这一项音量正好是 X 的改成 Y。 */
+    private static int pbmItemLoudForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+        int from = IntegerArgumentType.getInteger(context, "volume");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = "midium".equals(which)
+                ? EscalatorSpeedManager.replaceDefaultPsdMidiumVolumeAll(source.getServer(), from, to)
+                : EscalatorSpeedManager.replaceDefaultPsdArriveVolumeAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的屏蔽门" + pbmItemLabel(which)
+                            + "音量是 " + from + "，未做修改"), false);
+            return 0;
+        }
+        int applied = EscalatorSpeedData.clampPsdToneVolume(to);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有屏蔽门" + pbmItemLabel(which) + "音量为 " + from
+                        + " 的维度改成 " + applied + "，共 " + changed + " 个维度"),
+                false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.50 / 1.23】三类「淡入淡出范围」（格）—— 四条指令共用同一套形状
+    //
+    //   /pbmround        = 屏蔽门开关门提示音（open / close 两项共用一份）
+    //   /pbmmusicround   = 同上（用户点名的名字；与 /pbmround 读写**同一份数据**）
+    //   /pbmmidiumround  = 到站播报（/pbmmidium 那条音频）
+    //   /pbmarriveround  = 进站报站（/pbmarrive 那条音频）
+    //
+    //   形状完全同构（都是「一个整数 + to + -f」）：
+    //     （无参数）      -> 显示当前维度生效的范围
+    //     <范围>          -> 本维度范围 = 范围（1~128）
+    //     <X> to <Y>      -> 本维度范围正好是 X 时才改成 Y
+    //     -f <范围>       -> 强制**所有维度** = 范围
+    //     -f <X> to <Y>   -> 所有维度里范围正好是 X 的改成 Y
+    //
+    //   ★ 为什么三类要各存一份而不是继续共用提示音那一个值：开关门提示音是**机械事件**
+    //     （站在门口听最合理，默认 16 格），站台广播 / 进站报站是**说给整个站台听的**，
+    //     用户希望各自能调 —— 与 1.22 把三类**音量**拆开是同一个理由。
+    //   ★ 三者默认都是 16 格 ⇒ 老存档、以及没敲过这几条指令时，行为与 1.22 及以前**逐位相同**。
+    //   ★ 四条指令的树由 {@link #roundCommand} 一处产出 ⇒ 形状想不一致都难。
+    // ------------------------------------------------------------------
+
+    /** 这几条范围指令读写的是**哪一组**字段。 */
+    private enum RoundKind {
+        /** 屏蔽门开关门提示音（{@code /pbmround}、{@code /pbmmusicround}）。 */
+        TONE("屏蔽门提示音"),
+        /** 到站播报（{@code /pbmmidiumround}）。 */
+        MIDIUM("到站播报"),
+        /** 进站报站（{@code /pbmarriveround}）。 */
+        ARRIVE("进站报站");
+
+        /** 反馈文案里的那一项名字（与 /pbmloud 那一套用词一致）。 */
+        private final String label;
+
+        RoundKind(String label) {
+            this.label = label;
+        }
+    }
+
+    /** 读「本维度」的范围。 */
+    private static int roundOf(CommandSourceStack source, RoundKind kind) {
+        return switch (kind) {
+            case MIDIUM -> EscalatorSpeedManager.getPsdMidiumRound(source.getLevel());
+            case ARRIVE -> EscalatorSpeedManager.getPsdArriveRound(source.getLevel());
+            default -> EscalatorSpeedManager.getPsdHelpRound(source.getLevel());
+        };
+    }
+
+    /** 写「本维度」的范围。 */
+    private static void setRound(ServerLevel level, RoundKind kind, int round) {
+        switch (kind) {
+            case MIDIUM -> EscalatorSpeedManager.setDefaultPsdMidiumRound(level, round);
+            case ARRIVE -> EscalatorSpeedManager.setDefaultPsdArriveRound(level, round);
+            default -> EscalatorSpeedManager.setDefaultPsdHelpRound(level, round);
+        }
+    }
+
+    /** 「本维度范围正好是 X 才改成 Y」；返回成没成。 */
+    private static boolean replaceRound(ServerLevel level, RoundKind kind, int from, int to) {
+        return switch (kind) {
+            case MIDIUM -> EscalatorSpeedManager.replaceDefaultPsdMidiumRound(level, from, to);
+            case ARRIVE -> EscalatorSpeedManager.replaceDefaultPsdArriveRound(level, from, to);
+            default -> EscalatorSpeedManager.replaceDefaultPsdHelpRound(level, from, to);
+        };
+    }
+
+    /** 「所有维度 = 范围」；返回改动个数。 */
+    private static int setRoundAll(MinecraftServer server, RoundKind kind, int round) {
+        return switch (kind) {
+            case MIDIUM -> EscalatorSpeedManager.setDefaultPsdMidiumRoundAll(server, round);
+            case ARRIVE -> EscalatorSpeedManager.setDefaultPsdArriveRoundAll(server, round);
+            default -> EscalatorSpeedManager.setDefaultPsdHelpRoundAll(server, round);
+        };
+    }
+
+    /** 「所有维度里范围正好是 X 的改成 Y」；返回改动个数。 */
+    private static int replaceRoundAll(MinecraftServer server, RoundKind kind, int from, int to) {
+        return switch (kind) {
+            case MIDIUM -> EscalatorSpeedManager.replaceDefaultPsdMidiumRoundAll(server, from, to);
+            case ARRIVE -> EscalatorSpeedManager.replaceDefaultPsdArriveRoundAll(server, from, to);
+            default -> EscalatorSpeedManager.replaceDefaultPsdHelpRoundAll(server, from, to);
+        };
+    }
+
+    /** 造一条范围指令（含 `-f` 分支）；四条指令都由它产出 ⇒ 形状必然一致。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> roundCommand(String literal, RoundKind kind) {
+        return Commands.literal(literal)
+                .executes(context -> roundShow(context, kind))
+                .then(Commands.argument("round", roundArg())
+                        .executes(context -> roundGlobal(context, kind))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", roundArg())
+                                        .executes(context -> roundFromTo(context, kind)))))
+                .then(roundForce(kind));
+    }
+
+    /** 范围指令的 `-f` 分支：`-f <范围>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> roundForce(RoundKind kind) {
+        return Commands.literal("-f")
+                .then(Commands.argument("round", roundArg())
+                        .executes(context -> roundForceAll(context, kind))
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", roundArg())
+                                        .executes(context -> roundForceFromTo(context, kind)))));
+    }
+
+    /** （不带参数）—— 显示当前维度生效的淡入淡出范围。 */
+    private static int roundShow(CommandContext<CommandSourceStack> context, RoundKind kind) {
+        CommandSourceStack source = context.getSource();
+        int round = roundOf(source, kind);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度" + kind.label + "淡入淡出范围：" + round + " 格"), false);
+        return 1;
+    }
+
+    /** `<范围>` —— 设置**本维度**的范围。 */
+    private static int roundGlobal(CommandContext<CommandSourceStack> context, RoundKind kind) {
+        int round = IntegerArgumentType.getInteger(context, "round");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        setRound(level, kind, round);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = roundOf(source, kind);
+        source.sendSuccess(() -> Component.literal(
+                "本维度" + kind.label + "淡入淡出范围已设为 " + applied
+                        + " 格；其它维度不变"), false);
+        return 1;
+    }
+
+    /** `<X> to <Y>` —— 本维度范围正好是 X 时才改成 Y。 */
+    private static int roundFromTo(CommandContext<CommandSourceStack> context, RoundKind kind) {
+        int from = IntegerArgumentType.getInteger(context, "round");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        if (!replaceRound(level, kind, from, to)) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度" + kind.label + "淡入淡出范围不是 " + from + " 格，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = roundOf(source, kind);
+        source.sendSuccess(() -> Component.literal(
+                "本维度" + kind.label + "淡入淡出范围从 " + from + " 格改为 " + applied + " 格"), false);
+        return 1;
+    }
+
+    /** `-f <范围>` —— **所有维度**都设成该范围。 */
+    private static int roundForceAll(CommandContext<CommandSourceStack> context, RoundKind kind) {
+        int round = IntegerArgumentType.getInteger(context, "round");
+        CommandSourceStack source = context.getSource();
+        setRoundAll(source.getServer(), kind, round);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = roundOf(source, kind);
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的" + kind.label + "淡入淡出范围 = " + applied
+                        + " 格"), false);
+        return 1;
+    }
+
+    /** `-f <X> to <Y>` —— 所有维度里范围正好是 X 的那些改成 Y。 */
+    private static int roundForceFromTo(CommandContext<CommandSourceStack> context, RoundKind kind) {
+        int from = IntegerArgumentType.getInteger(context, "round");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = replaceRoundAll(source.getServer(), kind, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的" + kind.label + "淡入淡出范围是 " + from + " 格，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有" + kind.label + "淡入淡出范围为 " + from + " 格的维度改成 " + to
+                        + " 格"), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.16】/pbmclosewait：关门提示音的「强制等待时长」（秒）
+    //
+    //   语义（只在「停站时长不够放完整条关门素材」时生效）：
+    //     开门音效播完 → 等 N 秒 → 播语音播报 → 门一动（嘀嘀开始）就立刻掐断这段人声。
+    //   停站够长时这个值被**完全忽略**（走「整段提前播、结尾落在门上」那套）。
+    //   默认 5 秒（第一次加入模组时就是这个值）。
+    //
+    //   形状与 /pbmround 完全同构：显示 / <秒> / <X> to <Y> / -f <秒> / -f <X> to <Y>。
+    // ------------------------------------------------------------------
+
+    /** 注册 `/pbmclosewait` 的 `-f` 分支：`-f <秒>` 与 `-f <X> to <Y>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmCloseWaitForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("seconds", closeWaitArg())
+                        .executes(SmoothLift::pbmCloseWaitForceAll)
+                        .then(Commands.literal("to")
+                                .then(Commands.argument("target", closeWaitArg())
+                                        .executes(SmoothLift::pbmCloseWaitForceFromTo))));
+    }
+
+    /** `/pbmclosewait`（不带参数）—— 显示当前维度生效的强制等待时长。 */
+    private static int pbmCloseWaitShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int seconds = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度关门提示音强制等待时长：" + seconds + " 秒"
+                        + "。只在「停站时长不够放完整条关门素材」时生效："
+                        + "开门音播完后等这么多秒再放人声，门一动就把人声掐断；"
+                        + "停站够长时这个值被完全忽略"), false);
+        return 1;
+    }
+
+    /** `/pbmclosewait <秒>` —— 设置**本维度**的强制等待时长。 */
+    private static int pbmCloseWaitGlobal(CommandContext<CommandSourceStack> context) {
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedManager.setDefaultPsdCloseWaitSeconds(level, seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度关门提示音强制等待时长已设为 " + applied
+                        + " 秒；其它维度不变"), false);
+        return 1;
+    }
+
+    /** `/pbmclosewait <X> to <Y>` —— 本维度正好是 X 时才改成 Y。 */
+    private static int pbmCloseWaitFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "seconds");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int current = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+        if (current != from) {
+            source.sendSuccess(() -> Component.literal(
+                    "本维度关门提示音强制等待时长不是 " + from + " 秒，未做修改"), false);
+            return 0;
+        }
+        EscalatorSpeedManager.replaceDefaultPsdCloseWaitSeconds(level, from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+        source.sendSuccess(() -> Component.literal(
+                "本维度关门提示音强制等待时长从 " + from + " 秒改为 " + applied + " 秒"), false);
+        return 1;
+    }
+
+    /** `/pbmclosewait -f <秒>` —— **所有维度**都设成该值。 */
+    private static int pbmCloseWaitForceAll(CommandContext<CommandSourceStack> context) {
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.setDefaultPsdCloseWaitSecondsAll(source.getServer(), seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(source.getLevel());
+        source.sendSuccess(() -> Component.literal(
+                "已强制**所有维度**的关门提示音强制等待时长 = " + applied
+                        + " 秒"), false);
+        return 1;
+    }
+
+    /** `/pbmclosewait -f <X> to <Y>` —— 所有维度里正好是 X 的那些改成 Y。 */
+    private static int pbmCloseWaitForceFromTo(CommandContext<CommandSourceStack> context) {
+        int from = IntegerArgumentType.getInteger(context, "seconds");
+        int to = IntegerArgumentType.getInteger(context, "target");
+        CommandSourceStack source = context.getSource();
+        int changed = EscalatorSpeedManager.replaceDefaultPsdCloseWaitSecondsAll(source.getServer(), from, to);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        if (changed == 0) {
+            source.sendSuccess(() -> Component.literal(
+                    "没有任何维度的关门提示音强制等待时长是 " + from + " 秒，未做修改"), false);
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(
+                "已把所有关门提示音强制等待时长为 " + from + " 秒的维度改成 " + to
+                        + " 秒"), false);
+        return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.17】/pbmmidium：到站播报（素材名 + 等待秒数）
+    //
+    //   语义（与关门提示音那一套**互不相干**，两段声音各自独立）：
+    //     列车到站 → 屏蔽门**开门音（嘀嘀嘀）播完** → 等 Y 秒 → 播这一段语音播报。
+    //   ★ 它**永远不会被掐断**（用户点名「即使列车出站也要继续播放，直到播完」）——
+    //     门关不关、车走不走都不影响它。
+    //
+    //   形状：显示 / <名字> / <名字> <秒> / -f <名字> <秒>。
+    // ------------------------------------------------------------------
+
+    /** 注册 `/pbmmidium` 的 `-f` 分支：`-f <名字> <秒>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMidiumForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("name", midiumNameArg())
+                        .suggests(SmoothLift::pbmMidiumNameSuggestions)
+                        .then(Commands.argument("seconds", midiumWaitArg())
+                                .executes(SmoothLift::pbmMidiumForceAll)));
+    }
+
+    /** `/pbmmidium`（不带参数）—— 显示当前维度生效的到站播报。 */
+    private static int pbmMidiumShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        String id = EscalatorSpeedManager.getPsdMidiumAudio(level);
+        int seconds = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+        boolean off = EscalatorSpeedData.isPsdMidiumOff(id);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度到站播报：" + (off ? "不播" : "「" + id + "」")
+                        + "，等待 " + seconds + " 秒"
+                        + "。含义：列车到站、开门音播完后再等这么多秒开始播报；"
+                        + "这段播报**不会被掐断**。"
+                        + "等待秒数允许 0 ~ 正无穷"), false);
+        return 1;
+    }
+
+    /** `/pbmmidium <名字>` —— 只改素材，保留当前等待秒数。 */
+    private static int pbmMidiumSetNameOnly(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int keep = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+        return pbmMidiumApply(source, level, name, keep, null);
+    }
+
+    /** `/pbmmidium <名字> <秒>` —— 设置**本维度**。 */
+    private static int pbmMidiumGlobal(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        return pbmMidiumApply(source, level, name, seconds, "；其它维度不变");
+    }
+
+    /** `/pbmmidium -f <名字> <秒>` —— **所有维度**。 */
+    private static int pbmMidiumForceAll(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        String resolved = EscalatorSpeedManager.resolvePsdMidiumName(source.getLevel(), name);
+        if (resolved == null) {
+            sendUnknownMidiumName(source, name);
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.setDefaultPsdMidiumAll(source.getServer(), resolved, seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdMidiumWaitSeconds(source.getLevel());
+        boolean off = EscalatorSpeedData.isPsdMidiumOff(resolved);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有维度的到站播报设为 " + (off ? "不播" : "「" + resolved + "」")
+                        + "、等待 " + applied + " 秒"), false);
+        return 1;
+    }
+
+    /**
+     * `本维度` 那条路共用的落地：解析名字 → 落库 → 同步 → 反馈。
+     *
+     * @param suffix 反馈尾注（`null` = 不带尾注）
+     */
+    private static int pbmMidiumApply(CommandSourceStack source, ServerLevel level,
+                                      String name, int seconds, String suffix) {
+        String resolved = EscalatorSpeedManager.resolvePsdMidiumName(level, name);
+        if (resolved == null) {
+            sendUnknownMidiumName(source, name);
+            return 0;
+        }
+        EscalatorSpeedManager.setDefaultPsdMidium(level, resolved, seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+        boolean off = EscalatorSpeedData.isPsdMidiumOff(resolved);
+        String tail = suffix == null ? "" : suffix;
+        source.sendSuccess(() -> Component.literal(
+                "本维度到站播报已设为 "
+                        + (off ? "不播" : "「" + resolved + "」")
+                        + "、等待 " + applied + " 秒" + tail), false);
+        return 1;
+    }
+
+    /** 「这个名字找不到」的统一提示（顺便列出库里已有的名字）。 */
+    private static void sendUnknownMidiumName(CommandSourceStack source, String name) {
+        java.util.List<String> have = EscalatorSpeedManager.psdMidiumSuggestions(source.getLevel());
+        String list = String.join("、", have);
+        source.sendFailure(Component.literal(
+                "找不到名为「" + name + "」的音频。"
+                        + "已有的：" + (list.isEmpty() ? "" : list)));
+    }
+
+    /** `/pbmmidium` 素材名参数的 Tab 补全。 */
+    private static CompletableFuture<Suggestions> pbmMidiumNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+        CommandSourceStack source = context.getSource();
+        if (source == null) {
+            return builder.buildFuture();
+        }
+        String typed = builder.getRemainingLowerCase();
+        for (String candidate : EscalatorSpeedManager.psdMidiumSuggestions(source.getLevel())) {
+            if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                builder.suggest(candidate);
+            }
+        }
+        return builder.buildFuture();
+    }
+
+    // ------------------------------------------------------------------
+    // 【1.21】/pbmarrive：**进站报站**（素材名 + 秒数：-X = 最近一班车还剩 X 秒到站时播）
+    //
+    //   语义（与到站播报**互相独立**，两段声音各自播各自的）：
+    //     时刻表里下一班车还有 |X| 秒到站 → 播这一段语音，一直播到完。
+    //   ★ 与 /pbmmidium 的**唯一本质差别**是触发时刻：到站播报在「开门音之后 + Y 秒」，
+    //     进站报站在「开门音**之前** |X| 秒」。相同的是「永远不会被掐断」。
+    //   ★ 触发靠的是**时刻表**（MTR 自己的到达缓存，见 MtrDwellAccess#nextArrivalRemainingMs），
+    //     不是靠猜列车位置/速度 —— 用户点名「看时刻表啊，不要猜」。
+    //
+    //   形状：显示 / <名字> / <名字> <X> / -f <名字> <X>。
+    // ------------------------------------------------------------------
+
+    /** 注册 `/pbmarrive` 的 `-f` 分支：`-f <名字> <X>`。 */
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmArriveForce(String literal) {
+        return Commands.literal(literal)
+                .then(Commands.argument("name", arriveNameArg())
+                        .suggests(SmoothLift::pbmArriveNameSuggestions)
+                        .then(Commands.argument("seconds", arriveArg())
+                                .executes(SmoothLift::pbmArriveForceAll)));
+    }
+
+    /** `/pbmarrive`（不带参数）—— 显示当前维度生效的进站报站。 */
+    private static int pbmArriveShow(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        String id = EscalatorSpeedManager.getPsdArriveAudio(level);
+        int seconds = EscalatorSpeedManager.getPsdArriveSeconds(level);
+        boolean off = EscalatorSpeedData.isPsdArriveOff(id);
+        source.sendSuccess(() -> Component.literal(
+                "当前维度进站报站：" + (off ? "不播" : "「" + id + "」")
+                        + "，到站前 " + (-seconds) + " 秒"
+                        + "。含义：**读 MTR 时刻表**，这个站台「最近的一班列车还剩这么多秒到站」时开始播报"
+                        + "；"
+                        + "这段播报**不会被掐断**。"
+                        + "秒数允许 (-∞, 0]"), false);
+        return 1;
+    }
+
+    /** `/pbmarrive <名字>` —— 只改素材，保留当前秒数。 */
+    private static int pbmArriveSetNameOnly(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        int keep = EscalatorSpeedManager.getPsdArriveSeconds(level);
+        return pbmArriveApply(source, level, name, keep, null);
+    }
+
+    /** `/pbmarrive <名字> <X>` —— 设置**本维度**。 */
+    private static int pbmArriveGlobal(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        return pbmArriveApply(source, level, name, seconds, "；其它维度不变");
+    }
+
+    /** `/pbmarrive -f <名字> <X>` —— **所有维度**。 */
+    private static int pbmArriveForceAll(CommandContext<CommandSourceStack> context) {
+        String name = StringArgumentType.getString(context, "name");
+        int seconds = IntegerArgumentType.getInteger(context, "seconds");
+        CommandSourceStack source = context.getSource();
+        String resolved = EscalatorSpeedManager.resolvePsdArriveName(source.getLevel(), name);
+        if (resolved == null) {
+            sendUnknownArriveName(source, name);
+            return 0;
+        }
+        int changed = EscalatorSpeedManager.setDefaultPsdArriveAll(source.getServer(), resolved, seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdArriveSeconds(source.getLevel());
+        boolean off = EscalatorSpeedData.isPsdArriveOff(resolved);
+        source.sendSuccess(() -> Component.literal(
+                "已把所有维度的进站报站设为 " + (off ? "不播" : "「" + resolved + "」")
+                        + "、到站前 " + (-applied) + " 秒"), false);
+        return 1;
+    }
+
+    /** `本维度` 那条路共用的落地：解析名字 → 落库 → 同步 → 反馈。 */
+    private static int pbmArriveApply(CommandSourceStack source, ServerLevel level,
+                                      String name, int seconds, String suffix) {
+        String resolved = EscalatorSpeedManager.resolvePsdArriveName(level, name);
+        if (resolved == null) {
+            sendUnknownArriveName(source, name);
+            return 0;
+        }
+        EscalatorSpeedManager.setDefaultPsdArrive(level, resolved, seconds);
+        EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+        int applied = EscalatorSpeedManager.getPsdArriveSeconds(level);
+        boolean off = EscalatorSpeedData.isPsdArriveOff(resolved);
+        String tail = suffix == null ? "" : suffix;
+        source.sendSuccess(() -> Component.literal(
+                "本维度进站报站已设为 "
+                        + (off ? "不播" : "「" + resolved + "」")
+                        + "、到站前 " + (-applied) + " 秒" + tail), false);
+        return 1;
+    }
+
+    /** 「这个名字找不到」的统一提示（顺便列出库里已有的名字）。 */
+    private static void sendUnknownArriveName(CommandSourceStack source, String name) {
+        java.util.List<String> have = EscalatorSpeedManager.psdArriveSuggestions(source.getLevel());
+        String list = String.join("、", have);
+        source.sendFailure(Component.literal(
+                "找不到名为「" + name + "」的音频。"
+                        + "已有的：" + (list.isEmpty() ? "" : list)));
+    }
+
+    /** `/pbmarrive` 素材名参数的 Tab 补全。 */
+    private static CompletableFuture<Suggestions> pbmArriveNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+        CommandSourceStack source = context.getSource();
+        if (source == null) {
+            return builder.buildFuture();
+        }
+        String typed = builder.getRemainingLowerCase();
+        for (String candidate : EscalatorSpeedManager.psdArriveSuggestions(source.getLevel())) {
+            if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                builder.suggest(candidate);
+            }
+        }
+        return builder.buildFuture();
     }
 
     /**
      * 注册全部指令：`/futispeed`、`/jietispeed`、`/futimusic`、`/futiloud`、`/futihelp`、
      * `/futihelploud`、`/futiround`、`/futihelpround`、`/futihelpspeed`、`/futihelpmusic`，
-     * 以及【1.42】直梯提示音的 `/lifthelp`、`/lifthelpspeed`、【1.43】`/lifthelploud`。
+     * 以及【1.42】直梯提示音的 `/lifthelp`、`/lifthelpspeed`、【1.43】`/lifthelploud`，
+     * 以及【1.50】屏蔽门提示音的 `/pbmmusic`、`/pbmloud`、`/pbmround`、
+     * 【1.16】`/pbmclosewait`。
      *
      * <p>单独抽成一个方法是为了能**脱离游戏环境**直接建一棵 Brigadier 指令树来校验：
      * {@code _tools/CmdTreeCheck.java} 会把整棵树的补全项 dump 出来，确认
      * {@code /futihelp on to off}、{@code /futihelploud -f 200 to 300} 这类分支真的可达、
      * Tab 补全能补得出来。
      */
+    /**
+     * {@code /MBM music in}：一键把 &lt;存档&gt;/MBM_Audio 文件夹里**所有** .ogg 导入存档音频库。
+     *
+     * <p>逐条走 {@link EscalatorSpeedManager#importAudioToStore}（同一套 ogg 校验：大小上限、
+     * 必须是可播的 Ogg Vorbis）；同名已入库的会被覆盖（幂等）。**不改任何绑定 / 设置** ——
+     * 扶梯 / 直梯 / 提示音 / 屏蔽门当前指到哪个音频不受影响，导入完它们就能在对应选择列表里看到。
+     *
+     * <p>用户点名（【1.23】）：一键导入 MBM_Audio 里的所有音频（ogg 文件）到存档。
+     * 【1.53】用户点名把根指令从 {@code /dtmusic} 改成 {@code /MBM music}（方法名保留，
+     * 因为它描述的是「批量导入」这件事，与指令怎么写无关）。
+     */
+    private static int dtMusicImportAll(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        java.util.Map<String, byte[]> folder = EscalatorSpeedManager.scanAudioFiles(level);
+        if (folder.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(
+                    EscalatorSpeedManager.AUDIO_FOLDER + " 文件夹里没有可导入的 .ogg"), false);
+            return 0;
+        }
+        int ok = 0;
+        int skipped = 0;
+        for (String name : folder.keySet()) {
+            if (EscalatorSpeedManager.importAudioToStore(level, name) == null) {
+                ok++;
+            } else {
+                skipped++;
+            }
+        }
+        String msg = "已导入 " + ok + " 条音频到存档"
+                + (skipped > 0 ? "，跳过 " + skipped + " 条" : "");
+        source.sendSuccess(() -> Component.literal(msg), false);
+        if (ok > 0 && source.getPlayer() != null) {
+            // 必须补发音频库同步包：客户端的「已导入」列表（右列）就是从它来的。
+            EscalatorSpeedManager.sendAudioSyncTo(source.getPlayer(), level);
+        }
+        return ok;
+    }
+
+    /**
+     * {@code /MBM music delete}：从存档音频库删除**所有**已导入的音频。
+     *
+     * <p>逐条走 {@link EscalatorSpeedManager#deleteAudio}（它内部的 removeAudio 会把引用这段音频的
+     * 扶梯绑定 / 无障碍提示音 / 直梯提示音与默认素材 / 屏蔽门单门与维度默认一并退化成默认或「不播」），
+     * 再补与单条删除通道相同的三路同步。★ MBM_Audio 文件夹里的 ogg 文件**原样保留**（一个不删）。
+     *
+     * <p>用户点名（【1.23】）：从存档删除所有导入的 MBM_Audio 里的音频文件，但不删除
+     * MBM_Audio 文件夹里的音乐（ogg 文件）。
+     * 【1.53】用户点名把根指令从 {@code /dtmusic} 改成 {@code /MBM music delete}。
+     */
+    private static int dtMusicDeleteAll(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerLevel level = source.getLevel();
+        EscalatorSpeedData data = EscalatorSpeedManager.getServerData(level);
+        java.util.List<String> ids = new java.util.ArrayList<>(data.audioLibrary.keySet());
+        if (ids.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(
+                    "存档音频库里没有已导入的音频"), false);
+            return 0;
+        }
+        int removed = 0;
+        int midiumCleared = 0;
+        int arriveCleared = 0;
+        for (String id : ids) {
+            if (EscalatorSpeedManager.deleteAudio(level, id)) {
+                removed++;
+            }
+            // 与单条删除通道相同的两路兜底：到站播报 / 进站报站指向已删音频的按各自语义回落。
+            midiumCleared += EscalatorSpeedManager.clearPsdMidiumIfRemoved(level.getServer(), id);
+            arriveCleared += EscalatorSpeedManager.clearPsdArriveIfRemoved(level.getServer(), id);
+        }
+        String msg = "已从存档删除 " + removed + " 条音频"
+                + (midiumCleared > 0 ? "；" + midiumCleared + " 扇门的到站播报已一并改成「不播」" : "")
+                + (arriveCleared > 0 ? "；" + arriveCleared + " 扇门的进站报站已一并改成「不播」" : "");
+        source.sendSuccess(() -> Component.literal(msg), false);
+        if (removed > 0) {
+            EscalatorSpeedManager.syncAudioToAll(level.getServer());
+            EscalatorSpeedManager.syncHelpAudioToAll(level.getServer());
+            EscalatorSpeedManager.syncPsdChimeToAll(level.getServer());
+            if (source.getPlayer() != null) {
+                EscalatorSpeedManager.sendAudioSyncTo(source.getPlayer(), level);
+            }
+        }
+        return removed;
+    }
+
+    // ==================================================================
+    // 【1.53】「预设选择」界面：三个「港铁预设」+ 全音量
+    //
+    // ★★ 预设的实现选择（**这是本功能最关键的一条决定**）：
+    //   预设 = 「依次执行若干条指令」，所以服务端就是**把那几条指令原样派发一遍**
+    //   （{@code Commands#performPrefixedCommand}），而不是把各条的效果手抄成
+    //   setter 调用。理由有两条，第二条才是真正的坑：
+    //     1. 手抄 = 同一份规则写在两处（指令一份、预设一份）⇒ 迟早分叉；
+    //     2. `/pbmmusic open -f off` 这种写法**在人看来有歧义**（是「子开关关掉」还是
+    //        「素材设成不播」？），只有 Brigadier 知道它落到哪个分支（字面量优先 ⇒ 子开关）。
+    //        派发指令 = 让 Brigadier 自己决定，界面按一下与手敲的效果**天然一致**。
+    //
+    // 【1.58】★★ 上面第 2 条踩实了：`pbmmusic open -f off` 确实落到**子开关**，
+    //   于是「空白预设」把 open/close 的子开关关掉了；而「港铁预设」那两条
+    //   `pbmmusic open -f default` **只写素材、不碰子开关** ⇒ 声音再也回不来
+    //   （用户报「点空白预设后开关门声音没了，点港铁预设也设不回来」，LOG8 实证：
+    //    空白预设后 `子开关 open=false close=false`，港铁预设后**仍是 false**）。
+    //
+    //   ⇒ 两条规矩（以后改预设必须同时满足）：
+    //     ① **「不播」要用正名 `none`**（`pbmmusic open -f none`）——它是**素材层**的
+    //        取值，不动子开关；写 `off` 会落到子开关那一层，且**之后配任何素材都不出声**
+    //        （子开关关着 ⇒ 播放端直接 continue），这才是「怎么设都设不回来」的机制。
+    //     ② **要「恢复出声」的预设必须显式把子开关打开**（`pbmmusic open -f on`）——
+    //        素材和子开关是**两层**，写了素材不等于出声；否则预设名叫「港铁预设」
+    //        却救不回被关掉的开关，名不副实。
+    //   ★ 通用问法：**这条指令落到哪一层？**（素材层 / 子开关层 / 总开关层）——
+    //     见 crossround 教训：同名 token（`off`）在两层上含义不同，解析函数必须交代落在哪。
+    // ==================================================================
+
+    /** 【1.58】「经典港铁预设」= 依次执行这 11 条指令（前 9 条 = 用户点名清单；末 2 条见上面 ②）。 */
+    private static final String[] PRESET_CLASSIC_MTR = {
+            "futimusic -f default",
+            "futihelp -f on",
+            "lifthelp -f on",
+            "lifthelp door -f on",
+            "lifthelp up -f on",
+            "lifthelp down -f on",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f default",
+            "pbmmusic close -f default-m",
+            // ★ 末两条 = 把 open/close 的**子开关**打开；没有它们，预设救不回
+            //   「子开关被关掉」的存档（见上面 ② 与 LOG8）。
+            "pbmmusic open -f on",
+            "pbmmusic close -f on",
+    };
+
+    /** 【1.58】「简单港铁预设」= 依次执行这 11 条指令（前 9 条 = 用户点名清单；末 2 条同经典）。 */
+    private static final String[] PRESET_SIMPLE_MTR = {
+            "futimusic -f default",
+            "futihelp -f off",
+            "lifthelp -f on",
+            "lifthelp door -f off",
+            "lifthelp up -f on",
+            "lifthelp down -f on",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f default",
+            "pbmmusic close -f default-s",
+            "pbmmusic open -f on",
+            "pbmmusic close -f on",
+    };
+
+    /**
+     * 【1.58】「空白预设」= 依次执行这 9 条指令（用户点名清单，逐字照抄）。
+     *
+     * <p>★ 只有 PSD 那两条与用户的字面写法不同：用户写的是 {@code pbmmusic open -f off}，
+     * 但那会落到**子开关**（字面量优先）而不是「素材设成不播」⇒ 之后配什么素材都不出声。
+     * 按上面 ① 改用正名 {@code none}（素材层的不播）；子开关保持不动，于是「港铁预设」
+     * 一按就能把声音恢复回来。
+     */
+    private static final String[] PRESET_BLANK = {
+            "futimusic -f off",
+            "futihelp -f off",
+            "lifthelp -f off",
+            "lifthelp door -f off",
+            "lifthelp up -f off",
+            "lifthelp down -f off",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f none",
+            "pbmmusic close -f none",
+    };
+
+    /**
+     * 【1.53】把所有音量一起设成同一个值的指令清单（顺序 = 执行顺序）。
+     *
+     * <p>共 11 条，覆盖模组**全部**音量设置：
+     * <ol>
+     *   <li>{@code futiloud -f V} —— 扶梯运行底噪（含清掉按方块的单独音量）；</li>
+     *   <li>{@code futihelploud -f V} —— 扶梯无障碍提示音（含清掉按方块的单独音量）；</li>
+     *   <li>{@code lifthelploud -f V} —— 直梯共用默认音量；</li>
+     *   <li>{@code lifthelploud -f up|down|door V} —— 直梯三项各自的音量（否则单独调过的那项会盖掉共用值）；</li>
+     *   <li>{@code pbmloud -f V} —— 屏蔽门共用默认音量（含清掉按扇门的单独音量）；</li>
+     *   <li>{@code pbmloud -f open|close V} —— 屏蔽门两项各自的音量；</li>
+     *   <li>{@code pbmmidiumloud -f V} / {@code pbmarriveloud -f V} —— 到站播报 / 进站报站。</li>
+     * </ol>
+     * ★ 不含「淡入淡出范围」「等待秒数」「播哪段素材」—— 那些不是音量。
+     */
+    private static String[] allVolumeCommands(int volume) {
+        String v = String.valueOf(volume);
+        return new String[]{
+                "futiloud -f " + v,
+                "futihelploud -f " + v,
+                "lifthelploud -f " + v,
+                "lifthelploud -f up " + v,
+                "lifthelploud -f down " + v,
+                "lifthelploud -f door " + v,
+                "pbmloud -f " + v,
+                "pbmloud -f open " + v,
+                "pbmloud -f close " + v,
+                "pbmmidiumloud -f " + v,
+                "pbmarriveloud -f " + v,
+        };
+    }
+
+    /**
+     * 【1.53】按预设 id 取指令清单；认不出的 id 返回 {@code null}。
+     *
+     * <p>id 就是界面按钮用的小写字符串（{@code classic} / {@code simple} / {@code blank}）。
+     * 认不出时**返回 null 而不是空数组** —— 空数组会让「打错包」表现成「按了没反应」，
+     * null 能让上层明确回一句「未知预设」。
+     */
+    private static String[] presetCommands(String presetId) {
+        if ("classic".equals(presetId)) {
+            return PRESET_CLASSIC_MTR;
+        }
+        if ("simple".equals(presetId)) {
+            return PRESET_SIMPLE_MTR;
+        }
+        if ("blank".equals(presetId)) {
+            return PRESET_BLANK;
+        }
+        return null;
+    }
+
+    /** 【1.53】预设 id → 玩家看到的按钮名（与界面上的按钮文字**必须一致**，改一处要改两处）。 */
+    static String presetLabel(String presetId) {
+        if ("classic".equals(presetId)) {
+            return "「经典港铁预设」";
+        }
+        if ("simple".equals(presetId)) {
+            return "「简单港铁预设」";
+        }
+        if ("blank".equals(presetId)) {
+            return "「空白预设」";
+        }
+        return "「" + presetId + "」";
+    }
+
+    /**
+     * 【1.53】在服务端**依次执行**若干条指令。
+     *
+     * <p>★ {@code withSuppressedOutput()} 是必须的：这批指令每条都会
+     * {@code sendSuccess} 一句「已强制…」，8~11 条叠起来会把聊天框刷满。压制掉之后由调用方
+     * 自己发**一条**汇总。
+     *
+     * <p>用**玩家自己的**指令源（不是 {@code server.createCommandSourceStack()}）：与「玩家手敲」
+     * 完全同构 —— 维度取玩家所在维度、权限取玩家权限。模组的指令都没有
+     * {@code .requires(...)}（普通玩家也能敲），所以非 OP 玩家按预设同样生效。
+     *
+     * @return 成功执行的条数（解析失败的会被 Brigadier 计进异常、不致抛，跳过继续）
+     */
+    private static int runCommandBatch(ServerPlayer player, String[] commands) {
+        CommandSourceStack base = player.createCommandSourceStack().withSuppressedOutput();
+        int ok = 0;
+        for (String command : commands) {
+            // performPrefixedCommand 内部会吃掉解析失败（只记录异常），不会把整批打断。
+            player.getServer().getCommands().performPrefixedCommand(base, command);
+            ok++;
+        }
+        return ok;
+    }
+
+    /** 【1.53】/MBM help：让这个玩家打开「预设选择」界面（真正的界面在客户端）。 */
+    private static int mbmOpenHelp(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("这条指令需要由玩家执行"));
+            return 0;
+        }
+        ServerPlayNetworking.send(player, MBM_HELP_OPEN_CHANNEL, PacketByteBufs.empty());
+        return 1;
+    }
+
+    /**
+     * 【1.53】应用一个港铁预设（界面上按一下按钮走这里）。
+     *
+     * @param presetId classic / simple / blank
+     * @return 执行的指令条数；未知 id 返回 0
+     */
+    private static int applyPreset(ServerPlayer player, String presetId) {
+        String[] commands = presetCommands(presetId);
+        if (commands == null) {
+            return 0;
+        }
+        return runCommandBatch(player, commands);
+    }
+
+    /**
+     * 【1.53】把模组所有音量一起设成 {@code volume}（界面底部输入框按 ESC 时走这里）。
+     */
+    private static int applyAllVolumes(ServerPlayer player, int volume) {
+        int clamped = EscalatorSpeedData.clampHelpVolume(volume);
+        runCommandBatch(player, allVolumeCommands(clamped));
+        return clamped;
+    }
+
+    // ==================================================================
+    // 【1.55】同步：把「当前这一项」的设定同步给同域的其它项
+    // ==================================================================
+
+    /** 【1.55】扶梯的二级页编号：1 = 运行底噪素材，2 = 无障碍提示音素材。 */
+    public static final int SYNC_ESC_AUDIO = 1;
+    public static final int SYNC_ESC_HELP_AUDIO = 2;
+    /** 【1.55】一级菜单的编号（三个域通用）：0。 */
+    public static final int SYNC_TOP_LEVEL = 0;
+    /** 【1.55】直梯二级页编号 1/2/3 = up/down/chime（与界面 {@code PAGES} 同序）。 */
+    static final String[] SYNC_LIFT_WHICH = {"up", "down", "chime"};
+    /** 【1.55】屏蔽门二级页编号 1/2 = open/close 素材。 */
+    static final String[] SYNC_PSD_WHICH = {"open", "close"};
+    /** 【1.55】屏蔽门二级页编号 3 = 到站播报素材，4 = 进站报站素材。 */
+    static final int SYNC_PSD_MIDIUM_PAGE = 3;
+    static final int SYNC_PSD_ARRIVE_PAGE = 4;
+
+    /**
+     * 【1.55】「同步」的总入口。
+     *
+     * <p>两个按钮的**射程完全一样**，都由 {@code scope} 决定；差别只在 {@code force}：
+     * <ul>
+     *   <li>{@code force=false}「同步所有」—— 只写「默认」那一层，等同**不带 {@code -f}** 的指令。
+     *       没单独设置过的项跟着默认走 ⇒ 拿到同一个值；单独设置过的项保留自己的
+     *       ⇒ 正是用户说的「不包括修改过的」。**不需要枚举所有项。**</li>
+     *   <li>{@code force=true}「强制同步」—— 写默认 + 清掉该项的单独设置，等同**带 {@code -f}**
+     *       的指令 ⇒ 连修改过的一起变成同一个值。</li>
+     * </ul>
+     *
+     * <p>射程（{@code scope}）＝ 玩家当前所在的那一层菜单：
+     * <pre>
+     * 扶梯 0 = 速度 / 阶梯速度 / 声音音量 / 提示音音量 / 无障碍开关          「扶梯设置」页
+     *      1 = 运行底噪素材                                           「选择扶梯音乐」页
+     *      2 = 无障碍提示音素材，进 + 出两端                              「选择无障碍提示音」页
+     * 直梯 0 = 三项提示音素材：上楼 / 下楼 / 开关门                          主界面
+     *      1/2/3 = 该项提示音的素材                                    三项各自的列表页
+     * 屏蔽门 0 = 关门等待 / 开门音量 / 关门音量 / 到站等待+音量 / 进站秒数+音量   主界面
+     *       1/2 = 开门 / 关门提示音素材                                两个提示音列表页
+     *       3 = 到站播报素材                                          到站播报页
+     *       4 = 进站报站素材                                          进站报站页
+     * 列车 0 = 运行 / 转弯 / 道岔 / 进站 / 出站 五项音量                「列车音效」页
+     *       ★【1.56】数据层未接（用户点名「功能不着急做」）⇒ 见 {@link #syncTrain}，只回话不写
+     * </pre>
+     *
+     * <p>★ 两条**故意不进射程**的东西，理由都是「那一层不存在同一件事」：
+     * <ul>
+     *   <li>直梯的「音量 / 子开关」——它们本来就是**维度默认**、不是按项数据，
+     *       把默认写回默认等于没写；而且硬写会把「跟随共用默认」的项钉死成固定值。</li>
+     *   <li>屏蔽门的「开门等待」——它**没有维度默认字段**，只有按门那一层，
+     *       现有数据模型表达不了「同步给没设置过的门」。</li>
+     * </ul>
+     *
+     * <p>★ 反馈文案一律**不带括号**（用户点名的规范）。
+     *
+     * @return 给玩家看的一句话结果
+     */
+    private static String syncSettings(MinecraftServer server, ServerLevel level,
+                                       String domain, int scope, boolean force, long key) {
+        return switch (domain) {
+            case "esc" -> syncEscalator(server, level, scope, force, BlockPos.of(key));
+            case "lift" -> syncLift(server, level, scope, force, key);
+            case "psd" -> syncPsd(server, level, scope, force, key);
+            case "train" -> syncTrain(server, level, scope, force, key);
+            default -> "同步失败：未知的范围 " + domain;
+        };
+    }
+
+    /** 【1.55】扶梯域同步。{@code pos} = 打开界面的那条扶梯上的方块。 */
+    private static String syncEscalator(MinecraftServer server, ServerLevel level,
+                                        int scope, boolean force, BlockPos pos) {
+        if (scope == 0) {
+            // 五个值各读一次「这一条扶梯此刻生效的值」= 单独设置优先、否则维度默认
+            double run = EscalatorSpeedManager.getSpeed(level, pos);
+            double step = EscalatorSpeedManager.getAnimationSpeed(level, pos);
+            int volume = EscalatorSpeedManager.getVolumeForScreen(level, pos);
+            int helpVolume = EscalatorSpeedManager.getHelpVolume(level, pos);
+            boolean help = EscalatorSpeedManager.isHelpEnabled(level, pos);
+            if (force) {
+                EscalatorSpeedManager.forceGlobalRunSpeed(level, run);
+                EscalatorSpeedManager.forceGlobalStepSpeed(level, step);
+                EscalatorSpeedManager.forceDefaultVolume(level, volume);
+                EscalatorSpeedManager.forceDefaultHelpVolume(level, helpVolume);
+                EscalatorSpeedManager.forceDefaultHelp(level, help);
+            } else {
+                EscalatorSpeedManager.setGlobalRunSpeed(level, run);
+                EscalatorSpeedManager.setGlobalStepSpeed(level, step);
+                EscalatorSpeedManager.setDefaultVolume(level, volume);
+                EscalatorSpeedManager.setDefaultHelpVolume(level, helpVolume);
+                EscalatorSpeedManager.setDefaultHelp(level, help);
+            }
+            // 速度走全量包，另外四项各有专用包 —— 与「拆扶梯」那条清理路径同一组
+            EscalatorSpeedManager.syncToAll(server);
+            EscalatorSpeedManager.syncVolumeToAll(server);
+            EscalatorSpeedManager.syncHelpToAll(server);
+            EscalatorSpeedManager.syncHelpVolumeToAll(server);
+            String values = "速度 " + EscalatorSpeedData.format(run)
+                    + " · 音量 " + volume + " · 提示音音量 " + helpVolume
+                    + " · 无障碍" + (help ? "开" : "关");
+            return force
+                    ? "已强制同步扶梯：" + values + " —— 所有扶梯都改成这一套，单独设置过的也一起改"
+                    : "已同步扶梯：" + values + " 已设为默认 —— 单独设置过的扶梯保持不动";
+        }
+        if (scope == SYNC_ESC_AUDIO) {
+            String id = EscalatorSpeedManager.getBlockAudioId(level, pos);
+            if (id == null) {
+                id = EscalatorSpeedManager.getDefaultAudio(level);
+            }
+            if (force) {
+                EscalatorSpeedManager.forceDefaultAudio(level, id);
+            } else {
+                EscalatorSpeedManager.setDefaultAudio(level, id);
+            }
+            EscalatorSpeedManager.syncAudioToAll(server);
+            return force
+                    ? "已强制同步扶梯声音：所有扶梯都改用 " + audioLabel(id) + "，单独绑定过的也一起改"
+                    : "已同步扶梯声音：" + audioLabel(id) + " 已设为默认 —— 单独绑定过的扶梯保持不动";
+        }
+        if (scope == SYNC_ESC_HELP_AUDIO) {
+            // 进 / 出两端各一个默认字段，都要同步
+            String in = EscalatorSpeedManager.getHelpAudioForScreen(level, pos, true);
+            String out = EscalatorSpeedManager.getHelpAudioForScreen(level, pos, false);
+            if (force) {
+                EscalatorSpeedManager.forceDefaultHelpAudio(level, in, true);
+                EscalatorSpeedManager.forceDefaultHelpAudio(level, out, false);
+            } else {
+                EscalatorSpeedManager.setDefaultHelpAudio(level, in, true);
+                EscalatorSpeedManager.setDefaultHelpAudio(level, out, false);
+            }
+            EscalatorSpeedManager.syncHelpAudioToAll(server);
+            return force
+                    ? "已强制同步扶梯提示音素材：两端都改成 进 " + audioLabel(in)
+                        + " / 出 " + audioLabel(out) + "，所有扶梯都照此"
+                    : "已同步扶梯提示音素材为默认：进 " + audioLabel(in)
+                        + " / 出 " + audioLabel(out) + " —— 单独设置过的扶梯保持不动";
+        }
+        return "同步失败：未知的扶梯页 " + scope;
+    }
+
+    /** 【1.55】直梯域同步。{@code key} = 那条直梯的竖井列 key。 */
+    private static String syncLift(MinecraftServer server, ServerLevel level,
+                                   int scope, boolean force, long key) {
+        String[] whichs;
+        if (scope == 0) {
+            whichs = SYNC_LIFT_WHICH;
+        } else if (scope >= 1 && scope <= SYNC_LIFT_WHICH.length) {
+            whichs = new String[]{SYNC_LIFT_WHICH[scope - 1]};
+        } else {
+            return "同步失败：未知的直梯页 " + scope;
+        }
+        for (String which : whichs) {
+            String id = EscalatorSpeedManager.toneField(
+                    EscalatorSpeedManager.getServerLiftTone(level, key), which);
+            if (id == null || EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(id)) {
+                // 这一项写着「跟维度默认」⇒ 它此刻生效的就是维度默认本身，原样取回来
+                id = EscalatorSpeedManager.getLiftToneAudio(level, which);
+            }
+            if (force) {
+                EscalatorSpeedManager.setDefaultLiftToneAudioAll(server, which, id);
+            } else {
+                EscalatorSpeedManager.setDefaultLiftToneAudio(level, which, id);
+            }
+        }
+        EscalatorSpeedManager.syncLiftToneToAll(server);
+        if (scope == 0) {
+            return force
+                    ? "已强制同步直梯提示音素材：所有直梯的上楼 / 下楼 / 开关门都改用这条直梯的设置"
+                    : "已同步直梯提示音素材为默认：没单独设置过的直梯跟着变，单独设置过的保持不动";
+        }
+        String label = EscalatorSpeedManager.liftToneEnabledLabel(whichs[0]);
+        return force
+                ? "已强制同步直梯" + label + "素材：所有直梯都改用这条直梯的设置"
+                : "已同步直梯" + label + "素材为默认：单独设置过的直梯保持不动";
+    }
+
+    /** 【1.55】屏蔽门域同步。{@code key} = 那串门的 {@code runKey}。 */
+    private static String syncPsd(MinecraftServer server, ServerLevel level,
+                                  int scope, boolean force, long key) {
+        EscalatorSpeedData data = EscalatorSpeedManager.getServerData(level);
+        if (scope == 0) {
+            int closeWait = EscalatorSpeedManager.getDoorPsdCloseWaitSeconds(level, key);
+            int openVolume = EscalatorSpeedManager.getDoorPsdToneVolume(level, key, "open");
+            int closeVolume = EscalatorSpeedManager.getDoorPsdToneVolume(level, key, "close");
+            int midiumWait = EscalatorSpeedManager.getDoorPsdMidiumWaitSeconds(level, key);
+            int midiumVolume = EscalatorSpeedManager.getDoorPsdMidiumVolume(level, key);
+            int arriveSeconds = EscalatorSpeedManager.getDoorPsdArriveSeconds(level, key);
+            int arriveVolume = EscalatorSpeedManager.getDoorPsdArriveVolume(level, key);
+            // 到站 / 进站的「素材 + 等待秒数」挤在同一只 API 里 ⇒ 把当前默认素材原样写回去，
+            // 素材不变、只改秒数。素材值必须在开始写之前读，否则会被自己改掉。
+            String midiumAudio = data.defaultPsdMidiumAudio;
+            String arriveAudio = data.defaultPsdArriveAudio;
+            if (force) {
+                EscalatorSpeedManager.setDefaultPsdCloseWaitSecondsAll(server, closeWait);
+                EscalatorSpeedManager.setDefaultPsdToneVolumeAll(server, "open", openVolume);
+                EscalatorSpeedManager.setDefaultPsdToneVolumeAll(server, "close", closeVolume);
+                EscalatorSpeedManager.setDefaultPsdMidiumAll(server, midiumAudio, midiumWait);
+                EscalatorSpeedManager.setDefaultPsdMidiumVolumeAll(server, midiumVolume);
+                EscalatorSpeedManager.setDefaultPsdArriveAll(server, arriveAudio, arriveSeconds);
+                EscalatorSpeedManager.setDefaultPsdArriveVolumeAll(server, arriveVolume);
+            } else {
+                EscalatorSpeedManager.setDefaultPsdCloseWaitSeconds(level, closeWait);
+                EscalatorSpeedManager.setDefaultPsdToneVolume(level, "open", openVolume);
+                EscalatorSpeedManager.setDefaultPsdToneVolume(level, "close", closeVolume);
+                EscalatorSpeedManager.setDefaultPsdMidium(level, midiumAudio, midiumWait);
+                EscalatorSpeedManager.setDefaultPsdMidiumVolume(level, midiumVolume);
+                EscalatorSpeedManager.setDefaultPsdArrive(level, arriveAudio, arriveSeconds);
+                EscalatorSpeedManager.setDefaultPsdArriveVolume(level, arriveVolume);
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(server);
+            String values = "关门等待 " + closeWait + "s · 开门音量 " + openVolume
+                    + " · 关门音量 " + closeVolume + " · 到站等待 " + midiumWait
+                    + "s · 到站音量 " + midiumVolume + " · 进站提前 " + arriveSeconds
+                    + "s · 进站音量 " + arriveVolume;
+            String tail = " ● 开门等待没有默认值，未同步";
+            return force
+                    ? "已强制同步屏蔽门：" + values + " —— 所有门串都改成这一套" + tail
+                    : "已同步屏蔽门：" + values + " 已设为默认 —— 单独设置过的门串保持不动" + tail;
+        }
+        if (scope >= 1 && scope <= SYNC_PSD_WHICH.length) {
+            String which = SYNC_PSD_WHICH[scope - 1];
+            EscalatorSpeedData.PsdToneAudio record = EscalatorSpeedManager.psdDoorRecord(level, key);
+            String id = "open".equals(which) ? record.open() : record.close();
+            if (id == null || EscalatorSpeedData.PSD_TONE_DEFAULT.equals(id)) {
+                // 这一项写着「跟维度默认」⇒ 它此刻生效的就是维度默认本身
+                id = EscalatorSpeedManager.getPsdToneAudio(level, which);
+            }
+            if (force) {
+                EscalatorSpeedManager.setDefaultPsdToneAudioAll(server, which, id);
+            } else {
+                EscalatorSpeedManager.setDefaultPsdToneAudio(level, which, id);
+            }
+            EscalatorSpeedManager.syncPsdToneToAll(server);
+            String name = "open".equals(which) ? "开门" : "关门";
+            return force
+                    ? "已强制同步屏蔽门" + name + "提示音：" + audioLabel(id) + " —— 所有门串都照此"
+                    : "已同步屏蔽门" + name + "提示音：" + audioLabel(id)
+                        + " 已设为默认 —— 单独设置过的门串保持不动";
+        }
+        if (scope == SYNC_PSD_MIDIUM_PAGE) {
+            String id = EscalatorSpeedManager.getDoorPsdMidiumAudio(level, key);
+            if (force) {
+                EscalatorSpeedManager.setDefaultPsdMidiumAll(server, id, data.defaultPsdMidiumWaitSeconds);
+            } else {
+                EscalatorSpeedManager.setDefaultPsdMidium(level, id, data.defaultPsdMidiumWaitSeconds);
+            }
+            EscalatorSpeedManager.syncPsdToneToAll(server);
+            return force
+                    ? "已强制同步到站播报：" + audioLabel(id) + " —— 所有门串都照此"
+                    : "已同步到站播报：" + audioLabel(id) + " 已设为默认 —— 单独设置过的门串保持不动";
+        }
+        if (scope == SYNC_PSD_ARRIVE_PAGE) {
+            String id = EscalatorSpeedManager.getDoorPsdArriveAudio(level, key);
+            if (force) {
+                EscalatorSpeedManager.setDefaultPsdArriveAll(server, id, data.defaultPsdArriveSeconds);
+            } else {
+                EscalatorSpeedManager.setDefaultPsdArrive(level, id, data.defaultPsdArriveSeconds);
+            }
+            EscalatorSpeedManager.syncPsdToneToAll(server);
+            return force
+                    ? "已强制同步进站报站：" + audioLabel(id) + " —— 所有门串都照此"
+                    : "已同步进站报站：" + audioLabel(id) + " 已设为默认 —— 单独设置过的门串保持不动";
+        }
+        return "同步失败：未知的屏蔽门页 " + scope;
+    }
+
+    /**
+     * 【1.56】列车音效域同步。
+     *
+     * <p>★ 用户点名「功能不着急做」⇒ 这一套**还没有数据层**：5 个音量目前只是「列车音效」界面上的
+     * 几个输入框，5 个按钮也还没接素材绑定。所以这里**故意一个字段都不写**，只回一条诚实的话。
+     *
+     * <p>★ 为什么不「假装成功」：这一段的唯一作用是**告诉玩家到底发生了什么**。
+     * 「按了同步、回一句已同步」而实际什么都没变，是最难查的那种坑（哨兵说谎）。
+     * 宁可明说「还没接」。
+     *
+     * <p>接数据层时这里按 {@link #syncPsd} 的形状补：{@code scope} 取
+     * {@link #SYNC_TRAIN_RUN}~{@link #SYNC_TRAIN_DEPART} 之一（与界面五个页的页号同序同内容），
+     * {@code key} = 侧线 id，每项一个「维度默认音量」，force 支走 {@code *All} 版本清掉按项覆盖。
+     *
+     * <p>★ 现在按 scope 分档回话，是为了**接数据层时一眼看出域有没有接错**
+     * （五个 scope 的文案各不相同 ⇒ 点「列车转弯音效」页按同步，回话里就该出现「转弯」二字）。
+     * 这条也被回归断言（{@code check-1.57}）——接数据层时别把这层区分删掉。
+     */
+    private static String syncTrain(MinecraftServer server, ServerLevel level,
+                                    int scope, boolean force, long key) {
+        String which = switch (scope) {
+            case SYNC_TRAIN_RUN -> "列车运行音效";
+            case SYNC_TRAIN_TURN -> "列车转弯音效";
+            case SYNC_TRAIN_SWITCH -> "列车道岔音效";
+            case SYNC_TRAIN_ARRIVE -> "列车进站音效";
+            case SYNC_TRAIN_DEPART -> "列车出站音效";
+            default -> "列车音效";
+        };
+        return which + "还没接数据层，暂时没有可同步的设置";
+    }
+
+    /**
+     * 【1.53】建 `/MBM` 这棵树。抽成方法是为了能用**两个字面量**（{@code MBM} / {@code mbm}）
+     * 各 build 一棵独立的新树 —— Brigadier 的 {@code register} 拒收同一个 builder 两次。
+     *
+     * <pre>
+     * /MBM                 = /MBM help
+     * /MBM help            打开帮助界面
+     * /MBM music in        批量导入 MBM_Audio 里的所有 ogg
+     * /MBM music delete    清空存档音频库（不动文件夹）
+     * </pre>
+     *
+     * <p>★【1.57】用户点名**撤销** {@code /MBM train music}（列车音效界面的入口改成了
+     * **石斧右键侧线铁轨**，见 {@link #isMtrRail}）。
+     * 这里**故意不留** {@code train} 这个分类节点 —— 留一个空壳节点会让
+     * {@code /MBM train} 看起来「存在」，也容易被人当成「界面坏了」。
+     * 回归里有一条专门断言它**解析失败**（{@code expectNotParsed}），别顺手加回来。
+     */
+    private static LiteralArgumentBuilder<CommandSourceStack> mbmTree(String literal) {
+        return Commands.literal(literal)
+                .executes(SmoothLift::mbmOpenHelp)
+                .then(Commands.literal("help")
+                        .executes(SmoothLift::mbmOpenHelp))
+                .then(Commands.literal("music")
+                        .then(Commands.literal("in")
+                                .executes(SmoothLift::dtMusicImportAll))
+                        .then(Commands.literal("delete")
+                                .executes(SmoothLift::dtMusicDeleteAll)));
+    }
+
     static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
         // /futispeed：全局扶梯运行速度（只作用于「全局扶梯」＝没被石斧改过、或改完仍与全局一致的）
         //   （无参数）   -> 显示当前扶梯速度（站在扶梯上就显示那一条，否则显示全局默认）
@@ -2540,6 +5034,20 @@ public class SmoothLift implements ModInitializer {
                         .executes(SmoothLift::futiFromTo))))
             .then(futiForce("-f"))
         );
+
+        // 【1.53】/MBM：模组自己的「总入口」。
+        //   （无参数）      -> 与 /MBM help 相同（打开帮助界面）
+        //   help           -> 打开「预设选择」界面（三个港铁预设 + 全音量输入框）
+        //   music in       -> 一键把 MBM_Audio 文件夹里**所有** .ogg 导入存档音频库（不改任何绑定/设置）
+        //   music delete   -> 从存档音频库删除**所有**已导入的音频（引用它的扶梯/直梯/提示音/屏蔽门
+        //                     一并退化成默认或静音；★ MBM_Audio 文件夹里的 ogg 文件原样保留，一个不删）
+        //
+        // ★【1.23】这两个批量指令原来叫 `/dtmusic in` / `/dtmusic delete`；【1.53】用户点名
+        //   改成 `/MBM music in` / `/MBM music delete`（**旧名不保留**，是一次干净改名）。
+        // ★ 同时注册小写别名 `mbm`：MC 的指令字面量是**大小写敏感**的，只写 `MBM` 时
+        //   `/mbm help` 会报「未知指令」。两个名字指向同一棵树（各自 build 一份新节点）。
+        dispatcher.register(mbmTree("MBM"));
+        dispatcher.register(mbmTree("mbm"));
 
         // /jietispeed：全局扶梯阶梯速度（**永远不动运行速度**）
         //   （无参数）   -> 显示当前阶梯速度
@@ -2568,9 +5076,11 @@ public class SmoothLift implements ModInitializer {
         dispatcher.register(Commands.literal("futimusic")
             .executes(SmoothLift::futiMusicShow)
             .then(Commands.argument("name", StringArgumentType.string())
+                .suggests(SmoothLift::futiMusicNameSuggestions)
                 .executes(SmoothLift::futiMusicSet)
                 .then(Commands.literal("to")
                     .then(Commands.argument("target", StringArgumentType.string())
+                        .suggests(SmoothLift::futiMusicNameSuggestions)
                         .executes(SmoothLift::futiMusicFromTo))))
             .then(futiMusicForce("-f"))
         );
@@ -2741,11 +5251,13 @@ public class SmoothLift implements ModInitializer {
         //   on to off        -> 本维度开关正好是 on 时才改成 off
         //   -f on | off      -> 强制**所有维度** = on/off
         //   -f on to off     -> 所有维度里开关正好是 on 的改成 off
+        //   up | down | door -> 【1.15】三提示音子命令（子开关 + 默认素材），见下面那一节
         // ★ 与 /futihelp 是两件事：那条管的是**扶梯**的无障碍提示音（进/出口「咔啪」声），
         //   本指令管的是**直梯**关门/开门时连播 liftmusic.ogg（关门 4 次、开门 2 次）。
         // ★ 直梯提示音只有「维度默认」一层数据，所以 -f 的含义是「对所有维度」而不是
         //   「对所有直梯」—— 见 EscalatorSpeedManager 里 1.42 那一段。
         // ★ 命令结构：`on`/`off` 在「不带 -f」和「带 -f」两层下面各有一套（与 /futihelp 完全一致）。
+        //   `up`/`down`/`door` 三个子节点也是「不带 -f」和「带 -f」各一套，且都带 <名字> 音频分支。
         dispatcher.register(Commands.literal("lifthelp")
             .executes(SmoothLift::liftHelpShow)
             .then(Commands.literal("on")
@@ -2759,32 +5271,11 @@ public class SmoothLift implements ModInitializer {
                     .then(Commands.literal("on")
                         .executes(context -> liftHelpFromTo(context, false, true)))))
             .then(liftHelpForce("-f"))
-        );
-
-        // 【1.46】三提示音独立子开关：形状与 /lifthelp 一致，但分别管 up / down / chime。
-        //   /lifthelpup 上楼提示音 / /lifthelpdown 下楼提示音 / /lifthelpchime 开关门提示音
-        dispatcher.register(liftToneSwitchCommand("up"));
-        dispatcher.register(liftToneSwitchCommand("down"));
-        dispatcher.register(liftToneSwitchCommand("chime"));
-
-        // 【1.42】/lifthelpspeed：**直梯**开关门提示音的**倍速**（允许小数，0.5~2.0）。
-        //   （无参数）       -> 显示当前维度的倍速
-        //   <倍速>           -> 本维度倍速 = 倍速
-        //   <X> to <Y>       -> 本维度倍速正好是 X 时才改成 Y
-        //   -f <倍速>        -> 强制**所有维度** = 倍速
-        //   -f <X> to <Y>    -> 所有维度里倍速正好是 X 的改成 Y
-        // 1 = 原速。上限 2 / 下限 0.5 是**原版 SoundEngine.calculatePitch 对 pitch 的硬夹取**
-        // （Mth.clamp(pitch, 0.5F, 2.0F)），超出这一段的取值会被悄悄压回去，
-        // 所以参数类型直接夹住，玩家填 3 会当场看到「必须在 0.5 和 2.0 之间」而不是「填了没用」。
-        // ★ 与 /futihelpspeed（扶梯提示音速率，单位 Hz）是两件完全不同的事。
-        dispatcher.register(Commands.literal("lifthelpspeed")
-            .executes(SmoothLift::liftHelpSpeedShow)
-            .then(Commands.argument("speed", liftHelpSpeedArg())
-                .executes(SmoothLift::liftHelpSpeedGlobal)
-                .then(Commands.literal("to")
-                    .then(Commands.argument("target", liftHelpSpeedArg())
-                        .executes(SmoothLift::liftHelpSpeedFromTo))))
-            .then(liftHelpSpeedForce("-f"))
+            // 【1.15】三提示音子命令：up / down / door（door = 开关门，数据层仍叫 chime）。
+            //   literal 是玩家写的词，which 是数据层的项目名，只有 door → chime 需要映射。
+            .then(liftToneBranch("up", "up"))
+            .then(liftToneBranch("down", "down"))
+            .then(liftToneBranch("door", "chime"))
         );
 
         // 【1.43】/lifthelploud：**直梯**开关门提示音的**音量**（1~1000，100 = 原始音量，
@@ -2794,7 +5285,6 @@ public class SmoothLift implements ModInitializer {
         //   <X> to <Y>       -> 本维度音量正好是 X 时才改成 Y
         //   -f <音量>        -> 强制**所有维度** = 音量
         //   -f <X> to <Y>    -> 所有维度里音量正好是 X 的改成 Y
-        // 命令结构与 /lifthelpspeed 完全一致（只有参数类型不同：整数 vs 小数）。
         // ★ 这是**第三套**互不影响的音量：/futiloud = 扶梯运行底噪（整条、射程 16 格）、
         //   /futihelploud = 扶梯无障碍提示音（端头单块、射程 4 格）、本指令 = 直梯开关门提示音。
         //   三者各存各的，改一个不影响另外两个。
@@ -2844,6 +5334,194 @@ public class SmoothLift implements ModInitializer {
                     .then(Commands.argument("target", roundArg())
                         .executes(SmoothLift::liftHelpRoundFromTo))))
             .then(liftHelpRoundForce("-f"))
+        );
+
+        // 【1.50】/pbmmusic：**屏蔽门（MTR 平台幕门 / 半高安全门）**开关门提示音。
+        //   （无参数）            -> 显示当前维度的总开关 + open/close 两项子开关
+        //   on | off              -> 本维度总开关 = on/off
+        //   on to off             -> 本维度总开关正好是 on 时才改成 off（off to on 同理）
+        //   -f on | off           -> 强制**所有维度** = on/off
+        //   -f on to off          -> 所有维度里总开关正好是 on 的改成 off
+        //   open  | close         -> 显示该项子开关 + 默认素材
+        //   open on | close off   -> 本维度该项子开关
+        //   open on to off        -> 本维度该项子开关正好是 on 时才改成 off
+        //   open -f on | off      -> **所有维度**该项子开关
+        //   open -f on to off     -> 所有维度里该项子开关正好是 on 的改成 off
+        //   【1.15】改素材（与 /lifthelp up|down|door 同一套形状，只是「三项」变「两项」）：
+        //   open  <名字>          -> 本维度该项**默认素材**
+        //   open  <X> to <Y>      -> 本维度该项默认素材正好是 X 时才改成 Y
+        //   open  -f <名字>       -> 强制**所有维度**该项默认素材（并清掉按扇门的单独设置）
+        //   open  -f <X> to <Y>   -> 所有维度（含单独设置）里该项是 X 的改成 Y
+        //   名字：default（跟内置）/ default-c（doorclose.ogg）/ default-m（mdoorclose.ogg）
+        //         / none（这一项不播）/ 导入过的 .ogg 文件名。default 落到维度默认那一层时
+        //         按**端别**取内置：开门 dooropen.ogg、关门 mdoorclose.ogg。
+        // ★ 与 /lifthelp（直梯 liftmusic）是两件事：本指令管的是**屏蔽门**开关门时那一下。
+        //   两者各存各的，改一个不影响另一个。
+        // ★ 开关只有两个取值，所以用 on/off 两个字面量而不是自定义参数类型；素材名是开的字符串参数，
+        //   与 /lifthelp 一样把字面量（on/off/-f）**排在字符串参数前面**（Brigadier 字面量优先，
+        //   顺序即优先级，详见 liftToneBranch 上方那段说明）。这也是为什么「不播」推荐写 none 而不是 off。
+        dispatcher.register(Commands.literal("pbmmusic")
+            .executes(SmoothLift::pbmMusicShow)
+            .then(Commands.literal("on")
+                .executes(context -> pbmMusicGlobal(context, true))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("off")
+                        .executes(context -> pbmMusicFromTo(context, true, false)))))
+            .then(Commands.literal("off")
+                .executes(context -> pbmMusicGlobal(context, false))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("on")
+                        .executes(context -> pbmMusicFromTo(context, false, true)))))
+            .then(pbmMusicForce("-f"))
+            .then(pbmMusicItemCommand("open", "open"))
+            .then(pbmMusicItemCommand("close", "close"))
+        );
+
+        // 【1.50】/pbmloud：**屏蔽门**开关门提示音的音量（1~1000，100 = 原始音量，1000 = 10×）。
+        //   （无参数）              -> 显示当前维度生效的共用音量（并标出两项是否跟随共用）
+        //   <音量>                  -> 本维度共用音量 = 音量
+        //   <X> to <Y>              -> 本维度共用音量正好是 X 时才改成 Y
+        //   -f <音量>               -> 强制**所有维度** = 音量
+        //   -f <X> to <Y>           -> 所有维度里共用音量正好是 X 的改成 Y
+        //   open|close <音量>       -> 本维度该项自己的音量（没单独调过的项跟随共用默认）
+        //   open|close <X> to <Y>   -> 本维度该项音量正好是 X 时才改成 Y
+        //   -f open|close <音量>    -> 所有维度该项音量
+        //   -f open|close <X> to <Y>
+        // ★ 这是与 /futiloud（扶梯底噪）、/futihelploud（扶梯无障碍提示音）、/lifthelploud（直梯）
+        //   **互不影响**的第 4 套音量，各存各的。
+        dispatcher.register(Commands.literal("pbmloud")
+            .executes(SmoothLift::pbmLoudShow)
+            .then(Commands.argument("volume", volumeArg())
+                .executes(SmoothLift::pbmLoudGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(SmoothLift::pbmLoudFromTo))))
+            .then(pbmLoudItemCommand("open", "open"))
+            .then(pbmLoudItemCommand("close", "close"))
+            .then(Commands.literal("-f")
+                .then(Commands.argument("volume", volumeArg())
+                    .executes(SmoothLift::pbmLoudForceAll)
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", volumeArg())
+                            .executes(SmoothLift::pbmLoudForceFromTo))))
+                .then(pbmLoudItemForceBranch("open", "open"))
+                .then(pbmLoudItemForceBranch("close", "close")))
+        );
+
+        // 【1.22】/pbmmusicloud：屏蔽门**开关门提示音素材**那一套音量的别名。
+        //   与 /pbmloud **完全同构、同一份数据**（新增它只是给"音量"这件事一个与素材指令
+        //   /pbmmusic 对称的名字）；/pbmloud 原样保留，行为一个字没改。
+        dispatcher.register(Commands.literal("pbmmusicloud")
+            .executes(SmoothLift::pbmLoudShow)
+            .then(Commands.argument("volume", volumeArg())
+                .executes(SmoothLift::pbmLoudGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(SmoothLift::pbmLoudFromTo))))
+            .then(pbmLoudItemCommand("open", "open"))
+            .then(pbmLoudItemCommand("close", "close"))
+            .then(Commands.literal("-f")
+                .then(Commands.argument("volume", volumeArg())
+                    .executes(SmoothLift::pbmLoudForceAll)
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", volumeArg())
+                            .executes(SmoothLift::pbmLoudForceFromTo))))
+                .then(pbmLoudItemForceBranch("open", "open"))
+                .then(pbmLoudItemForceBranch("close", "close")))
+        );
+
+        // 【1.22】/pbmmidiumloud：**到站播报**素材自己的音量（1~1000）。
+        //   形状与 /pbmloud 同构，只是"共用 + 两项"变成"这一项"。
+        //     （无参数）      -> 显示当前维度生效的到站播报音量
+        //     <音量>          -> 本维度 = 音量
+        //     <X> to <Y>      -> 本维度正好是 X 时才改成 Y
+        //     -f <音量>       -> 强制**所有维度** = 音量
+        //     -f <X> to <Y>   -> 所有维度里正好是 X 的改成 Y
+        dispatcher.register(Commands.literal("pbmmidiumloud")
+            .executes(context -> pbmItemLoudShow(context, "midium"))
+            .then(Commands.argument("volume", volumeArg())
+                .executes(context -> pbmItemLoudGlobal(context, "midium"))
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(context -> pbmItemLoudFromTo(context, "midium")))))
+            .then(pbmItemLoudForce("-f", "midium"))
+        );
+
+        // 【1.22】/pbmarriveloud：**进站报站**素材自己的音量（1~1000）。形状同上。
+        dispatcher.register(Commands.literal("pbmarriveloud")
+            .executes(context -> pbmItemLoudShow(context, "arrive"))
+            .then(Commands.argument("volume", volumeArg())
+                .executes(context -> pbmItemLoudGlobal(context, "arrive"))
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(context -> pbmItemLoudFromTo(context, "arrive")))))
+            .then(pbmItemLoudForce("-f", "arrive"))
+        );
+
+        // 【1.50 / 1.23】四条「淡入淡出范围」（格）指令 —— 形状、上下限（1~128）、反馈句式完全一致。
+        //   默认都是 16 格（车站尺度，比直梯的 4 格大得多：一列车到站时整排门都要能听见）。
+        //   /pbmround        = 屏蔽门开关门提示音（open / close 两项共用一份）
+        //   /pbmmusicround   = 同上（用户点名的名字；与 /pbmround 读写同一份数据）
+        //   /pbmmidiumround  = 到站播报
+        //   /pbmarriveround  = 进站报站
+        //   树由 roundCommand 一处产出 —— 想不一致都难。
+        dispatcher.register(roundCommand("pbmround", RoundKind.TONE));
+        dispatcher.register(roundCommand("pbmmusicround", RoundKind.TONE));
+        dispatcher.register(roundCommand("pbmmidiumround", RoundKind.MIDIUM));
+        dispatcher.register(roundCommand("pbmarriveround", RoundKind.ARRIVE));
+
+        // 【1.16】/pbmclosewait：**屏蔽门关门提示音**的「强制等待时长」（秒，0~60，默认 5）。
+        //
+        //   它是一套**兜底**，只在「这一轮的停站时长不够放完整条关门素材」时才生效：
+        //     开门音效播完 → 等 N 秒 → 播语音播报 → 门一动（嘀嘀开始）立刻掐断这段人声。
+        //   停站**够长**时它被完全忽略（那条路是「整段提前播、结尾落在门上」）。
+        //
+        //   （无参数）      -> 显示当前维度生效的秒数 + 这条语义的一句话说明
+        //   <秒>            -> 本维度 = 秒
+        //   <X> to <Y>      -> 本维度正好是 X 时才改成 Y
+        //   -f <秒>         -> 强制**所有维度** = 秒
+        //   -f <X> to <Y>   -> 所有维度里正好是 X 的改成 Y
+        // ★ 与 /pbmround 形状同构（都是「一个整数 + to + -f」），改动时两处对着看。
+        dispatcher.register(Commands.literal("pbmclosewait")
+            .executes(SmoothLift::pbmCloseWaitShow)
+            .then(Commands.argument("seconds", closeWaitArg())
+                .executes(SmoothLift::pbmCloseWaitGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", closeWaitArg())
+                        .executes(SmoothLift::pbmCloseWaitFromTo))))
+            .then(pbmCloseWaitForce("-f"))
+        );
+
+        // 【1.17】/pbmmidium：**到站播报**（列车到站、开门音播完后再等 Y 秒播这一段语音）。
+        //   与关门提示音那套互不相干；★ 这段声音**永远不会被掐断**（车出站也照播到完）。
+        //   `/pbmmidium`                 -> 显示
+        //   `/pbmmidium <名字>`          -> 只改素材（保留当前秒数）
+        //   `/pbmmidium <名字> <秒>`     -> 本维度（秒数 0 ~ 正无穷）
+        //   `/pbmmidium -f <名字> <秒>`  -> 所有维度
+        dispatcher.register(Commands.literal("pbmmidium")
+            .executes(SmoothLift::pbmMidiumShow)
+            .then(Commands.argument("name", midiumNameArg())
+                .suggests(SmoothLift::pbmMidiumNameSuggestions)
+                .executes(SmoothLift::pbmMidiumSetNameOnly)
+                .then(Commands.argument("seconds", midiumWaitArg())
+                    .executes(SmoothLift::pbmMidiumGlobal)))
+            .then(pbmMidiumForce("-f"))
+        );
+
+        // 【1.21】/pbmarrive：**进站报站**（时刻表里最近的一班车还剩 |X| 秒到站时播这一段语音）。
+        //   与到站播报互不相干；★ 这段声音同样**永远不会被掐断**（车进站后也照播到完）。
+        //   `/pbmarrive`                 -> 显示
+        //   `/pbmarrive <名字>`          -> 只改素材（保留当前秒数）
+        //   `/pbmarrive <名字> <X>`      -> 本维度（X ∈ (-∞, 0]）
+        //   `/pbmarrive -f <名字> <X>`   -> 所有维度
+        dispatcher.register(Commands.literal("pbmarrive")
+            .executes(SmoothLift::pbmArriveShow)
+            .then(Commands.argument("name", arriveNameArg())
+                .suggests(SmoothLift::pbmArriveNameSuggestions)
+                .executes(SmoothLift::pbmArriveSetNameOnly)
+                .then(Commands.argument("seconds", arriveArg())
+                    .executes(SmoothLift::pbmArriveGlobal)))
+            .then(pbmArriveForce("-f"))
         );
     }
 

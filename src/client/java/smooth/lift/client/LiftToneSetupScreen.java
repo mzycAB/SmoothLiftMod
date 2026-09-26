@@ -40,15 +40,19 @@ import java.util.List;
  *   <li><b>主界面（{@code page == 0}）</b>：三个按钮（上楼提示音 / 下楼提示音 / 开关门提示音，
  *       点任一进入对应列表）+ 一个「共用默认音量」输入框（{@code /lifthelploud <音量>}）；</li>
  *   <li><b>单项列表（{@code page == 1/2/3}，对应 up / down / chime）</b>：该提示音的素材选择
- *       （默认素材 / 不播 / 待导入 / 已入库）+ 开关（{@code /lifthelpup|down|chime}）+ 该项的音量输入框
- *       （{@code /lifthelploud up|down|door}）。返回按钮回主界面。</li>
+ *       （跟维度默认 / 不播 / 待导入 / 已入库）+ 开关（{@code /lifthelp up|down|door}）+ 该项的音量输入框
+ *       （{@code /lifthelploud up|down|door}）。返回按钮回主界面。
+ *       <br>★【1.15】第一行由「默认素材」改成「默认（跟维度默认）」：这里写的是**竖井列那一层**
+ *       的 {@code default}，含义是「跟维度默认」——维度默认被 {@code /lifthelp up <名字>} 改成
+ *       玩家某段 ogg 之后，这一行就跟到那一段去；要回模组内置素材得改维度默认本身。
+ *       指令里的 {@code default} 则一直是「模组内置素材」。</li>
  * </ul>
  *
  * <h2>「这一条」怎么定位</h2>
  * 直梯没有跨重启稳定的 ID，所以右键到的那个楼层轨道方格的**竖井列 (X, Z)** 就是身份：
  * 同一条直梯的所有楼层轨道共享 X/Z、只有 Y 不同（{@link EscalatorSpeedManager#liftToneKey(int, int)}）。
  *
- * <p>音频库与扶梯共用（{@code smoothlift_audio} 同一个文件夹、同一份导入库）。
+ * <p>音频库与扶梯共用（{@code MBM_Audio} 同一个文件夹、同一份导入库）。
  */
 public class LiftToneSetupScreen extends Screen {
 
@@ -149,12 +153,32 @@ public class LiftToneSetupScreen extends Screen {
         buildUi();
     }
 
+    /**
+     * 【1.17】关闭界面 = **应用所有输入框**。
+     *
+     * <p>用户原话：「从现在开始删除所有 ui 里的『确认』按钮，所有 ui 里的输入框都会在玩家
+     * 按下 esc 退出 ui 时立即应用」。所以本类里**一个「应用」按钮都不留**，
+     * 落地时机收敛到这一处（与 {@code PsdToneSetupScreen#onClose} 同一套约定）。
+     *
+     * <p>★ 两页的输入框**不同时存在**（{@code clearWidgets()} 会随切页重建），
+     * 所以这里按当前页各落各的；进子页面 / 从子页面返回这两跳也要顺手落地
+     * （见 {@code buildMainPage} / {@code buildTonePage} 的按钮回调），
+     * 否则那一跳会重建控件、用户刚填的字就丢了。
+     */
     @Override
     public void onClose() {
-        if (OPEN == this) {
-            OPEN = null;
+        if (page > 0) {
+            // 【1.23】二级菜单按 Esc = **返回主界面，不落地输入框编辑**（Esc = 返回上一级）。
+            page = 0;
+            scroll = 0;
+            init();
+        } else {
+            applyDefaultVolume();
+            if (OPEN == this) {
+                OPEN = null;
+            }
+            super.onClose();
         }
-        super.onClose();
     }
 
     @Override
@@ -173,6 +197,14 @@ public class LiftToneSetupScreen extends Screen {
             String which = PAGES[page - 1];
             buildTonePage(which);
         }
+
+        // 【1.55】右上角「同步所有」：射程跟着当前页走 ——
+        //   主界面 page=0 = 这条直梯的三项提示音素材（上楼/下楼/开关门）；
+        //   单项页 page=1/2/3 = 只有该项的素材。与服务端 SYNC_LIFT_WHICH 同序。
+        //   ★ beforeOpen 把当前页那个音量框落地，否则弹窗重建界面会把刚填的数字丢掉。
+        String tone = page > 0 ? PAGES[page - 1] : null;
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "lift", page, key,
+                tone == null ? this::applyDefaultVolume : () -> applyToneVolume(tone)));
     }
 
     // ------------------------------------------------------------------
@@ -195,6 +227,7 @@ public class LiftToneSetupScreen extends Screen {
             final int targetPage = i + 1;
             addRenderableWidget(Button.builder(
                             Component.literal(liftToneTitle(which) + "设置…"), button -> {
+                        applyDefaultVolume();   // 【1.17】跳页会重建控件：先把当前页输入框落地
                         page = targetPage;
                         scroll = 0;
                         init();
@@ -205,26 +238,50 @@ public class LiftToneSetupScreen extends Screen {
         }
 
         // 共用默认音量输入框（/lifthelploud <音量>，100 = 原始音量）—— 固定在底部中间行
+        //   ★【1.17】不再有「设置默认音量 / 应用」两个按钮，改用**画出来的标签**
+        //   （见 {@link #drawInputLabel}）：用户点名「删除所有 ui 里的『确认』按钮，
+        //   输入框在退出 ui 时立即应用」—— 原来那一对按钮里「应用」是确认按钮（已删），
+        //   「设置默认音量」其实也是提交按钮，留着等于换个名字的确认按钮。
         int inputY = this.height + INPUT_Y;
-        addRenderableWidget(Button.builder(Component.literal("设置默认音量"), button -> applyDefaultVolume())
-                .bounds(cx - BTN_W / 2 - 60, inputY, 60, 20)
-                .build());
-        defaultVolumeInput = new EditBox(this.font, cx + 10, inputY, BTN_W / 2 + 40, 20,
-                Component.literal("默认音量"));
+        defaultVolumeInput = new EditBox(this.font, cx + 4, inputY, BTN_W / 2 + 40, 20,
+                Component.literal("默认音量 1~1000"));
         defaultVolumeInput.setMaxLength(8);
         defaultVolumeInput.setValue(String.valueOf(EscalatorSpeedManager.getLiftHelpVolume(mcLevel())));
         addRenderableWidget(defaultVolumeInput);
-        addRenderableWidget(Button.builder(Component.literal("应用"), button -> applyDefaultVolume())
-                .bounds(cx - BTN_W / 2 - 60 + 70, inputY, 60, 20)
-                .build());
     }
 
-    /** 【1.48】主界面「设置默认音量」按钮。 */
+    /**
+     * 【1.17】把当前页的输入框落地。空值的「落地时机」= 关闭界面（{@link #onClose}）
+     * 或即将跳去另一页（重建控件前）。
+     *
+     * <p>取值非法时用一条聊天栏提示说明原因 —— 这时界面可能正在关闭，
+     * 界面里那行状态已经没人看得见了。
+     */
+    private void notifyBadInput(String why) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player != null) {
+            mc.player.displayClientMessage(Component.literal("[SmoothLift] " + why), false);
+        }
+    }
+
+    /**
+     * 【1.48 / 1.17】共用默认音量落地（{@code /lifthelploud <音量>}）。
+     *
+     * <p>【1.17】按钮没了，本方法改由 {@link #onClose} 调用 ⇒ 必须<strong>空值安全</strong>
+     * （子页面里 {@code defaultVolumeInput} 是 null），并且**只在真的改了**才发包
+     * （否则每次关界面都白发一条同步请求）。
+     */
     private void applyDefaultVolume() {
+        if (defaultVolumeInput == null) {
+            return;
+        }
         Integer v = parseVolume(defaultVolumeInput.getValue());
         if (v == null) {
-            setStatus("音量必须是 1~1000 的整数（100 = 原始音量）");
+            notifyBadInput("共用默认音量必须是 1~1000 的整数（100 = 原始音量），已忽略");
             return;
+        }
+        if (v == EscalatorSpeedManager.getLiftHelpVolume(mcLevel())) {
+            return; // 没改，不必发包
         }
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeVarInt(v);
@@ -243,6 +300,8 @@ public class LiftToneSetupScreen extends Screen {
     private void buildTonePage(String which) {
         int cx = this.width / 2;
         addRenderableWidget(Button.builder(Component.literal("返回"), button -> {
+            // 【1.17】跳页会重建控件：先把本项音量落地，否则用户刚填的字随控件一起没了。
+            applyToneVolume(which);
             page = 0;
             scroll = 0;
             init();
@@ -268,26 +327,33 @@ public class LiftToneSetupScreen extends Screen {
         }
 
         // 这项的音量输入框（/lifthelploud up|down|door <音量>）—— 固定在底部中间行
+        //   ★【1.17】同主界面：「音量 / 应用」两个按钮删掉，只留输入框 + 画出来的标签。
         int inputY = this.height + INPUT_Y;
-        addRenderableWidget(Button.builder(Component.literal("音量"), button -> applyToneVolume(which))
-                .bounds(cx - BTN_W / 2 - 60, inputY, 60, 20)
-                .build());
-        toneVolumeInput = new EditBox(this.font, cx + 10, inputY, BTN_W / 2 + 40, 20,
-                Component.literal("音量"));
+        toneVolumeInput = new EditBox(this.font, cx + 4, inputY, BTN_W / 2 + 40, 20,
+                Component.literal("音量 1~1000"));
         toneVolumeInput.setMaxLength(8);
         toneVolumeInput.setValue(String.valueOf(EscalatorSpeedManager.getLiftToneVolume(mcLevel(), which)));
         addRenderableWidget(toneVolumeInput);
-        addRenderableWidget(Button.builder(Component.literal("应用"), button -> applyToneVolume(which))
-                .bounds(cx - BTN_W / 2 - 60 + 70, inputY, 60, 20)
-                .build());
     }
 
-    /** 【1.48】单项列表「音量」按钮：/lifthelploud up|down|door <音量>。 */
+    /**
+     * 【1.48 / 1.17】单项音量落地（{@code /lifthelploud up|down|door <音量>}）。
+     *
+     * <p>【1.17】按钮没了，本方法改由 {@link #onClose} 与「返回」按钮调用 ⇒ 必须**空值安全**
+     * （主页面里 {@code toneVolumeInput} 是 null），并且只在真的改了才发包。
+     */
     private void applyToneVolume(String which) {
+        if (toneVolumeInput == null) {
+            return;
+        }
         Integer v = parseVolume(toneVolumeInput.getValue());
         if (v == null) {
-            setStatus("音量必须是 1~1000 的整数（100 = 原始音量）");
+            notifyBadInput("「" + liftToneTitle(which)
+                    + "」音量必须是 1~1000 的整数（100 = 原始音量），已忽略");
             return;
+        }
+        if (v == EscalatorSpeedManager.getLiftToneVolume(mcLevel(), which)) {
+            return; // 没改，不必发包
         }
         FriendlyByteBuf buf = PacketByteBufs.create();
         buf.writeUtf(which, 32);
@@ -303,11 +369,11 @@ public class LiftToneSetupScreen extends Screen {
     private void rebuildToneRows(String which) {
         rows.clear();
         rows.add(new Row(T_HEADER, null, null, liftToneTitle(which)));
-        // 【1.46】第一行 = 维度默认子开关（/lifthelpup|down|chime 的 UI 版）
+        // 【1.46】第一行 = 维度默认子开关（/lifthelp up|down|door 的 UI 版）
         rows.add(new Row(T_PICK, which, TOGGLE_SENTINEL,
                 "开关：" + (isToneEnabled(which) ? "开 ✓" : "关")));
         addPicks(which);
-        rows.add(new Row(T_HEADER, null, null, "存档文件夹 smoothlift_audio 待导入（点=导入并设为" + liftToneTitle(which) + "）"));
+        rows.add(new Row(T_HEADER, null, null, "存档文件夹 MBM_Audio 待导入（点=导入并设为" + liftToneTitle(which) + "）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, null, "（暂无）"));
         } else {
@@ -329,12 +395,16 @@ public class LiftToneSetupScreen extends Screen {
         scroll = Math.max(0, Math.min(scroll, maxScroll));
     }
 
-    /** 一个列表的前两行：默认素材 / 不播。 */
+    /** 一个列表的前两行：跟维度默认 / 不播。 */
     private void addPicks(String which) {
         boolean isDefault = isCurrently(which, EscalatorSpeedData.LIFT_TONE_DEFAULT);
         boolean isOff = isCurrently(which, EscalatorSpeedData.LIFT_TONE_OFF);
+        // 【1.15】这一行写进去的是**竖井列那一层的 `default`**，含义 = 「跟维度默认」：
+        //   维度默认本身是 default 时就是模组内置素材，被 /lifthelp up|down|door <名字> 改过
+        //   就是玩家选的那段。所以文案写「跟维度默认」而不是「默认素材」—— 后者会和指令里的
+        //   `default`（= 模组内置素材）撞名，玩家会以为点它就能回到内置那一段。
         rows.add(new Row(T_PICK, which, EscalatorSpeedData.LIFT_TONE_DEFAULT,
-                "默认素材" + (isDefault ? "  ✓当前" : "")));
+                "默认（跟维度默认）" + (isDefault ? "  ✓当前" : "")));
         rows.add(new Row(T_PICK, which, EscalatorSpeedData.LIFT_TONE_OFF,
                 "不播" + (isOff ? "  ✓当前" : "")));
     }
@@ -435,6 +505,19 @@ public class LiftToneSetupScreen extends Screen {
         });
     }
 
+    /**
+     * 【1.17】输入框左侧那行**画出来的**标签。
+     *
+     * <p>为什么不是按钮：用户点名「删除所有 ui 里的『确认』按钮，输入框在退出 ui 时立即应用」。
+     * 原来这一行是「设置默认音量 / 应用」两个按钮，其中「应用」就是确认按钮；
+     * 与其留一个点不动的按钮占位，不如直接画一行文字（它本来就不该被点）。
+     */
+    private void drawInputLabel(GuiGraphics guiGraphics, String label, int y) {
+        int right = this.width / 2 - 2;
+        guiGraphics.drawString(this.font, Component.literal(label),
+                right - this.font.width(label), y + 6, 0xC0C0C0, false);
+    }
+
     private int rowY(int index) {
         return LIST_TOP + index * ROW_H - scroll;
     }
@@ -457,8 +540,7 @@ public class LiftToneSetupScreen extends Screen {
     }
 
     @Override
-    // 【1.20.1 API】GuiEventListener.mouseScrolled 是 3 个 double（1.20.2 起才加了横向 scrollX）
-    //   —— 与 HelpAudioSetupScreen / EscalatorSpeedScreen 的写法一致。
+    // 【1.20.1 API】GuiEventListener.mouseScrolled 是 3 个 double（1.20.2 起才加了横向 scrollX）。
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
         if (page > 0 && maxScroll > 0 && scrollY != 0.0) {
             scroll -= (int) Math.round(scrollY * ROW_H);
@@ -501,8 +583,11 @@ public class LiftToneSetupScreen extends Screen {
         guiGraphics.drawCenteredString(this.font, Component.literal(info), cx, statusY,
                 statusText == null ? 0x808080 : 0xFFFF55);
         guiGraphics.drawCenteredString(this.font,
-                Component.literal("音频与扶梯共用 smoothlift_audio 文件夹 / 同一份导入库"),
+                Component.literal("音频与扶梯共用 MBM_Audio 文件夹 / 同一份导入库"),
                 cx, statusY + 12, 0x808080);
+
+        // 【1.17】共用默认音量输入框的画出来的标签（原来这里是「设置默认音量 / 应用」两个按钮）
+        drawInputLabel(guiGraphics, "默认音量 1~1000", this.height + INPUT_Y);
     }
 
     private void renderTonePage(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
@@ -548,6 +633,9 @@ public class LiftToneSetupScreen extends Screen {
         guiGraphics.drawCenteredString(this.font,
                 Component.literal("音量 = 1~1000（100 = 原始音量）；该项没单独调过则跟随共用默认"),
                 this.width / 2, statusY + 12, 0x808080);
+
+        // 【1.17】本项音量输入框的画出来的标签（原来这里是「音量 / 应用」两个按钮）
+        drawInputLabel(guiGraphics, "音量 1~1000", this.height + INPUT_Y);
     }
 
     private static String liftToneTitle(String which) {
@@ -558,9 +646,11 @@ public class LiftToneSetupScreen extends Screen {
         };
     }
 
+    /** 素材 id → 状态行里显示的名字。【1.15】default 显示成「跟维度默认」而不是「默认素材」：
+     *  它指的是**竖井列这一层**的 default（= 跟维度默认），不是模组内置素材那一段。 */
     private static String audioLabel(String id) {
         if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(id)) {
-            return "默认素材";
+            return "跟维度默认";
         }
         if (EscalatorSpeedData.LIFT_TONE_OFF.equals(id)) {
             return "不播";

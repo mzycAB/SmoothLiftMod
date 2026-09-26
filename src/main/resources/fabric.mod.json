@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "smooth_lift",
   "version": "${version}",
-  "name": "SmoothLift",
+  "name": "mzycBetterMTR",
   "description": "Makes MTR escalators smooth instead of bumpy.",
   "authors": [
     "mzycAB"
@@ -22,7 +22,8 @@
   "mixins": [
     "smooth_escalator.mixins.json",
     "smoothlift.client.mixins.json",
-    "smoothlift.mtr.mixins.json"
+    "smoothlift.mtr.mixins.json",
+    "smoothlift.psd.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=0.15.0",

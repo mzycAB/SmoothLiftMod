@@ -7,6 +7,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
 import smooth.lift.EscalatorUtil;
@@ -33,6 +34,10 @@ import smooth.lift.EscalatorUtil;
  * <p>用石斧右键某条扶梯（打开设置界面）会把它直接设为当前驱动扶梯，于是「刚改完的那条」
  * 立刻成为驱动，离开后也不会掉回全局动画。切换只发生在玩家乘坐/注视/操作了另一条扶梯，
  * 或当前这条被卸载、离得太远时。
+ *
+ * <p>【1.26】第 4 条「附近兜底」不再逐格扫立方体（旧版半径 16 要扫 33³ ≈ 3.6 万次
+ * {@code getBlockState}，而本方法每 tick 都跑），改成查 {@link EscalatorStepIndex} 的分段索引 ——
+ * 见 {@link #nearestEscalator}。
  */
 public final class EscalatorAnimationDriver {
 
@@ -172,34 +177,23 @@ public final class EscalatorAnimationDriver {
         return null;
     }
 
-    /** 由近到远按球壳扫描，返回附近最近的扶梯方块。 */
+    /**
+     * 附近最近的扶梯阶梯方块。
+     *
+     * <p>【1.26】★ 改成走 {@link EscalatorStepIndex} 的分段索引。
+     *
+     * <p>旧版是「由近到远按球壳逐格 {@code getBlockState}」——半径 16 时要扫
+     * {@code 33³ ≈ 3.6 万}次方块读取，而本方法是**每 tick** 被
+     * {@link EscalatorStepTicker#tickAndUpload} 调用的（20 次/秒 ⇒ 最高 72 万次/秒）。
+     * 玩家此刻不在任何扶梯附近（例如站在站厅里）时正好走不到「提前返回」，
+     * 于是每次都把整个 33³ 立方体扫满 —— 这是纯烧 CPU 的一条热路径。
+     *
+     * <p>现在只查「半径内那几个分段」里已登记过的阶梯方块（分段里只装阶梯，本来就非空），
+     * 代价与半径的立方无关。找不到（或索引还没建好）就返回 null，与旧行为一致。
+     */
     private static BlockPos nearestEscalator(Level level, BlockPos center) {
-        BlockPos best = null;
-        double bestDist = Double.MAX_VALUE;
-        for (int r = 0; r <= NEARBY_RADIUS; r++) {
-            for (int dx = -r; dx <= r; dx++) {
-                for (int dy = -r; dy <= r; dy++) {
-                    for (int dz = -r; dz <= r; dz++) {
-                        // 只看当前半径这一层壳
-                        if (Math.max(Math.abs(dx), Math.max(Math.abs(dy), Math.abs(dz))) != r) {
-                            continue;
-                        }
-                        BlockPos pos = center.offset(dx, dy, dz);
-                        if (!EscalatorUtil.isEscalator(level.getBlockState(pos))) {
-                            continue;
-                        }
-                        double dist = (double) dx * dx + (double) dy * dy + (double) dz * dz;
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = pos;
-                        }
-                    }
-                }
-            }
-            if (best != null) {
-                return best;
-            }
-        }
-        return null;
+        return EscalatorStepIndex.nearestStep(
+                new Vec3(center.getX() + 0.5, center.getY() + 0.5, center.getZ() + 0.5),
+                NEARBY_RADIUS);
     }
 }

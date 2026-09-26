@@ -141,6 +141,13 @@ public class EscalatorSpeedScreen extends Screen {
         addRenderableWidget(helpButton);
 
         setInitialFocus(runInput);
+
+        // 【1.55】右上角「同步所有」：这一页是一级菜单，射程 = 这个界面上的五项
+        //   （速度 / 阶梯速度 / 声音音量 / 提示音音量 / 无障碍开关）。
+        //   ★ beforeOpen 必须把输入框落地：弹窗会把本界面重建一次，而且服务端读
+        //   「这条扶梯此刻的值」时读的是存档，没落地的新值读不到。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_TOP_LEVEL,
+                pos.asLong(), this::applyChanges));
     }
 
     /** 【1.16】开关按钮的标签：直接显示当前状态，点一下就切到另一边。 */
