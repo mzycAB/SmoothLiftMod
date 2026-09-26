@@ -34,6 +34,21 @@
       { "name": "smoothlift:audio/liftmusic", "stream": false }
     ]
   },
+  "audio/dooropen": {
+    "sounds": [
+      { "name": "smoothlift:audio/dooropen", "stream": false }
+    ]
+  },
+  "audio/doorclose": {
+    "sounds": [
+      { "name": "smoothlift:audio/doorclose", "stream": false }
+    ]
+  },
+  "audio/mdoorclose": {
+    "sounds": [
+      { "name": "smoothlift:audio/mdoorclose", "stream": false }
+    ]
+  },
   "audio/up": {
     "sounds": [
       { "name": "smoothlift:audio/up", "stream": false }

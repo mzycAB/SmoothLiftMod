@@ -5,7 +5,7 @@ license="MIT"
 [[mods]]
 modId="smooth_lift"
 version="${file.jarVersion}"
-displayName="SmoothLift"
+displayName="mzycBetterMTR"
 logoFile="assets/smoothlift/icon.png"
 credits="mzycAB"
 authors="mzycAB"
@@ -15,6 +15,7 @@ Makes MTR escalators smooth instead of bumpy.
 - Right-click an escalator with a stone axe to set its speed
 - Speeds persist across world reloads
 - /futispeed <speed> to set the default speed of the current dimension
+- /MBM help 预设选择、/MBM music in|delete 批量音频、屏蔽门开关门自定义声音
 '''
 
 [[dependencies.smooth_lift]]

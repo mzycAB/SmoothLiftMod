@@ -5,26 +5,26 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
 import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
-import smooth.lift.network.BindAudioPacket;
-import smooth.lift.network.DeleteAudioPacket;
-import smooth.lift.network.ImportFolderAudioPacket;
-import smooth.lift.network.Packets;
-import smooth.lift.network.RequestSyncPacket;
-import smooth.lift.network.UnbindAudioPacket;
+import smooth.lift.SmoothLift;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import smooth.lift.network.Packets;
+import smooth.lift.network.RequestSyncPacket;
+import smooth.lift.network.UnbindAudioPacket;
+import smooth.lift.network.BindAudioPacket;
+import smooth.lift.network.DeleteAudioPacket;
+import smooth.lift.network.ImportFolderAudioPacket;
 
 /**
  * 石斧界面里的「选择扶梯音乐」子界面。列表从上到下三段：
  * <ol>
- *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
+ *   <li>存档文件夹 {@code MBM_Audio} 里的 OGG：点=导入存档并绑定（删原文件仍可播）。</li>
  *   <li><b>模组内置音频</b>：随模组 jar 一起分发，装了模组就自带（{@code assets/smoothlift/sounds/audio/*.ogg}，
  *       由模组自己的 {@code sounds.json} 注册）。点一下即绑定，<b>不需要玩家准备任何文件、也不需要 ffmpeg</b>。</li>
  *   <li>已存入存档的音频：点名字=绑定此扶梯；删除=从存档移除。</li>
@@ -33,11 +33,7 @@ import java.util.List;
  * 三段的区别靠行本身的形态区分：待导入=歌名、内置=显示名、已存入=右边多一个「删除」按钮。
  * 行数可能超过一屏，支持鼠标滚轮滚动；列表右侧有滚动条。
  * 界面在按钮点击后保持打开，只在按 ESC 或「返回」时回到设置界面。
- *
- * <p>Forge 版说明：网络发送用 {@code Packets.CHANNEL.sendToServer(包)}（SimpleChannel），
- * 与 Fabric 版的 {@code ClientPlayNetworking.send(频道, buf)} 语义一一对应。
  */
-@OnlyIn(Dist.CLIENT)
 public class AudioSetupScreen extends Screen {
 
     private static final int ROW_H = 22;          // 每行固定高度（含行间距）
@@ -165,6 +161,11 @@ public class AudioSetupScreen extends Screen {
             setStatus("已请求刷新，同步回来后列表会自动更新");
         }).bounds(this.width / 2 + 4, 24, 96, 20).build());
 
+        // 【1.55】右上角「同步所有」：这是二级菜单，射程只算「这条扶梯的运行底噪素材」。
+        //   没有输入框 ⇒ beforeOpen 传 null。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_ESC_AUDIO,
+                pos.asLong(), null));
+
         // 列表：只为「完整可见 + 可点击」的行创建按钮。
         // （滚出可视区的行不建控件，避免按钮溢出到标题/底部文字上。）
         for (int i = 0; i < rows.size(); i++) {
@@ -198,7 +199,19 @@ public class AudioSetupScreen extends Screen {
         }).bounds(this.width / 2 - 60, this.height - BOTTOM_RESERVE + 6, 120, 20).build());
     }
 
-    /** 把三段列表拼成扁平行列表，并重算滚动范围。 */
+    /**
+     * 把三段列表拼成扁平行列表，并重算滚动范围。
+     *
+     * <p>【1.38d】行顺序按用户要求再调：**「默认音乐」永远排在最顶端，它下面才是导入的音乐**。
+     * 「默认音乐」= {@link #builtin}（模组内置音频，装完模组就有、不依赖存档 / 文件夹 / 同步），
+     * 它自己一条就是玩家能立刻点的那一项；「导入的音乐」= {@link #pending}（存档文件夹里待导入）
+     * + {@link #stored}（已存入存档）。
+     *
+     * <p>【1.38】的调整仍然保留：删掉了「① 模组内置音频…」「② 已存入存档的音频…」两段介绍文字
+     * （行本身的形态已经能区分三段：待导入=歌名、内置=显示名、已存入=右边多一个「删除」按钮）。
+     * ★ 拼装机制没变：三种行类型（{@code T_BUILTIN} / {@code T_STORED} / {@code T_PENDING}）
+     * 与各自的点击行为仍各管各的（见 {@link #buildUi()}）。
+     */
     private void rebuildRows() {
         rows.clear();
 
@@ -208,7 +221,7 @@ public class AudioSetupScreen extends Screen {
         }
 
         // 第二段：存档文件夹里的 OGG（玩家自己导入的音乐），点=导入并绑定。
-        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并绑定）"));
+        rows.add(new Row(T_HEADER, null, "存档文件夹 MBM_Audio 待导入（点=导入并绑定）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {
@@ -239,8 +252,8 @@ public class AudioSetupScreen extends Screen {
     }
 
     @Override
+    // 【1.20.1 API】GuiEventListener.mouseScrolled 是 3 个 double（1.20.2 起才加了横向 scrollX）。
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollY) {
-        // 【1.20.1 API】GuiEventListener.mouseScrolled 是 3 个 double（1.20.2 起才加了横向 scrollX）。
         if (maxScroll > 0 && scrollY != 0.0) {
             scroll -= (int) Math.round(scrollY * ROW_H);
             scroll = Math.max(0, Math.min(scroll, maxScroll));

@@ -6,17 +6,17 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
 import org.lwjgl.glfw.GLFW;
 import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
-import smooth.lift.network.ApplyChainPacket;
+import smooth.lift.SmoothLift;
 import smooth.lift.network.Packets;
+import smooth.lift.network.SetVolumePacket;
 import smooth.lift.network.SetHelpPacket;
 import smooth.lift.network.SetHelpVolumePacket;
-import smooth.lift.network.SetVolumePacket;
+import smooth.lift.network.ApplyChainPacket;
 
 /**
  * 拿着石斧右键扶梯后弹出的设置界面。
@@ -53,7 +53,6 @@ import smooth.lift.network.SetVolumePacket;
  * <p>没有「确定」按钮：**按 ESC 退出界面时统一应用**（若都没改动则什么都不发）。
  * 点「声音设置…」进入子界面**之前**也会先把改动发出去，避免「刚填好音量就点了音乐选择」导致丢失。
  */
-@OnlyIn(Dist.CLIENT)
 public class EscalatorSpeedScreen extends Screen {
     private final BlockPos pos;
 
@@ -145,6 +144,13 @@ public class EscalatorSpeedScreen extends Screen {
         addRenderableWidget(helpButton);
 
         setInitialFocus(runInput);
+
+        // 【1.55】右上角「同步所有」：这一页是一级菜单，射程 = 这个界面上的五项
+        //   （速度 / 阶梯速度 / 声音音量 / 提示音音量 / 无障碍开关）。
+        //   ★ beforeOpen 必须把输入框落地：弹窗会把本界面重建一次，而且服务端读
+        //   「这条扶梯此刻的值」时读的是存档，没落地的新值读不到。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_TOP_LEVEL,
+                pos.asLong(), this::applyChanges));
     }
 
     /** 【1.16】开关按钮的标签：直接显示当前状态，点一下就切到另一边。 */

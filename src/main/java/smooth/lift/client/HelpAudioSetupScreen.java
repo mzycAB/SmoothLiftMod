@@ -5,20 +5,20 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.api.distmarker.OnlyIn;
 import smooth.lift.EscalatorSpeedData;
 import smooth.lift.EscalatorSpeedManager;
-import smooth.lift.network.BindHelpAudioPacket;
-import smooth.lift.network.DeleteAudioPacket;
-import smooth.lift.network.ImportFolderHelpAudioPacket;
-import smooth.lift.network.Packets;
-import smooth.lift.network.RequestSyncPacket;
+import smooth.lift.SmoothLift;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import smooth.lift.network.Packets;
+import smooth.lift.network.RequestSyncPacket;
+import smooth.lift.network.BindHelpAudioPacket;
+import smooth.lift.network.DeleteAudioPacket;
+import smooth.lift.network.ImportFolderHelpAudioPacket;
 
 /**
  * 【1.39】石斧界面里的「选择无障碍提示音」子界面 —— 与 {@link AudioSetupScreen}（选运行底噪）
@@ -29,7 +29,7 @@ import java.util.List;
  *   <li><b>默认提示音（模组原声）</b>：= 模组原来的「咔啪」提示音（进扶梯端 10 次/秒、出扶梯端 1 次/秒，
  *       速率可用 {@code /futihelpspeed} 改）。<b>永远排在最顶端</b>（与运行底噪界面把「默认音乐」放最顶一致）。</li>
  *   <li><b>不播提示音</b>：这条扶梯**当前这一头**单独哑掉（比 {@code /futihelp off} 更细），其它不受影响。</li>
- *   <li>存档文件夹 {@code smoothlift_audio} 里的 OGG（**与运行底噪共用同一个文件夹**）：
+ *   <li>存档文件夹 {@code MBM_Audio} 里的 OGG（**与运行底噪共用同一个文件夹**）：
  *       点 = 导入存档并设为这条扶梯的提示音（之后删原文件仍可播）。</li>
  *   <li>已存入存档的音频：点名字 = 设为提示音；删除 = 从存档移除。</li>
  * </ol>
@@ -48,12 +48,9 @@ import java.util.List;
  *
  * <p>行数可能超过一屏，支持鼠标滚轮滚动；列表右侧有滚动条。
  * 界面在按钮点击后保持打开，只在按 ESC 或「返回」时回到设置界面。
- *
- * <p>Forge 版说明：网络发送用 {@code Packets.CHANNEL.sendToServer(包)}（SimpleChannel），
- * 与 Fabric 版的 {@code ClientPlayNetworking.send(频道, buf)} 语义一一对应。
  */
-@OnlyIn(Dist.CLIENT)
 public class HelpAudioSetupScreen extends Screen {
+
     private static final int ROW_H = 22;          // 每行固定高度（含行间距）
     private static final int LIST_TOP = 50;       // 列表可视区顶部
     private static final int BOTTOM_RESERVE = 96;  // 底部固定区（端头切换 + 状态 + 提示）占用的高度
@@ -191,6 +188,11 @@ public class HelpAudioSetupScreen extends Screen {
             setStatus("已请求刷新，同步回来后列表会自动更新");
         }).bounds(this.width / 2 + 4, 24, 96, 20).build());
 
+        // 【1.55】右上角「同步所有」：这是二级菜单，射程只算「这条扶梯的无障碍提示音素材」，
+        //   进 / 出两端一起同步（服务端那一支自己会跑两端）。没有输入框 ⇒ beforeOpen 传 null。
+        addRenderableWidget(SyncPopupScreen.syncButton(this, "esc", SmoothLift.SYNC_ESC_HELP_AUDIO,
+                pos.asLong(), null));
+
         // 列表：只为「完整可见 + 可点击」的行创建按钮。
         // （滚出可视区的行不建控件，避免按钮溢出到标题/底部文字上。）
         for (int i = 0; i < rows.size(); i++) {
@@ -246,7 +248,7 @@ public class HelpAudioSetupScreen extends Screen {
         rows.add(new Row(T_OFF, EscalatorSpeedData.HELP_AUDIO_OFF, "不播提示音（仅这条扶梯）"));
 
         // 第三段：存档文件夹里的 OGG（与运行底噪共用同一个文件夹），点=导入并设为提示音。
-        rows.add(new Row(T_HEADER, null, "存档文件夹 smoothlift_audio 待导入（点=导入并设为提示音）"));
+        rows.add(new Row(T_HEADER, null, "存档文件夹 MBM_Audio 待导入（点=导入并设为提示音）"));
         if (pending.isEmpty()) {
             rows.add(new Row(T_NOTE, null, "（暂无）"));
         } else {
@@ -290,7 +292,7 @@ public class HelpAudioSetupScreen extends Screen {
 
     /** 【1.41】把一个音频（默认提示音 / 不播 / 已存档的某段）设为这条扶梯**当前这一头**的提示音。 */
     private void setHelpAudio(String id) {
-        Packets.CHANNEL.sendToServer(new BindHelpAudioPacket(pos, id, editIn));
+Packets.CHANNEL.sendToServer(new BindHelpAudioPacket(pos, id, editIn));
         setStatus("已选择「" + endLabel() + "」：" + truncate(helpAudioLabel(id), 18));
     }
 
@@ -304,7 +306,7 @@ public class HelpAudioSetupScreen extends Screen {
 
     /** 把存档文件夹里的一个文件导入到存档并设为这条扶梯**当前这一头**的提示音（之后删原文件仍可播）。 */
     private void importFolderAudio(String name) {
-        Packets.CHANNEL.sendToServer(new ImportFolderHelpAudioPacket(pos, name, editIn));
+Packets.CHANNEL.sendToServer(new ImportFolderHelpAudioPacket(pos, name, editIn));
         pending.remove(name);
         buildUi();
         setStatus("正在从文件夹导入并设为「" + endLabel() + "」的提示音：" + truncate(name, 16));

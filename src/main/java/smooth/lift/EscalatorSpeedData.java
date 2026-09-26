@@ -201,12 +201,13 @@ public class EscalatorSpeedData extends SavedData {
     // 【1.42】直梯（Lift）开关门提示音 liftmusic.ogg
     //
     // 这是**与扶梯完全无关**的另一件事：MTR 直梯在**关门**时连播 4 次 liftmusic.ogg、
-    // **开门**时连播 2 次（固定间隔，见客户端 LiftChimePlayer）；「哪条直梯」由客户端按
+    // **开门**时连播 2 次（固定间隔，见客户端 LiftChimePlayer）；【1.52】这两个次数只对**内置**
+    // liftmusic 成立，玩家导入的 ogg 只播一次。「哪条直梯」由客户端按
     // 「离玩家最近的直梯」现算，**不需要在这里存任何按扶梯方块索引的数据** ——
     // 所以这套数据只有「维度默认」一层，没有 blockXxx 那张表，比上面所有设置都轻。
     //
     // ★ 这两条设置**按维度**存（和其它设置一样，一份 ServerLevel 一份 SavedData）。
-    //   指令里的 `-f` 因此是「**对所有维度**强制」（见 SmoothLift 里的 lifthelp / lifthelpspeed），
+    //   指令里的 `-f` 因此是「**对所有维度**强制」（见 SmoothLift 里的 lifthelp），
     //   而不是「对这条直梯强制」—— 直梯没有单条粒度的设置。
     // ------------------------------------------------------------------
 
@@ -234,10 +235,10 @@ public class EscalatorSpeedData extends SavedData {
      */
     public static final double LIFT_HELP_INTERVAL_SECONDS = 0.8;
 
-    /** 【1.42】关门时连播几次。 */
+    /** 【1.42】关门时连播几次（**仅内置 liftmusic**；【1.52】玩家导入的 ogg 只播一次）。 */
     public static final int LIFT_HELP_CLOSE_REPEATS = 4;
 
-    /** 【1.42】开门时连播几次。 */
+    /** 【1.42】开门时连播几次（**仅内置 liftmusic**；【1.52】玩家导入的 ogg 只播一次）。 */
     public static final int LIFT_HELP_OPEN_REPEATS = 2;
 
     /**
@@ -429,15 +430,21 @@ public class EscalatorSpeedData extends SavedData {
      * 【1.42】直梯开关门提示音开关（{@code /lifthelp} 设置）。
      *
      * <p>{@code true} = 直梯关门连播 {@link #LIFT_HELP_CLOSE_REPEATS} 次、开门连播
-     * {@link #LIFT_HELP_OPEN_REPEATS} 次 liftmusic.ogg；{@code false} = 完全不播。
+     * {@link #LIFT_HELP_OPEN_REPEATS} 次 liftmusic.ogg（**【1.52】这两个次数只对内置素材成立**：
+     * 换成玩家导入的 ogg 就只播一次）；{@code false} = 完全不播。
      * 旧存档没有这个字段 → 读到默认 {@code true}（功能默认开）。
      */
     public boolean defaultLiftHelp = true;
 
     /**
-     * 【1.42】直梯开关门提示音的**倍速**（{@code /lifthelpspeed} 设置，允许小数）。
+     * 【1.42】直梯开关门提示音的**倍速**（允许小数）。
      * 取值被 {@link #clampLiftHelpSpeed} 夹到
      * [{@link #LIFT_HELP_SPEED_MIN}, {@link #LIFT_HELP_SPEED_MAX}]。旧存档缺字段 → 1.0（原速）。
+     *
+     * <p>★【1.15】改这个值的指令 {@code /lifthelpspeed} 已按用户要求**删除**（石斧界面本来
+     * 也没有入口）⇒ 新存档恒为 1.0。字段与播放端的 pitch 逻辑都保留：一是旧存档里可能
+     * 存着 1.0 以外的值（读回来照样按它播），二是 {@code clampLiftHelpSpeed} 还要给
+     * 同步包与显示用。
      */
     public float defaultLiftHelpSpeed = DEFAULT_LIFT_HELP_SPEED;
 
@@ -459,7 +466,7 @@ public class EscalatorSpeedData extends SavedData {
      * <ul>
      *   <li>{@code up} = 上楼提示音（准备向上移动那声）；</li>
      *   <li>{@code down} = 下楼提示音（准备向下移动那声）；</li>
-     *   <li>{@code chime} = 开关门提示音（开门 2 次 / 关门 4 次连播）。</li>
+     *   <li>{@code chime} = 开关门提示音（**内置素材**开门 2 次 / 关门 4 次连播；【1.52】导入的 ogg 只播一次）。</li>
      * </ul>
      * 取值：**{@link #LIFT_TONE_VOLUME_UNSET}（-1）= 该项没单独调过，跟随 {@link #defaultLiftHelpVolume}**；
      * 否则 = 该项自己的音量（1~1000，100 = 原始音量、1000 = 10×）。旧存档没有这三个字段 → -1
@@ -479,7 +486,7 @@ public class EscalatorSpeedData extends SavedData {
      * <ul>
      *   <li>{@code up} = 上楼提示音（准备向上移动那声）；</li>
      *   <li>{@code down} = 下楼提示音（准备向下移动那声）；</li>
-     *   <li>{@code chime} = 开关门提示音（开门 2 次 / 关门 4 次连播）。</li>
+     *   <li>{@code chime} = 开关门提示音（**内置素材**开门 2 次 / 关门 4 次连播；【1.52】导入的 ogg 只播一次）。</li>
      * </ul>
      * 三者独立，缺省全开（{@code true}）。旧存档没有这三个字段 → 读到 {@code true}，
      * 与 1.45 之前的行为完全一致。
@@ -487,6 +494,29 @@ public class EscalatorSpeedData extends SavedData {
     public boolean defaultLiftToneUpEnabled = true;
     public boolean defaultLiftToneDownEnabled = true;
     public boolean defaultLiftToneChimeEnabled = true;
+
+    /**
+     * 【1.15】三项提示音的**维度默认素材**（{@code /lifthelp up|down|door <名字>} 设置）。
+     *
+     * <ul>
+     *   <li>{@code up} = 上楼提示音（准备向上移动那声）默认放哪一段；</li>
+     *   <li>{@code down} = 下楼提示音（准备向下移动那声）；</li>
+     *   <li>{@code chime} = 开关门提示音（**内置素材**开门 2 次 / 关门 4 次连播；【1.52】导入的 ogg 只播一次）。</li>
+     * </ul>
+     *
+     * <p><b>与 {@link #liftToneAudio}（按竖井列单独设置）的关系</b>：
+     * 播放端先看这一条直梯（竖井列）有没有单独设置；没有、或者单独设置的那一项正好是
+     * {@link #LIFT_TONE_DEFAULT}，就回落到这里的维度默认；维度默认再是 {@code default}
+     * 才用模组内置素材。所以「{@code default}」在两层里都是「跟上一层」的意思，
+     * 初始值也就是 {@code default} ⇒ 行为与 1.14 及以前完全一致（不设置就用内置素材）。
+     *
+     * <p>取值语义与 {@link #liftToneAudio} 相同：{@link #LIFT_TONE_DEFAULT} 内置素材 /
+     * {@link #LIFT_TONE_OFF} 这一项不播 / 其它 = 音频库文件名。
+     * 旧存档没有这三个字段 → {@code default}。
+     */
+    public String defaultLiftToneAudioUp = LIFT_TONE_DEFAULT;
+    public String defaultLiftToneAudioDown = LIFT_TONE_DEFAULT;
+    public String defaultLiftToneAudioChime = LIFT_TONE_DEFAULT;
 
     /**
      * 【1.47】直梯提示音（上楼 / 下楼 / 开关门，三项共用一份）的**淡入淡出范围**（格）。
@@ -513,13 +543,14 @@ public class EscalatorSpeedData extends SavedData {
      *
      * <p>值：{@code up} = 准备向上移动（up.ogg）、{@code down} = 准备向下移动（down.ogg）、
      * {@code chime} = 开关门（liftmusic.ogg）。三者互不冲突，可分别选。
-     * 每个字段取值有两种语义：
+     * 每个字段取值有三种语义：
      * <ul>
-     *   <li>{@link #LIFT_TONE_DEFAULT} = 用模组内置素材（原始开关门/up/down 提示音）；</li>
+     *   <li>{@link #LIFT_TONE_DEFAULT} = **跟维度默认**（{@link #defaultLiftToneAudioUp} 等，
+     *       维度默认再是 default 时就是模组内置素材）；</li>
      *   <li>{@link #LIFT_TONE_OFF} = 这一条不播提示音；</li>
-     *   <li>其它 = 音频库里的文件名（从 {@code smoothlift_audio} 导入过的那份）。</li>
+     *   <li>其它 = 音频库里的文件名（从 {@code MBM_Audio} 导入过的那份）。</li>
      * </ul>
-     * 旧存档没有这张表 → 空表（全部走默认素材，与旧行为一致）。
+     * 旧存档没有这张表 → 空表（全部走维度默认 = 内置素材，与旧行为一致）。
      */
     public final Map<Long, LiftToneAudio> liftToneAudio = new HashMap<>();
 
@@ -530,6 +561,536 @@ public class EscalatorSpeedData extends SavedData {
     /** 【1.45】「设置不存在」的哨兵值（与默认素材同义，旧存档读到它 = 默认）。 */
     public static final String LIFT_TONE_MISSING = "";
 
+    /**
+     * 【1.15】三项**全是** {@link #LIFT_TONE_DEFAULT}（都跟维度默认）吗？
+     * 单独设置那张表用它决定「这条记录是不是等于没设置，可以直接删掉」。
+     */
+    public static boolean isLiftToneAllDefault(String up, String down, String chime) {
+        return LIFT_TONE_DEFAULT.equals(up) && LIFT_TONE_DEFAULT.equals(down)
+                && LIFT_TONE_DEFAULT.equals(chime);
+    }
+
+    // ==================================================================
+    // 【1.50】列车屏蔽门（MTR Platform Screen Door / APG）开关门提示音
+    //
+    // 与直梯那套（defaultLiftHelp / liftToneAudio）**形状完全对称**，只是「项」从
+    // 三项（up/down/chime）变成两项（open/close），而且直梯提示音没有方块粒度、
+    // 屏蔽门有（右键某一扇门可以对它单独换素材）。
+    //
+    // ★ 为什么「范围」的默认值是 16 而不是直梯的 4：直梯提示音贴在轿厢/楼层那一格上，
+    //   玩家站在梯门口听，4 格够；屏蔽门是一条**长长的站台**，一列车到站时整排门同时开，
+    //   玩家常常站在离最近那扇门十几格的地方，4 格会变成「站在站台上什么都听不见」。
+    // ==================================================================
+
+    /**
+     * 【1.50】屏蔽门提示音**总开关**（{@code /pbmmusic on|off} 或石斧界面）。
+     * {@code false} = 开门/关门一律不播。旧存档没有这个字段 → {@code true}（功能默认开）。
+     */
+    public boolean defaultPsdHelp = true;
+
+    /**
+     * 【1.50】屏蔽门「**开门**提示音」的独立子开关（{@code /pbmmusic open on|off}）。
+     * 总开关开着时，这一项还能再单独关一层。旧存档缺字段 → {@code true}。
+     */
+    public boolean defaultPsdToneOpenEnabled = true;
+
+    /** 【1.50】屏蔽门「**关门**提示音」的独立子开关（{@code /pbmmusic close on|off}）。 */
+    public boolean defaultPsdToneCloseEnabled = true;
+
+    /**
+     * 【1.50】屏蔽门提示音的**共用默认音量**（{@code /pbmloud}，1~1000，100 = 原始音量、
+     * 1000 = 10× 放大）。两项没单独调过时都用它。旧存档缺字段 → 100。
+     */
+    public int defaultPsdHelpVolume = DEFAULT_PSD_HELP_VOLUME;
+
+    /**
+     * 【1.50】屏蔽门两项提示音**各自的音量**（{@code /pbmloud open|close <音量>}）。
+     * {@link #PSD_TONE_VOLUME_UNSET}（-1）= 该项没单独调过，跟随 {@link #defaultPsdHelpVolume}。
+     */
+    public int defaultPsdToneVolumeOpen = PSD_TONE_VOLUME_UNSET;
+    public int defaultPsdToneVolumeClose = PSD_TONE_VOLUME_UNSET;
+    /**
+     * 【1.22】到站播报（{@code /pbmmidium}）**自己那一项**的音量。
+     * {@link #PSD_TONE_VOLUME_UNSET}（-1）= 没单独调过，跟随这一扇门的共用音量
+     * （{@link #defaultPsdHelpVolume}），也就是 1.21 及以前的行为。
+     */
+    public int defaultPsdMidiumVolume = PSD_TONE_VOLUME_UNSET;
+    /**
+     * 【1.22】进站报站（{@code /pbmarrive}）**自己那一项**的音量。
+     * 语义同 {@link #defaultPsdMidiumVolume}。
+     */
+    public int defaultPsdArriveVolume = PSD_TONE_VOLUME_UNSET;
+
+    /**
+     * 【1.50】屏蔽门提示音的**可闻范围**（{@code /pbmround}，单位格）。默认
+     * {@link #DEFAULT_PSD_HELP_ROUND} = 16（理由见上面那段注释）。
+     */
+    public int defaultPsdHelpRound = DEFAULT_PSD_HELP_ROUND;
+
+    /**
+     * 【1.23】「**到站播报**」（{@code /pbmmidium}）自己的可闻范围（格，{@code /pbmmidiumround}）。
+     *
+     * <p>★ 为什么要跟提示音**分开一份**：三类声音的「该听多远」根本不是一件事 ——
+     * 开关门提示音是**机械事件**，站在门口听最合理（默认 16 格）；
+     * 而站台广播是**说给整个站台的人听的**，玩家希望它传得远一些。用户在 1.22 那一轮
+     * 给三类声音各自加了音量，本轮把**范围**也拆开，理由完全一样。
+     *
+     * <p>默认 {@link #DEFAULT_PSD_MIDIUM_ROUND} = 16（与提示音同值 ⇒ 旧存档行为逐位不变：
+     * 没有这个字段时播放端读到的就是 16，与 1.22 及以前共用 {@link #defaultPsdHelpRound} 的
+     * 效果**完全一致**）。
+     */
+    public int defaultPsdMidiumRound = DEFAULT_PSD_MIDIUM_ROUND;
+
+    /**
+     * 【1.23】「**进站报站**」（{@code /pbmarrive}）自己的可闻范围（格，{@code /pbmarriveround}）。
+     * 语义与 {@link #defaultPsdMidiumRound} 同（默认 16）。
+     */
+    public int defaultPsdArriveRound = DEFAULT_PSD_ARRIVE_ROUND;
+
+    /**
+     * 【1.16】关门提示音的**强制等待时长**（秒，{@code /pbmclosewait}，0~60）。
+     *
+     * <p><b>它只在一种情形下生效</b>：这一轮的停站时长**不够放完整条关门素材**时 ——
+     * 这时不再「这一轮干脆没有人声」，而是「**开门音效播完之后再等这么多秒**，
+     * 然后把语音播报放出来」；门一进入关门行程（嘀嘀开始响）就**立刻掐断**这段人声，
+     * 不管它播到了哪里。停站**够长**时这个值被完全忽略（走原来那套「整段提前播、结尾落在门上」）。
+     *
+     * <p>默认 {@link #DEFAULT_PSD_CLOSE_WAIT_SECONDS} = 5（用户点名：「第一次加入 mod 时默认为 5 秒」）。
+     * 旧存档没有这个字段 → 保持字段初始值，也就是**同样读回 5 秒**（本项不跟随「旧档=旧行为」那条惯例，
+     * 因为用户要的就是「装上就有 5 秒」）。
+     */
+    public int defaultPsdCloseWaitSeconds = DEFAULT_PSD_CLOSE_WAIT_SECONDS;
+
+    /**
+     * 【1.17】本维度「**到站播报**」的素材 id（{@code /pbmmidium <名字> <秒>}）。
+     *
+     * <p>语义：列车到站、屏蔽门**开门音（嘀嘀嘀）播完之后**再等
+     * {@link #defaultPsdMidiumWaitSeconds} 秒，播这一条语音 —— 就是真实地铁站台上那种
+     * 「到达某某站，请……」的报站广播。
+     *
+     * <p>★ 与关门提示音那条兜底人声的**唯一本质差别**：**它永远不会被掐断**。
+     * 关门那一段人声「门一动就掐」（用户点名），而这一条用户点名
+     * 「**即使列车出站也要继续播放，直到播完**」⇒ 播放端不许给它任何停止条件。
+     *
+     * <p>{@link #PSD_MIDIUM_OFF} = 不播（默认）；其它值 = 音频库里的文件名。
+     */
+    public String defaultPsdMidiumAudio = PSD_MIDIUM_OFF;
+
+    /**
+     * 【1.17】到站播报的**等待秒数**：从「开门音（嘀嘀嘀）播完」那一刻起再等这么多秒。
+     *
+     * <p>取值 <b>[0, +∞)</b>（用户点名：「允许输入 0 到正无穷的数字」）⇒ 只有下界，
+     * 见 {@link #clampPsdMidiumWaitSeconds}。{@code 0} = 开门音一播完就播报。
+     *
+     * <p>默认 {@link #DEFAULT_PSD_MIDIUM_WAIT_SECONDS} = 0（「开门嘀嘀嘀之后开始播放」）。
+     */
+    public int defaultPsdMidiumWaitSeconds = DEFAULT_PSD_MIDIUM_WAIT_SECONDS;
+
+    /**
+     * 【1.21】本维度「**进站报站**」的素材 id（{@code /pbmarrive <名字> <X>}）。
+     *
+     * <p>语义：**读 MTR 时刻表**，这个站台「**最近的一班列车**还剩 |X| 秒到站」时播这一条语音
+     * （X ∈ (-∞, 0]，例如 X=-10 ⇒ 剩 10 秒到站时起播、X=0 ⇒ 到站那一刻起播）。
+     * ★ 只与**到站剩余时间**有关，与门什么时候开、停站多长**无关**。
+     * 与 {@link #defaultPsdMidiumAudio} 一样，「即使列车进站也要继续播放，直到播完」
+     * ⇒ 播放端**不许**给它任何停止条件。
+     *
+     * <p>{@link #PSD_ARRIVE_OFF} = 不播（默认）；其它值 = 音频库里的文件名。
+     */
+    public String defaultPsdArriveAudio = PSD_ARRIVE_OFF;
+
+    /**
+     * 【1.21】进站报站的**秒数**：X ∈ (-∞, 0]，含义 = 「最近的一班列车**还剩 |X| 秒到站**时起播」。
+     *
+     * <p>取值只有**上界 0**（不能为正 = 不能晚于列车到站那一刻），没有下界 ——
+     * 见 {@link #clampPsdArriveSeconds}。{@code 0} = 列车到站那一刻起播。
+     */
+    public int defaultPsdArriveSeconds = DEFAULT_PSD_ARRIVE_SECONDS;
+
+    /**
+     * 【1.15】屏蔽门的**维度默认素材**（开门端 / 关门端各一份）：
+     * {@code /pbmmusic open|close <名字>} 改的就是它，石斧界面里每扇门的「默认」行也指向它。
+     *
+     * <p>取值语义（与直梯那套同构，三层）：
+     * <ul>
+     *   <li>{@link #PSD_TONE_DEFAULT}（指令里写 {@code default}）= **跟内置**：
+     *       开门端 → {@code dooropen.ogg}、关门端 → {@code mdoorclose.ogg}；</li>
+     *   <li>{@link #PSD_TONE_OFF} = 这个维度不播（与子开关是「与」关系）；</li>
+     *   <li>{@link #PSD_TONE_BUILTIN_CLOSE}（{@code default-c}）/
+     *       {@link #PSD_TONE_BUILTIN_CLOSE_M}（{@code default-m}）=
+     *       **显式**指定某一段内置素材（与端别无关）；</li>
+     *   <li>{@link #PSD_TONE_BUILTIN_CLOSE_S}（{@code default-s}，界面上的「默认（短）」）=
+     *       按端别的默认素材，但**不播语音播报段**（关门端听起来就是纯粹一串嘀嘀）；</li>
+     *   <li>其它 = 音频库文件名（从 {@code MBM_Audio} 导入过的那份）。</li>
+     * </ul>
+     * ★ 旧存档没有这两个字段 → 读回 {@link #PSD_TONE_DEFAULT}，行为**等于** 1.50 的
+     *   「两项都走内置素材」，即旧档不需要任何迁移。
+     */
+    public String defaultPsdToneAudioOpen = PSD_TONE_DEFAULT;
+    public String defaultPsdToneAudioClose = PSD_TONE_DEFAULT;
+
+    /**
+     * 【1.50】石斧右键某一扇屏蔽门换的提示音：**门的锚点坐标** → {@link PsdToneAudio}。
+     *
+     * <p><b>什么是「门的锚点」</b>：MTR 的一扇屏蔽门在客户端其实由**两个方块实体**共同表示
+     * （左右各一个，{@code side=left|right}；MTR4 还有上半格，{@code half=upper}），
+     * 而门值（{@code getDoorValue()} / {@code getOpen()}）由这两个实体**取同一个值**。
+     * 所以「哪一扇门」不能直接用「读到门值的那一格」，否则同一扇门会算出两个 key、
+     * 石斧在三格里的哪一格右键就只配得上一格。
+     *
+     * <p>锚点的算法见 {@code PsdDoorTracker.anchorOf}：先下移到下半格，再按
+     * {@code side}/{@code facing} 找配对的那一格，取两者里 {@code BlockPos.asLong} 较小的一格。
+     * 左右两侧算出来是**同一个坐标**，所以「哪一格右键都是同一扇门」。
+     *
+     * <p>取值语义与直梯那套一致：{@link #PSD_TONE_DEFAULT} 内置素材 /
+     * {@link #PSD_TONE_OFF} 这扇门不播 / 其它 = 音频库文件名。
+     * 旧存档没有这张表 → 空表（全部走维度默认 + 内置素材）。
+     */
+    public final Map<Long, PsdToneAudio> psdToneAudio = new HashMap<>();
+
+    /** 【1.50】屏蔽门提示音共用默认音量的默认值 = 100（原始音量）。 */
+    public static final int DEFAULT_PSD_HELP_VOLUME = DEFAULT_HELP_VOLUME;
+    /** 【1.50】屏蔽门「该项没单独调过」的哨兵（不是合法音量，合法区间 1~1000）。 */
+    public static final int PSD_TONE_VOLUME_UNSET = LIFT_TONE_VOLUME_UNSET;
+    /** 【1.50】屏蔽门提示音默认可闻范围 = 16 格（站台尺度；理由见上面那段注释）。 */
+    public static final int DEFAULT_PSD_HELP_ROUND = 16;
+    /** 【1.50】屏蔽门提示音范围上下限（复用扶梯/直梯那一组：1~128）。 */
+    public static final int PSD_HELP_ROUND_MIN = ROUND_MIN;
+    public static final int PSD_HELP_ROUND_MAX = ROUND_MAX;
+
+    /**
+     * 【1.23】到站播报 / 进站报站各自的默认可闻范围 = 16 格。
+     *
+     * <p>与 {@link #DEFAULT_PSD_HELP_ROUND} **同值**是刻意的：老存档里没有这两个字段 ⇒
+     * 读回字段初始值 16 ⇒ 与 1.22 及以前「三类声音共用提示音那一个范围」的行为逐位相同。
+     * ★ 上下限**复用同一组常量**（1~128），不另开一套 —— 三处输入框 / 指令参数校验要是各写一份，
+     * 迟早出现「界面上限跟指令上限不是一个数」这种静默不一致。
+     */
+    public static final int DEFAULT_PSD_MIDIUM_ROUND = DEFAULT_PSD_HELP_ROUND;
+    public static final int DEFAULT_PSD_ARRIVE_ROUND = DEFAULT_PSD_HELP_ROUND;
+    public static final int PSD_MIDIUM_ROUND_MIN = PSD_HELP_ROUND_MIN;
+    public static final int PSD_MIDIUM_ROUND_MAX = PSD_HELP_ROUND_MAX;
+    public static final int PSD_ARRIVE_ROUND_MIN = PSD_HELP_ROUND_MIN;
+    public static final int PSD_ARRIVE_ROUND_MAX = PSD_HELP_ROUND_MAX;
+
+    /**
+     * 【1.16】关门提示音强制等待时长的默认值 = **5 秒**。
+     *
+     * <p>用户原话：「第一次加入 mod 时 pbmclosewait 默认为 5 秒」。所以它**不是**
+     * 「旧档保持旧行为」那一类字段 —— 装上模组的第一刻就是 5 秒。
+     */
+    public static final int DEFAULT_PSD_CLOSE_WAIT_SECONDS = 5;
+
+    /** 【1.23】开门提示音等待秒数默认 = 0（不等待）。 */
+    public static final int DEFAULT_PSD_OPEN_WAIT_SECONDS = 0;
+    /**
+     * 【1.16】强制等待时长的上下限（秒）。
+     *
+     * <p>下界 0 = 「不许等」（人声紧跟在开门音之后），保留它是为了让用户能把这套兜底
+     * 调成「几乎不播人声」而不是被迫至少等 1 秒；上界 60 = 一分钟，已经远超任何真实停站，
+     * 再大只会让「等到了门都关了」这种无意义配置变得不容易被发现。
+     */
+    public static final int PSD_CLOSE_WAIT_MIN = 0;
+    // ★【1.23】用户点名等待秒数范围 [0,+∞)：上限从 60 放宽到 999999（播放端按秒×20 tick 算，long 不溢出）。
+    public static final int PSD_CLOSE_WAIT_MAX = 999999;
+    public static final int PSD_OPEN_WAIT_MIN = 0;
+
+    // ------------------------------------------------------------------
+    // 【1.17】「到站播报」（/pbmmidium <名字> <秒>）
+    //
+    //   用户原话：「增加开门后的播报，类似于上海地铁到达站后开门之后站台播报的…
+    //   这个播报，模组里是开门嘀嘀嘀之后开始播放。指令为 pbmmidium XXX Y
+    //   （XXX 是 ogg 名称，Y 是到站后等待几秒开始播放这个音频），
+    //   这个 pbmmidium 音频即使列车出站也要继续播放，直到播完」
+    //
+    //   ★ 与「关门提示音」那一套的**唯一本质差别**：它**永远不会被掐断**。
+    //   关门那一段人声是「门一动就掐」，这一条是「车走了也照播到完」——
+    //   所以它不能挂在 {@code forcedVoice} 那张表上（那张表的每一条都有停止条件），
+    //   必须自己一张表、自己一条 tick 路（见 PsdChimePlayer#tickArrivalAnnounce）。
+    // ------------------------------------------------------------------
+
+    /** 【1.17】「到站播报」不播（默认值）。与 {@link #PSD_TONE_OFF} 同串，但语义独立。 */
+    public static final String PSD_MIDIUM_OFF = LIFT_TONE_OFF;
+    /** 【1.17】「到站播报」默认等待秒数 = 0（开门音一播完就播）。 */
+    public static final int DEFAULT_PSD_MIDIUM_WAIT_SECONDS = 0;
+    /**
+     * 【1.17】到站播报等待秒数的**下界** = 0。
+     *
+     * <p>★ 上界**故意不设**：用户点名「pbmmidium 指令和 ui 允许输入 0 到正无穷的数字 [0,+∞)」。
+     * 所以这里只有一个 {@code max(0, …)}，没有 {@code min}（对比
+     * {@link #clampPsdCloseWaitSeconds} 是有上界的）。
+     */
+    public static final int PSD_MIDIUM_WAIT_MIN = 0;
+
+    // ------------------------------------------------------------------
+    // 【1.21】「进站报站」（/pbmarrive <名字> <X>）
+    //
+    //   用户原话：「增加列车进站报站功能，pbmarrive 指令，这个 pbmarrive 音频即使列车进站
+    //   也要继续播放，直到播完」；随后**更正了触发口径**：
+    //   「玩家设置的 -X 秒是**最近的一班列车到站的时间**：X=-10 就是最近列车剩余 10 秒到站时
+    //   开始播放，这个音乐是通过**列车到站剩余时间**播放的，**而不是开门时间**」
+    //   （我先前把 X 理解成「提前开门嘀嘀嘀几秒」，方向偏了 —— X 只与到站剩余时间有关。）
+    //
+    //   ★ 与「到站播报」的全对称：两者都是**永远不会被掐断**的独立语音，
+    //   区别只在**触发时刻**（到站播报 = 开门音之后 + Y 秒；进站播报 = 时刻表说还剩 |X| 秒到站）。
+    // ------------------------------------------------------------------
+
+    /** 【1.21】「进站报站」不播（默认值）。与 {@link #PSD_MIDIUM_OFF} 同串，但语义独立。 */
+    public static final String PSD_ARRIVE_OFF = LIFT_TONE_OFF;
+    /** 【1.21】「进站报站」默认秒数 = 0（列车到站那一刻起播）。 */
+    public static final int DEFAULT_PSD_ARRIVE_SECONDS = 0;
+    /**
+     * 【1.21】进站报站秒数的**上界** = 0。
+     *
+     * <p>★ 下界**故意不设**：用户点名输入范围是 {@code (-∞, 0]}（只夹上界 0，
+     * 正值 = 「晚于到站那一刻」没有意义，折成 0）。对比 {@link #clampPsdMidiumWaitSeconds}
+     * 是**只有下界**的 —— 两个 clamp 的不对称是有意的，别「顺手补齐」。
+     */
+    public static final int PSD_ARRIVE_SECONDS_MAX = 0;
+
+    /** 【1.50】「用内置素材」的哨兵值（与直梯共用同一个字符串，语义一致）。 */
+    public static final String PSD_TONE_DEFAULT = LIFT_TONE_DEFAULT;
+    /** 【1.50】「这扇门不播」的哨兵值。 */
+    public static final String PSD_TONE_OFF = LIFT_TONE_OFF;
+
+    // ------------------------------------------------------------------
+    // 【1.15】四段**内置**素材的名字（用户在指令里写的那个词）
+    //
+    //   dooropen.ogg    → default     （开门端的「跟内置」就是它）
+    //   mdoorclose.ogg  → default-m   （**关门端的「跟内置」就是它**；也可以显式写在任何一端）
+    //   doorclose.ogg   → default-c   （另一段关门素材，只能显式写）
+    //   mdoorclose.ogg  → default-s   （「默认（短）」：同一段关门素材，但**不播语音播报段**）
+    //
+    // ★ 为什么 {@code default} 同时也是「跟上一层」的哨兵：
+    //   「跟上一层」在两层上都成立 —— 每扇门写 default = 跟维度默认；维度默认再是 default
+    //   = 跟内置。于是最末端的「跟内置」自然落在**端别**上（开门 dooropen / 关门 mdoorclose），
+    //   这也正是用户要的「默认音效 = dooropen.ogg（开）/ mdoorclose.ogg（关）」。
+    //   代价：「在某一扇门上强制用内置、忽略维度默认」这句话表达不出来（与直梯同一取舍）。
+    // ------------------------------------------------------------------
+
+    /** 【1.15】内置**开门**素材在指令里的名字（= {@code dooropen.ogg}）。 */
+    public static final String PSD_TONE_BUILTIN_OPEN = PSD_TONE_DEFAULT;
+    /** 【1.15】内置**关门**素材在指令里的名字（= {@code doorclose.ogg}）。 */
+    public static final String PSD_TONE_BUILTIN_CLOSE = "default-c";
+    /**
+     * 【1.15】内置**关门备选**素材在指令里的名字（= {@code mdoorclose.ogg}）。
+     *
+     * <p>★ 它**同时是关门端的默认音效**（{@link #PSD_TONE_BUILTIN_OPEN} 落到关门端时就是这一段）——
+     * 用户点名「屏蔽门默认音效改为 mdoorclose.ogg（default-m）」。所以关门端有两个名字指向同一段：
+     * {@code default}（跟上一层）与 {@code default-m}（显式）。
+     */
+    public static final String PSD_TONE_BUILTIN_CLOSE_M = "default-m";
+
+    /**
+     * 【1.15】「默认（短）」在指令里的名字 —— **跟内置，但不播开头的语音播报段**。
+     *
+     * <p>背景：关门素材是一条真实录音 `[语音播报 ~6.7s][静音][嘀嘀 ~3.5s]`，而门只走 4 秒。
+     * 【1.15】的做法是**整段锚在「关门」那一瞬**（听到的顺序 = 关门人声 → 关门 → 关门嘀嘀）；
+     * 但总有玩家想要**纯嘀嘀**的短版，于是给出这个显式选项：同一段 {@code mdoorclose.ogg}，
+     * 只是**关门时不放那段语音播报** ⇒ 听起来就是纯粹的一串嘀嘀（对齐门关上那一刻）。
+     *
+     * <p>实现上它**不是**另一段音频：素材仍是 {@code mdoorclose.ogg}（见 {@link #psdBuiltinKey}），
+     * 差别只在「关门时要不要放素材开头那段播报」这一条播放策略上（见 {@link #isPsdBuiltinShort}）。
+     *
+     * <p>端别行为：**按端别取该端的默认素材**（开门 → {@code dooropen.ogg}、关门 → {@code mdoorclose.ogg}）。
+     * 开门端本来就没有播报段 ⇒ 在开门端它与 {@code default} 等价、是个无副作用的别名；
+     * 这样设计是为了**避免**「在开门端写 default-s 却把开门声换成关门素材」这种惊吓
+     * （{@code default-c} / {@code default-m} 是显式素材名、与端别无关，那是它们该有的语义）。
+     */
+    public static final String PSD_TONE_BUILTIN_CLOSE_S = "default-s";
+
+    /**
+     * 【1.15】这个 id 是不是四段内置素材的名字之一（{@code default} / {@code default-c} /
+     * {@code default-m} / {@code default-s}）—— 是内置名的**一定不是**音频库文件名。
+     */
+    public static boolean isPsdBuiltinName(String id) {
+        return PSD_TONE_BUILTIN_OPEN.equals(id)
+                || PSD_TONE_BUILTIN_CLOSE.equals(id)
+                || PSD_TONE_BUILTIN_CLOSE_M.equals(id)
+                || PSD_TONE_BUILTIN_CLOSE_S.equals(id);
+    }
+
+    /**
+     * 【1.15】这个内置名是不是**「默认（短）」**（{@link #PSD_TONE_BUILTIN_CLOSE_S}）——
+     * 是的话播放端**不播素材开头的语音播报段**，只播后面的嘀嘀。
+     *
+     * <p>为什么这条判定放在**数据层**：和 {@link #psdBuiltinKey} 一样，「这个 id 是什么意思」
+     * 只应该有一处真相。播放端（客户端）只问结论，不自己认识 {@code "default-s"} 这个字面量；
+     * 回归脚本也能据此把「谁负责压制播报」钉死在一个方法上。
+     *
+     * <p>★ 调用点只有 {@code PsdChimePlayer.resolveTone}：命中时把这条素材的 {@code announce}
+     * 置 false（**不碰**「播报/嘀嘀分界点」—— 关门端那道「不许剪进播报里」的夹取还要用它），
+     * 于是「关门时整段起播」那一支不成立、改走「剪头 ⇒ 结尾落在门上」
+     * ⇒ 结果就是**纯嘀嘀、且结尾对齐门关上**。
+     */
+    public static boolean isPsdBuiltinShort(String id) {
+        return PSD_TONE_BUILTIN_CLOSE_S.equals(id);
+    }
+
+    /**
+     * 【1.15】内置素材名字 → **哪一段内置音频**：{@code dooropen} / {@code doorclose} /
+     * {@code mdoorclose}；不是内置名字返回 {@code null}（调用方按「音频库文件名」处理）。
+     *
+     * <p>{@code default} 是**按端别**取的 —— 开门端 = {@code dooropen}、关门端 = {@code mdoorclose}
+     * （★【1.15】关门端从 {@code doorclose} 改成 {@code mdoorclose}：用户点名「屏蔽门默认音效改为
+     * mdoorclose.ogg」，而 {@code default} 落到关门端就是「关门端的默认音效」）。
+     * {@code default-s}（「默认（短）」）同样**按端别**取，与 {@code default} 落到同一段素材 ——
+     * 它与 {@code default} 的差别**只在播放策略**（不分段，见 {@link #isPsdBuiltinShort}），
+     * 不在素材本身。
+     * 另外两个名字（{@code default-c} / {@code default-m}）与端别无关（显式写在哪一端就用哪一段）。
+     * 播放端只拿这个返回值去查声音事件（{@code sounds.json} 里的 audio/dooropen 等），
+     * 不在这里认识任何「声音事件」的概念（数据层不依赖客户端）。
+     */
+    public static String psdBuiltinKey(String which, String id) {
+        if (PSD_TONE_BUILTIN_OPEN.equals(id) || PSD_TONE_BUILTIN_CLOSE_S.equals(id)) {
+            return "open".equals(which) ? "dooropen" : "mdoorclose";
+        }
+        if (PSD_TONE_BUILTIN_CLOSE.equals(id)) {
+            return "doorclose";
+        }
+        if (PSD_TONE_BUILTIN_CLOSE_M.equals(id)) {
+            return "mdoorclose";
+        }
+        return null;
+    }
+
+    /** 【1.15】屏蔽门两项**全是** {@link #PSD_TONE_DEFAULT}（都跟维度默认）吗？与直梯同源。 */
+    public static boolean isPsdToneAllDefault(String open, String close) {
+        return PSD_TONE_DEFAULT.equals(open) && PSD_TONE_DEFAULT.equals(close);
+    }
+
+    /**
+     * 【1.15】屏蔽门版本的 {@link #normalizeLiftToneAudio}：同一套哨兵（空/null → {@code default}），
+     * 只是名字更贴近调用点，免得读 PSD 代码时以为在动直梯的东西。
+     */
+    public static String normalizePsdToneAudio(String audioId) {
+        return normalizeLiftToneAudio(audioId);
+    }
+
+    /** 【1.50】屏蔽门「哪一项」的中文名（指令反馈 / 石斧界面共用同一套词）。 */
+    public static String psdToneLabel(String which) {
+        return "open".equals(which) ? "开门提示音" : "关门提示音";
+    }
+
+    /**
+     * 【1.17】到站播报素材 id 的规范化：null / 空 / {@code off} / {@code none} → {@link #PSD_MIDIUM_OFF}。
+     *
+     * <p>与 {@link #normalizePsdToneAudio} 的差别：那一个把空值折成 {@code default}（= 跟内置），
+     * 因为提示音**永远有内置兜底**；到站播报**没有内置素材**（站台广播不可能随模组分发），
+     * 所以空值只能是「不播」。
+     */
+    public static String normalizePsdMidiumAudio(String audioId) {
+        if (audioId == null || audioId.isEmpty()) {
+            return PSD_MIDIUM_OFF;
+        }
+        String lower = audioId.toLowerCase(java.util.Locale.ROOT);
+        if ("off".equals(lower) || "none".equals(lower)) {
+            return PSD_MIDIUM_OFF;
+        }
+        return audioId;
+    }
+
+    /** 【1.17】到站播报是不是「不播」。 */
+    public static boolean isPsdMidiumOff(String audioId) {
+        return PSD_MIDIUM_OFF.equals(normalizePsdMidiumAudio(audioId));
+    }
+
+    /**
+     * 【1.21】进站报站素材 id 的规范化（与 {@link #normalizePsdMidiumAudio} 同构）：
+     * null / 空 / {@code off} / {@code none} → {@link #PSD_ARRIVE_OFF}。
+     *
+     * <p>★ 空值收敛到 {@code off}（**不是** {@code default}）：进站报站和到站播报一样
+     * **没有内置素材**（站台广播不可能随模组分发）。合并两个 normalize 的代价是
+     * 「进站报站跟着提示音一起回落内置 ⇒ 播一段不存在的音频」（症状：开了没声也不报错）。
+     */
+    public static String normalizePsdArriveAudio(String audioId) {
+        if (audioId == null || audioId.isEmpty()) {
+            return PSD_ARRIVE_OFF;
+        }
+        String lower = audioId.toLowerCase(java.util.Locale.ROOT);
+        if ("off".equals(lower) || "none".equals(lower)) {
+            return PSD_ARRIVE_OFF;
+        }
+        return audioId;
+    }
+
+    /** 【1.21】进站报站是不是「不播」。 */
+    public static boolean isPsdArriveOff(String audioId) {
+        return PSD_ARRIVE_OFF.equals(normalizePsdArriveAudio(audioId));
+    }
+
+    /**
+     * 【1.50】屏蔽门单项音量的夹取：{@link #PSD_TONE_VOLUME_UNSET}（-1 = 跟随共用默认）原样放行，
+     * 其余夹到 [{@link #HELP_VOLUME_MIN}, {@link #HELP_VOLUME_MAX}]（1~1000）。
+     */
+    public static int clampPsdToneVolume(int volume) {
+        if (volume == PSD_TONE_VOLUME_UNSET) {
+            return PSD_TONE_VOLUME_UNSET;
+        }
+        return Math.max(HELP_VOLUME_MIN, Math.min(HELP_VOLUME_MAX, volume));
+    }
+
+    /** 【1.50】屏蔽门提示音范围的夹取。 */
+    public static int clampPsdHelpRound(int round) {
+        return Math.max(PSD_HELP_ROUND_MIN, Math.min(PSD_HELP_ROUND_MAX, round));
+    }
+
+    /**
+     * 【1.23】到站播报范围的夹取（格）。
+     *
+     * <p>与 {@link #clampPsdHelpRound} **同口径**（1~128）。三条路都走它：指令参数类型
+     * （{@code roundArg()}）、存档读回、（UI 只读显示，不写）。
+     */
+    public static int clampPsdMidiumRound(int round) {
+        return Math.max(PSD_MIDIUM_ROUND_MIN, Math.min(PSD_MIDIUM_ROUND_MAX, round));
+    }
+
+    /** 【1.23】进站报站范围的夹取（格）；口径同 {@link #clampPsdMidiumRound}。 */
+    public static int clampPsdArriveRound(int round) {
+        return Math.max(PSD_ARRIVE_ROUND_MIN, Math.min(PSD_ARRIVE_ROUND_MAX, round));
+    }
+
+    /**
+     * 【1.16】关门提示音强制等待时长的夹取（秒）。
+     *
+     * <p>★ 夹取放在**数据层**这一处，指令参数类型、UI 输入框、存档读回三条路都走它 ——
+     * 否则「填了没用」（被下游悄悄夹掉）与「填了个越界值把行为弄坏」两种症状会同时存在。
+     */
+    public static int clampPsdCloseWaitSeconds(int seconds) {
+        return Math.max(PSD_CLOSE_WAIT_MIN, Math.min(PSD_CLOSE_WAIT_MAX, seconds));
+    }
+
+    /** ★【1.23】开门提示音等待秒数：允许**任意整数**（用户点名 (-∞, +∞)），clamp 恒等。
+     *   关门强制等待仍 [0, +∞)（PSD_CLOSE_WAIT_MIN/MAX 不适用开门）。 */
+    public static int clampPsdOpenWaitSeconds(int seconds) {
+        return seconds;
+    }
+
+    /**
+     * 【1.17】到站播报等待秒数的夹取（秒）。
+     *
+     * <p>★ 与 {@link #clampPsdCloseWaitSeconds} 的**唯一差别**：**没有上界**。
+     * 用户点名「pbmmidium 指令和 ui 允许输入 0 到正无穷的数字 [0,+∞)」⇒ 只夹下界 0，
+     * 负值折成 0（负的「等待」没有意义，且会让计划 tick 落到过去）。
+     *
+     * <p>上界落在 {@code Integer.parseInt} 的类型上界（{@code 2147483647} 秒 ≈ 68 年），
+     * 再往上一秒都表达不出来 —— 这已经是「正无穷」在 int 里的全部空间。
+     */
+    public static int clampPsdMidiumWaitSeconds(int seconds) {
+        return Math.max(PSD_MIDIUM_WAIT_MIN, seconds);
+    }
+
+    /**
+     * 【1.21】进站报站秒数的夹取（秒）。
+     *
+     * <p>★ 与 {@link #clampPsdMidiumWaitSeconds} **正好相反**：那一个**只有下界 0**，
+     * 这一个**只有上界 0**（用户点名的输入范围 {@code (-∞, 0]}）。正值 = 「晚于到站那一刻」
+     * 没有意义，折成 0。**不要**给它补一个下界 —— 负无穷是用户明确要的。
+     */
+    public static int clampPsdArriveSeconds(int seconds) {
+        return Math.min(PSD_ARRIVE_SECONDS_MAX, seconds);
+    }
+
     /** 维度默认阶梯动画速度：未单独设置阶梯动画的扶梯使用它。 */
     public double defaultStepSpeed() {
         return stepEnabled ? stepValue : VANILLA_STEP;
@@ -539,9 +1100,6 @@ public class EscalatorSpeedData extends SavedData {
     public boolean hasIndividualStep(BlockPos pos) {
         return stepSpeeds.containsKey(pos);
     }
-
-    // 【1.20.1 API】SavedData.Factory 是 1.20.2+ 才有的；1.20.1 仍在调用点用
-    // DimensionDataStorage.computeIfAbsent(fromTag, ctor, name) 三参形式（见 EscalatorSpeedManager）。
 
     public static EscalatorSpeedData fromTag(CompoundTag tag) {
         EscalatorSpeedData data = new EscalatorSpeedData();
@@ -681,6 +1239,16 @@ public class EscalatorSpeedData extends SavedData {
         if (tag.contains("defaultLiftToneChimeEnabled")) {
             data.defaultLiftToneChimeEnabled = tag.getBoolean("defaultLiftToneChimeEnabled");
         }
+        // 【1.15】三项提示音的维度默认素材：旧存档缺字段 → default（内置素材，与 1.14 行为一致）
+        if (tag.contains("defaultLiftToneAudioUp")) {
+            data.defaultLiftToneAudioUp = normalizeLiftToneAudio(tag.getString("defaultLiftToneAudioUp"));
+        }
+        if (tag.contains("defaultLiftToneAudioDown")) {
+            data.defaultLiftToneAudioDown = normalizeLiftToneAudio(tag.getString("defaultLiftToneAudioDown"));
+        }
+        if (tag.contains("defaultLiftToneAudioChime")) {
+            data.defaultLiftToneAudioChime = normalizeLiftToneAudio(tag.getString("defaultLiftToneAudioChime"));
+        }
         // 【1.47】直梯提示音淡入淡出范围：旧存档缺字段 → 默认 4 格（同「第一次载入」）
         if (tag.contains("defaultLiftHelpRound")) {
             data.defaultLiftHelpRound = clampLiftHelpRound(tag.getInt("defaultLiftHelpRound"));
@@ -707,6 +1275,104 @@ public class EscalatorSpeedData extends SavedData {
                 String chime = entry.contains("chime") ? entry.getString("chime") : "";
                 if (key != 0L && !(up.isEmpty() && down.isEmpty() && chime.isEmpty())) {
                     data.liftToneAudio.put(key, new LiftToneAudio(up, down, chime));
+                }
+            }
+        }
+        // 【1.50】屏蔽门提示音：总开关 / 两项子开关 / 共用默认音量 / 两项单独音量 / 范围。
+        //   旧存档（≤1.49）一个字段都没有 → 保持字段初始值（开、开、开、100、-1、-1、16），
+        //   也就是「功能默认打开、原始音量、站台尺度 16 格」。
+        if (tag.contains("defaultPsdHelp")) {
+            data.defaultPsdHelp = tag.getBoolean("defaultPsdHelp");
+        }
+        if (tag.contains("defaultPsdToneOpenEnabled")) {
+            data.defaultPsdToneOpenEnabled = tag.getBoolean("defaultPsdToneOpenEnabled");
+        }
+        if (tag.contains("defaultPsdToneCloseEnabled")) {
+            data.defaultPsdToneCloseEnabled = tag.getBoolean("defaultPsdToneCloseEnabled");
+        }
+        if (tag.contains("defaultPsdHelpVolume")) {
+            data.defaultPsdHelpVolume = clampLiftHelpVolume(tag.getInt("defaultPsdHelpVolume"));
+        }
+        if (tag.contains("defaultPsdToneVolumeOpen")) {
+            data.defaultPsdToneVolumeOpen = clampPsdToneVolume(tag.getInt("defaultPsdToneVolumeOpen"));
+        }
+        if (tag.contains("defaultPsdToneVolumeClose")) {
+            data.defaultPsdToneVolumeClose = clampPsdToneVolume(tag.getInt("defaultPsdToneVolumeClose"));
+        }
+        if (tag.contains("defaultPsdHelpRound")) {
+            data.defaultPsdHelpRound = clampPsdHelpRound(tag.getInt("defaultPsdHelpRound"));
+        }
+        // 【1.23】到站 / 进站播报各自的可闻范围（格）。旧存档没有这两个键 → 保持字段初始值 16，
+        //   与 1.22 及以前「三类声音共用提示音那一个范围」的行为逐位相同。
+        if (tag.contains("defaultPsdMidiumRound")) {
+            data.defaultPsdMidiumRound = clampPsdMidiumRound(tag.getInt("defaultPsdMidiumRound"));
+        }
+        if (tag.contains("defaultPsdArriveRound")) {
+            data.defaultPsdArriveRound = clampPsdArriveRound(tag.getInt("defaultPsdArriveRound"));
+        }
+        // 【1.16】关门提示音的强制等待时长（秒）。★ 旧存档**没有**这个键 → 不覆盖，
+        //   于是保持字段初始值 = DEFAULT_PSD_CLOSE_WAIT_SECONDS（5 秒）。
+        //   这正是用户要的「第一次加入 mod 时默认为 5 秒」——本项**不**走「旧档=旧行为」那套。
+        if (tag.contains("defaultPsdCloseWaitSeconds")) {
+            data.defaultPsdCloseWaitSeconds = clampPsdCloseWaitSeconds(tag.getInt("defaultPsdCloseWaitSeconds"));
+        }
+        // 【1.17】到站播报（素材 + 等待秒数）。旧存档没有两个键 →
+        //   保持字段初始值（素材 = off、等待 = 0），也就是「默认不播报」——
+        //   这一项**走**「旧档=旧行为」那套（用户只点名了 pbmclosewait 的默认 5 秒，
+        //   没有给到站播报指定默认；而站台广播本来就没有内置素材，默认只能是「不播」）。
+        if (tag.contains("defaultPsdMidiumAudio")) {
+            data.defaultPsdMidiumAudio = normalizePsdMidiumAudio(tag.getString("defaultPsdMidiumAudio"));
+        }
+        if (tag.contains("defaultPsdMidiumWaitSeconds")) {
+            data.defaultPsdMidiumWaitSeconds =
+                    clampPsdMidiumWaitSeconds(tag.getInt("defaultPsdMidiumWaitSeconds"));
+        }
+        // 【1.22】到站播报自己那一项的音量（-1 = 跟随共用默认）。
+        if (tag.contains("defaultPsdMidiumVolume")) {
+            data.defaultPsdMidiumVolume = clampPsdToneVolume(tag.getInt("defaultPsdMidiumVolume"));
+        }
+        // 【1.21】进站报站（素材 + 秒数）。旧存档没有两个键 → 保持字段初始值
+        //   （素材 = off、秒数 = 0），也就是「默认不播」——与到站播报同一条判断。
+        if (tag.contains("defaultPsdArriveAudio")) {
+            data.defaultPsdArriveAudio = normalizePsdArriveAudio(tag.getString("defaultPsdArriveAudio"));
+        }
+        if (tag.contains("defaultPsdArriveSeconds")) {
+            data.defaultPsdArriveSeconds =
+                    clampPsdArriveSeconds(tag.getInt("defaultPsdArriveSeconds"));
+        }
+        // 【1.22】进站报站自己那一项的音量（-1 = 跟随共用默认）。
+        if (tag.contains("defaultPsdArriveVolume")) {
+            data.defaultPsdArriveVolume = clampPsdToneVolume(tag.getInt("defaultPsdArriveVolume"));
+        }
+        // 【1.15】屏蔽门维度默认素材。旧存档没有这两个键 → 读回 default
+        //   （= 两项都走内置素材），与 1.50 的行为逐字一致，不需要迁移。
+        if (tag.contains("defaultPsdToneAudioOpen")) {
+            data.defaultPsdToneAudioOpen = normalizePsdToneAudio(tag.getString("defaultPsdToneAudioOpen"));
+        }
+        if (tag.contains("defaultPsdToneAudioClose")) {
+            data.defaultPsdToneAudioClose = normalizePsdToneAudio(tag.getString("defaultPsdToneAudioClose"));
+        }
+        // 【1.50】每扇门单独设置的素材：key(锚点打包坐标) → {open, close}。
+        //   ★ 空串 = 这一项没设过（与直梯那张表用同一套哨兵：空串 → 默认素材）。
+        // 【1.20】同一张表里还存**这一扇门自己的**开关 / 音量 / 强制等待 / 到站播报：
+        //   老存档没有那些键 ⇒ 全部读成 null（= 跟维度默认），行为与 1.19 完全一致。
+        if (tag.contains("psdToneAudio", 9)) {
+            for (net.minecraft.nbt.Tag item : tag.getList("psdToneAudio", 10)) {
+                CompoundTag entry = (CompoundTag) item;
+                long key = entry.getLong("key");
+                String open = normalizePsdToneAudio(entry.contains("open") ? entry.getString("open") : "");
+                String close = normalizePsdToneAudio(entry.contains("close") ? entry.getString("close") : "");
+                PsdToneAudio v = new PsdToneAudio(open, close,
+                        optBool(entry, "help"), optBool(entry, "openEnabled"), optBool(entry, "closeEnabled"),
+                        optInt(entry, "volume"), optInt(entry, "openVolume"), optInt(entry, "closeVolume"),
+                        optInt(entry, "openWaitSeconds"), optInt(entry, "closeWaitSeconds"),
+                        optString(entry, "midium"), optInt(entry, "midiumWaitSeconds"),
+                        optInt(entry, "midiumVolume"),
+                        optString(entry, "arrive"), optInt(entry, "arriveSeconds"),
+                        optInt(entry, "arriveVolume"));
+                // ★ 判空改用 isEmpty()：现在「只设了音量、素材两项都是默认」也是一条**有内容**的记录。
+                if (key != 0L && !v.isEmpty()) {
+                    data.psdToneAudio.put(key, v);
                 }
             }
         }
@@ -823,6 +1489,10 @@ public class EscalatorSpeedData extends SavedData {
         tag.putBoolean("defaultLiftToneUpEnabled", defaultLiftToneUpEnabled);
         tag.putBoolean("defaultLiftToneDownEnabled", defaultLiftToneDownEnabled);
         tag.putBoolean("defaultLiftToneChimeEnabled", defaultLiftToneChimeEnabled);
+        // 【1.15】三项提示音的维度默认素材（default / off / 音频库文件名）
+        tag.putString("defaultLiftToneAudioUp", defaultLiftToneAudioUp);
+        tag.putString("defaultLiftToneAudioDown", defaultLiftToneAudioDown);
+        tag.putString("defaultLiftToneAudioChime", defaultLiftToneAudioChime);
         // 【1.47】直梯提示音淡入淡出范围（三项共用）
         tag.putInt("defaultLiftHelpRound", defaultLiftHelpRound);
         // 【1.48】三项各自音量（-1 = 跟随共用默认）
@@ -841,6 +1511,56 @@ public class EscalatorSpeedData extends SavedData {
             toneList.add(t);
         }
         tag.put("liftToneAudio", toneList);
+        // 【1.50】屏蔽门提示音（总开关 / 两项子开关 / 音量 / 范围 / 每扇门单独素材）
+        tag.putBoolean("defaultPsdHelp", defaultPsdHelp);
+        tag.putBoolean("defaultPsdToneOpenEnabled", defaultPsdToneOpenEnabled);
+        tag.putBoolean("defaultPsdToneCloseEnabled", defaultPsdToneCloseEnabled);
+        tag.putInt("defaultPsdHelpVolume", defaultPsdHelpVolume);
+        tag.putInt("defaultPsdToneVolumeOpen", defaultPsdToneVolumeOpen);
+        tag.putInt("defaultPsdToneVolumeClose", defaultPsdToneVolumeClose);
+        tag.putInt("defaultPsdHelpRound", defaultPsdHelpRound);
+        // 【1.23】到站 / 进站播报各自的可闻范围（格）——与上面那一格同形，各存一份
+        tag.putInt("defaultPsdMidiumRound", defaultPsdMidiumRound);
+        tag.putInt("defaultPsdArriveRound", defaultPsdArriveRound);
+        // 【1.16】关门提示音强制等待时长（秒）——停站不够放完人声时的兜底
+        tag.putInt("defaultPsdCloseWaitSeconds", defaultPsdCloseWaitSeconds);
+        // 【1.17】到站播报（素材 + 等待秒数）
+        tag.putString("defaultPsdMidiumAudio", defaultPsdMidiumAudio);
+        tag.putInt("defaultPsdMidiumWaitSeconds", defaultPsdMidiumWaitSeconds);
+        tag.putInt("defaultPsdMidiumVolume", defaultPsdMidiumVolume);
+        // 【1.21】进站报站（素材 + 秒数）
+        tag.putString("defaultPsdArriveAudio", defaultPsdArriveAudio);
+        tag.putInt("defaultPsdArriveSeconds", defaultPsdArriveSeconds);
+        tag.putInt("defaultPsdArriveVolume", defaultPsdArriveVolume);
+        // 【1.15】屏蔽门两项的维度默认素材（/pbmmusic open|close <名字>）
+        tag.putString("defaultPsdToneAudioOpen", defaultPsdToneAudioOpen);
+        tag.putString("defaultPsdToneAudioClose", defaultPsdToneAudioClose);
+        ListTag psdList = new ListTag();
+        for (Map.Entry<Long, PsdToneAudio> entry : psdToneAudio.entrySet()) {
+            CompoundTag t = new CompoundTag();
+            t.putLong("key", entry.getKey());
+            PsdToneAudio v = entry.getValue();
+            t.putString("open", v.open);
+            t.putString("close", v.close);
+            // 【1.20】这一扇门的其余覆盖项：**只写设过的**（null = 跟维度默认 ⇒ 一个键都不写，
+            //   老版本读这份存档时看到的就是一条「只有素材」的记录，行为不变）。
+            putOptBool(t, "help", v.help());
+            putOptBool(t, "openEnabled", v.openEnabled());
+            putOptBool(t, "closeEnabled", v.closeEnabled());
+            putOptInt(t, "volume", v.volume());
+            putOptInt(t, "openVolume", v.openVolume());
+            putOptInt(t, "closeVolume", v.closeVolume());
+            putOptInt(t, "openWaitSeconds", v.openWaitSeconds());
+            putOptInt(t, "closeWaitSeconds", v.closeWaitSeconds());
+            putOptString(t, "midium", v.midium());
+            putOptInt(t, "midiumWaitSeconds", v.midiumWaitSeconds());
+            putOptInt(t, "midiumVolume", v.midiumVolume());
+            putOptString(t, "arrive", v.arrive());
+            putOptInt(t, "arriveSeconds", v.arriveSeconds());
+            putOptInt(t, "arriveVolume", v.arriveVolume());
+            psdList.add(t);
+        }
+        tag.put("psdToneAudio", psdList);
         return tag;
     }
 
@@ -878,6 +1598,43 @@ public class EscalatorSpeedData extends SavedData {
     }
 
     /** 【1.16】读「方块 → 提示音开关」；键不是合法坐标的条目直接跳过。 */
+    /**
+     * 【1.20】「可选字段」的 NBT 读写小工具：{@code null} = 没设过（不写、读回 null）。
+     *
+     * <p>为什么单拎出来：{@link PsdToneAudio} 有 9 个覆盖项，逐个 {@code contains} 判断写出来
+     * 是一坨；而且「写的时候 null 就不写」与「读的时候没有这个键就是 null」必须是**同一套规定**，
+     * 分开写两遍迟早会歪掉一处（本仓「写读成对」那条规矩的落地形态）。
+     */
+    private static void putOptBool(CompoundTag tag, String key, Boolean v) {
+        if (v != null) {
+            tag.putBoolean(key, v);
+        }
+    }
+
+    private static void putOptInt(CompoundTag tag, String key, Integer v) {
+        if (v != null) {
+            tag.putInt(key, v);
+        }
+    }
+
+    private static void putOptString(CompoundTag tag, String key, String v) {
+        if (v != null) {
+            tag.putString(key, v);
+        }
+    }
+
+    private static Boolean optBool(CompoundTag tag, String key) {
+        return tag.contains(key) ? tag.getBoolean(key) : null;
+    }
+
+    private static Integer optInt(CompoundTag tag, String key) {
+        return tag.contains(key) ? tag.getInt(key) : null;
+    }
+
+    private static String optString(CompoundTag tag, String key) {
+        return tag.contains(key) ? tag.getString(key) : null;
+    }
+
     private static Map<BlockPos, Boolean> readBoolMap(CompoundTag compound) {
         Map<BlockPos, Boolean> out = new HashMap<>();
         for (String key : compound.getAllKeys()) {
@@ -1062,6 +1819,18 @@ public class EscalatorSpeedData extends SavedData {
         return Math.max(HELP_VOLUME_MIN, Math.min(HELP_VOLUME_MAX, volume));
     }
 
+    /**
+     * 【1.15】把存档里读到的**维度默认素材**规范化一下：
+     * {@code null} / 空串一律当成 {@link #LIFT_TONE_DEFAULT}（跟上一层 = 内置素材）。
+     *
+     * <p>「这个文件名在不在库里」**不在这里判**（读 NBT 时音频库还没装配完，而且删音频
+     * 那一路由 {@link #removeAudio} 负责把引用清干净），这里只保证「不会是个空值」——
+     * 空值会让播放端走进「既不是 default 也不是 off 的文件名」那一支，表现是静默不响。
+     */
+    public static String normalizeLiftToneAudio(String audioId) {
+        return (audioId == null || audioId.isEmpty()) ? LIFT_TONE_DEFAULT : audioId;
+    }
+
     /** 【1.31】这条扶梯**上客端（进入扶梯）**提示音的生效速率（Hz）；没单独设置过就是维度默认（初始 10）。 */
     public int getHelpSpeedIn(BlockPos pos) {
         Integer v = blockHelpSpeedIn.get(pos);
@@ -1180,6 +1949,57 @@ public class EscalatorSpeedData extends SavedData {
         }
         liftToneAudio.clear();
         liftToneAudio.putAll(tones);
+        // 【1.15】维度默认素材也不能留着指向已删除的文件（否则播放端查到库里没有 → 静默不响）。
+        if (audioId.equals(defaultLiftToneAudioUp)) {
+            defaultLiftToneAudioUp = LIFT_TONE_DEFAULT;
+        }
+        if (audioId.equals(defaultLiftToneAudioDown)) {
+            defaultLiftToneAudioDown = LIFT_TONE_DEFAULT;
+        }
+        if (audioId.equals(defaultLiftToneAudioChime)) {
+            defaultLiftToneAudioChime = LIFT_TONE_DEFAULT;
+        }
+        // 【1.15】屏蔽门那一套共用**同一个**音频库，所以也要一起清：
+        //   ★ 1.50 漏了这一步 —— 删掉一段音频后，引用它的那扇门会留着一个指向不存在文件的 id，
+        //     播放端查库查不到 ⇒ 那扇门静默不响（同一个「悬空引用」家族，直梯那边有做）。
+        Map<Long, PsdToneAudio> psdTones = new HashMap<>();
+        for (Map.Entry<Long, PsdToneAudio> entry : psdToneAudio.entrySet()) {
+            PsdToneAudio t = entry.getValue();
+            // ★【1.20】必须用 withTone 改那两项，**不能**再 new 一条只有素材的记录：
+            //   这一条现在还带着这扇门的开关 / 音量 / 强制等待 / 到站播报，
+            //   重建会把它们一起抹掉（症状：删一段不相干的音频，某扇门的音量设置凭空回到默认）。
+            if (audioId.equals(t.open())) {
+                t = t.withTone("open", PSD_TONE_DEFAULT);
+            }
+            if (audioId.equals(t.close())) {
+                t = t.withTone("close", PSD_TONE_DEFAULT);
+            }
+            // 【1.20】这扇门的「到站播报」也可能正指着这一段 —— 不清掉就留下一条指向空文件的引用
+            //   （null = 跟维度默认；维度默认那一层由 EscalatorSpeedManager 那边一并清）。
+            if (audioId.equals(t.midium())) {
+                t = t.withMidium(null);
+            }
+            // 【1.21】这扇门的「进站报站」同理。
+            if (audioId.equals(t.arrive())) {
+                t = t.withArrive(null);
+            }
+            if (!t.isEmpty()) {
+                psdTones.put(entry.getKey(), t);
+            }
+        }
+        psdToneAudio.clear();
+        psdToneAudio.putAll(psdTones);
+        // 维度默认素材同理（否则两个端别一起静默）。
+        if (audioId.equals(defaultPsdToneAudioOpen)) {
+            defaultPsdToneAudioOpen = PSD_TONE_DEFAULT;
+        }
+        if (audioId.equals(defaultPsdToneAudioClose)) {
+            defaultPsdToneAudioClose = PSD_TONE_DEFAULT;
+        }
+        // 【1.21】进站报站的维度默认层（素材没有内置兜底，回落成 off）。
+        if (audioId.equals(defaultPsdArriveAudio)) {
+            defaultPsdArriveAudio = PSD_ARRIVE_OFF;
+        }
     }
 
     /**
@@ -1191,6 +2011,154 @@ public class EscalatorSpeedData extends SavedData {
     public record LiftToneAudio(String up, String down, String chime) {
         public static final LiftToneAudio NONE = new LiftToneAudio(
                 LIFT_TONE_DEFAULT, LIFT_TONE_DEFAULT, LIFT_TONE_DEFAULT);
+    }
+
+    /**
+     * 【1.50】一扇屏蔽门的**全套单独设置**（素材 + 开关 + 音量 + 强制等待 + 到站播报）。
+     *
+     * <p>字段取值语义见 {@link #psdToneAudio}：{@link #PSD_TONE_DEFAULT} 内置素材 /
+     * {@link #PSD_TONE_OFF} 这扇门不播 / 其它 = 音频库文件名。
+     *
+     * <h2>★【1.20】为什么这里从「只有 open/close」扩到 11 个字段</h2>
+     * 用户点名：「石斧右键屏蔽门的 ui 里面修改的（要）全部都是玩家右键的连在一起的屏蔽门，
+     * 而不是修改全部屏蔽门，只有指令才是修改全部」。在那之前，石斧 UI 里**除了素材**之外
+     * 全是写**维度默认**（{@link #defaultPsdHelp} 那一族）⇒ 在甲门改了音量，乙门跟着变。
+     * 现在 UI 改的每一项都落到**这扇门自己的这一条记录**上，维度默认那一层退化成的**回落层**，
+     * 只由指令（{@code /pbmmusic} 不带 {@code -f}）写。
+     *
+     * <h2>★ 为什么是「装箱类型 + null」而不是哨兵值</h2>
+     * {@code null} = <b>没单独设过 ⇒ 跟维度默认</b>，与 {@link #PSD_TONE_VOLUME_UNSET}（-1）
+     * 那套哨兵是**两件事**，不要合并：{@code -1} 在「单项音量」这个字段里是**真实值**
+     * （= 跟随共用默认），拿它兼任「没设过」会把「跟随共用默认」与「跟随维度」混成一句
+     * （见本仓那条「一个哨兵同时表达两件事」的教训）。
+     * 用装箱类型还顺便把「开关」的第三种状态（没设过）表达清楚了。
+     *
+     * <p>素材两项仍用 {@link #PSD_TONE_DEFAULT} 表达「跟」——那是 1.50 就定下的对外语义
+     * （指令里能写 {@code default}），改它会牵动指令解析，所以两种「跟」并存是有意的。
+     */
+    public record PsdToneAudio(String open, String close,
+                               Boolean help, Boolean openEnabled, Boolean closeEnabled,
+                               Integer volume, Integer openVolume, Integer closeVolume,
+                               Integer openWaitSeconds, Integer closeWaitSeconds,
+                               String midium, Integer midiumWaitSeconds, Integer midiumVolume,
+                               String arrive, Integer arriveSeconds, Integer arriveVolume) {
+        /** 一扇门**什么都没单独设过**（全部跟维度默认）。 */
+        public static final PsdToneAudio NONE = new PsdToneAudio(
+                PSD_TONE_DEFAULT, PSD_TONE_DEFAULT,
+                null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+
+        /** 只带素材两项的构造（老调用点 / 老存档用）。 */
+        public static PsdToneAudio tone(String open, String close) {
+            return new PsdToneAudio(open, close,
+                    null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+
+        /** 这一条还有没有任何**实际内容**？全空 ⇒ 调用方应把这条记录删掉（表越干净越好查）。 */
+        public boolean isEmpty() {
+            return (open == null || PSD_TONE_DEFAULT.equals(open))
+                    && (close == null || PSD_TONE_DEFAULT.equals(close))
+                    && help == null && openEnabled == null && closeEnabled == null
+                    && volume == null && openVolume == null && closeVolume == null
+                    && openWaitSeconds == null && closeWaitSeconds == null
+                    && midium == null && midiumWaitSeconds == null
+                    && midiumVolume == null
+                    && arrive == null && arriveSeconds == null && arriveVolume == null;
+        }
+
+        /** 换掉某一端的素材（另一项以及全部覆盖项原样保留）。 */
+        public PsdToneAudio withTone(String which, String id) {
+            return "open".equals(which) ? new PsdToneAudio(id, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume)
+                    : new PsdToneAudio(open, id, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withHelp(Boolean v) {
+            return new PsdToneAudio(open, close, v, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withToneEnabled(String which, Boolean v) {
+            return "open".equals(which)
+                    ? new PsdToneAudio(open, close, help, v, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume)
+                    : new PsdToneAudio(open, close, help, openEnabled, v,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withVolume(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    v, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withToneVolume(String which, Integer v) {
+            return "open".equals(which)
+                    ? new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, v, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume)
+                    : new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, v, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        /** 【1.23】开门提示音的「强制等待」秒数（对称项；播放端暂未消费，预留对称）。 */
+        public PsdToneAudio withOpenWaitSeconds(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, v, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withCloseWaitSeconds(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, v, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withMidium(String v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, v, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        public PsdToneAudio withMidiumWaitSeconds(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, v, midiumVolume,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        /** 【1.22】换掉这一串门「到站播报」的音量（-1 = 跟随共用默认）。 */
+        public PsdToneAudio withMidiumVolume(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, v,
+                    arrive, arriveSeconds, arriveVolume);
+        }
+
+        /** 【1.21】换掉这扇门的「进站报站」素材（其它项原样保留）。 */
+        public PsdToneAudio withArrive(String v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    v, arriveSeconds, arriveVolume);
+        }
+
+        /** 【1.21】换掉这一串门的「进站报站」秒数（其它项原样保留）。 */
+        public PsdToneAudio withArriveSeconds(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, v, arriveVolume);
+        }
+
+        /** 【1.22】换掉这一串门「进站报站」的音量（-1 = 跟随共用默认）。 */
+        public PsdToneAudio withArriveVolume(Integer v) {
+            return new PsdToneAudio(open, close, help, openEnabled, closeEnabled,
+                    volume, openVolume, closeVolume, openWaitSeconds, closeWaitSeconds, midium, midiumWaitSeconds, midiumVolume,
+                    arrive, arriveSeconds, v);
+        }
     }
 
     // ------------------------------------------------------------------

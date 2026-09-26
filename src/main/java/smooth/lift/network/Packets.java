@@ -200,5 +200,100 @@ public final class Packets {
                 .decoder(ImportFolderLiftTonePacket::decode)
                 .consumerMainThread(ImportFolderLiftTonePacket::handle)
                 .add();
+        // 【1.50~1.58】屏蔽门（PSD / APG）提示音：客户端 -> 服务端
+        CHANNEL.messageBuilder(SetPsdTonePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdTonePacket::encode)
+                .decoder(SetPsdTonePacket::decode)
+                .consumerMainThread(SetPsdTonePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdToneSwitchPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdToneSwitchPacket::encode)
+                .decoder(SetPsdToneSwitchPacket::decode)
+                .consumerMainThread(SetPsdToneSwitchPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdToneVolumePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdToneVolumePacket::encode)
+                .decoder(SetPsdToneVolumePacket::decode)
+                .consumerMainThread(SetPsdToneVolumePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdChimeVolumePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdChimeVolumePacket::encode)
+                .decoder(SetPsdChimeVolumePacket::decode)
+                .consumerMainThread(SetPsdChimeVolumePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdOpenWaitPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdOpenWaitPacket::encode)
+                .decoder(SetPsdOpenWaitPacket::decode)
+                .consumerMainThread(SetPsdOpenWaitPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdCloseWaitPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdCloseWaitPacket::encode)
+                .decoder(SetPsdCloseWaitPacket::decode)
+                .consumerMainThread(SetPsdCloseWaitPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdMidiumPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdMidiumPacket::encode)
+                .decoder(SetPsdMidiumPacket::decode)
+                .consumerMainThread(SetPsdMidiumPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdMidiumLoudPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdMidiumLoudPacket::encode)
+                .decoder(SetPsdMidiumLoudPacket::decode)
+                .consumerMainThread(SetPsdMidiumLoudPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdArrivePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdArrivePacket::encode)
+                .decoder(SetPsdArrivePacket::decode)
+                .consumerMainThread(SetPsdArrivePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(SetPsdArriveLoudPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetPsdArriveLoudPacket::encode)
+                .decoder(SetPsdArriveLoudPacket::decode)
+                .consumerMainThread(SetPsdArriveLoudPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(ImportFolderPsdTonePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ImportFolderPsdTonePacket::encode)
+                .decoder(ImportFolderPsdTonePacket::decode)
+                .consumerMainThread(ImportFolderPsdTonePacket::handle)
+                .add();
+        CHANNEL.messageBuilder(ImportPsdMidiumAudioPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(ImportPsdMidiumAudioPacket::encode)
+                .decoder(ImportPsdMidiumAudioPacket::decode)
+                .consumerMainThread(ImportPsdMidiumAudioPacket::handle)
+                .add();
+        // 【1.53】MBM 预设选择 / 全音量：客户端 -> 服务端
+        CHANNEL.messageBuilder(MbmPresetPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(MbmPresetPacket::encode)
+                .decoder(MbmPresetPacket::decode)
+                .consumerMainThread(MbmPresetPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(MbmAllVolumePacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(MbmAllVolumePacket::encode)
+                .decoder(MbmAllVolumePacket::decode)
+                .consumerMainThread(MbmAllVolumePacket::handle)
+                .add();
+        // 【1.55】「同步所有」弹窗：客户端 -> 服务端
+        CHANNEL.messageBuilder(SyncSettingsPacket.class, nextId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SyncSettingsPacket::encode)
+                .decoder(SyncSettingsPacket::decode)
+                .consumerMainThread(SyncSettingsPacket::handle)
+                .add();
+        // 【1.50】屏蔽门提示音 / 每扇门素材：服务端 -> 客户端
+        CHANNEL.messageBuilder(PsdChimeSyncPacket.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(PsdChimeSyncPacket::encode)
+                .decoder(PsdChimeSyncPacket::decode)
+                .consumerMainThread(PsdChimeSyncPacket::handle)
+                .add();
+        CHANNEL.messageBuilder(PsdToneSyncPacket.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(PsdToneSyncPacket::encode)
+                .decoder(PsdToneSyncPacket::decode)
+                .consumerMainThread(PsdToneSyncPacket::handle)
+                .add();
+        // 【1.53】服务端 -> 客户端：打开「预设选择」界面
+        CHANNEL.messageBuilder(MbmHelpOpenPacket.class, nextId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(MbmHelpOpenPacket::encode)
+                .decoder(MbmHelpOpenPacket::decode)
+                .consumerMainThread(MbmHelpOpenPacket::handle)
+                .add();
     }
 }

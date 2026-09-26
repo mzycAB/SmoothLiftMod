@@ -9,7 +9,9 @@
     "ChunkMapAccessor"
   ],
   "client": [
-    "SoundEngineVolumeMixin"
+    "SoundEngineVolumeMixin",
+    "LevelBlockChangeMixin",
+    "EscalatorModelBakeryMixin"
   ],
   "injectors": {
     "defaultRequire": 1

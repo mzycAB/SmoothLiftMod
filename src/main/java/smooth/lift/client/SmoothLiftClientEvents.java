@@ -3,6 +3,7 @@ package smooth.lift.client;
 import io.netty.buffer.Unpooled;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.commands.Commands;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceKey;
@@ -13,6 +14,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ClientPlayerNetworkEvent;
+import net.minecraftforge.client.event.RegisterClientCommandsEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
@@ -32,6 +34,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import smooth.lift.client.PsdChimePlayer;
+import smooth.lift.client.PsdToneSetupScreen;
+import smooth.lift.client.TrainSoundScreen;
+import smooth.lift.client.MtrSidingAccess;
 
 @Mod.EventBusSubscriber(modid = SmoothLift.MOD_ID, value = Dist.CLIENT, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public class SmoothLiftClientEvents {
@@ -68,12 +74,61 @@ public class SmoothLiftClientEvents {
             event.setCanceled(true);
             event.setCancellationResult(InteractionResult.FAIL);
         }
+        // 【1.50】拿着石斧右键**屏蔽门** -> 打开开关门提示音界面。
+        //   「是屏蔽门」按注册名判（psd_door_* / apg_door_*），不依赖 MTR 编译期。
+        if (event.getEntity().getMainHandItem().is(Items.STONE_AXE)
+                && SmoothLift.isPsdDoor(level.getBlockState(event.getPos()))) {
+            Minecraft.getInstance().setScreen(new PsdToneSetupScreen(event.getPos()));
+            event.setCanceled(true);
+            event.setCancellationResult(InteractionResult.FAIL);
+        }
+        // 【1.57】拿着石斧右键**侧线铁轨的轨道节点**（`mtr:rail`）-> 打开「列车音效」界面。
+        //   ★ 两层判据：① 方块是 mtr:rail（同时看命名空间）；② 面向的那条轨道能认到侧线。
+        //   认不到侧线就**不开界面**（让原版行为照常），避免同一条侧线两个身份分桶。
+        if (event.getEntity().getMainHandItem().is(Items.STONE_AXE)
+                && SmoothLift.isMtrRail(level.getBlockState(event.getPos()))) {
+            long sidingKey = MtrSidingAccess.facingSidingKey(event.getPos());
+            if (sidingKey != MtrSidingAccess.NO_SIDING) {
+                Minecraft.getInstance().setScreen(new TrainSoundScreen(sidingKey));
+                event.setCanceled(true);
+                event.setCancellationResult(InteractionResult.FAIL);
+            }
+        }
     }
 
     /** 客户端完全进世界后主动向服务端请求速度 + 音频 + 音量数据。 */
     @SubscribeEvent
     public static void onLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
         Packets.CHANNEL.sendToServer(new RequestSyncPacket());
+    }
+
+    /**
+     * 【1.24 / Forge 移植】注册 {@code /mtrxr} 系列指令（扶梯阶梯渲染引擎开关）。
+     *
+     * <p>Fabric 侧这三条指令挂在 {@code ClientCommandRegistrationCallback.EVENT} 上；
+     * Forge 1.20.1 的等价物是本事件 —— 它由客户端在**打开聊天框/建立连接时**派发到主 Forge 事件总线，
+     * 注册进 {@code getDispatcher()} 的指令只存在于客户端指令树里，纯客户端执行。
+     *
+     * <p>指令形状与 Fabric 完全一致：
+     * <ul>
+     *   <li>{@code /mtrxr} —— 查看当前模式 + 性能计数；</li>
+     *   <li>{@code /mtrxr on} / {@code /mtrxr off} —— MTR 原版渲染 / SmoothLift 优化引擎；</li>
+     *   <li>{@code /mtrxr occ on|off} —— 遮挡剔除开关（应急逃生口）。</li>
+     * </ul>
+     */
+    @SubscribeEvent
+    public static void onRegisterClientCommands(RegisterClientCommandsEvent event) {
+        event.getDispatcher().register(Commands.literal("mtrxr")
+                .executes(EscalatorRenderModeCommand::show)
+                .then(Commands.literal("on")
+                        .executes(ctx -> EscalatorRenderModeCommand.set(ctx, false)))
+                .then(Commands.literal("off")
+                        .executes(ctx -> EscalatorRenderModeCommand.set(ctx, true)))
+                .then(Commands.literal("occ")
+                        .then(Commands.literal("on")
+                                .executes(ctx -> EscalatorRenderModeCommand.setOcclusion(ctx, true)))
+                        .then(Commands.literal("off")
+                                .executes(ctx -> EscalatorRenderModeCommand.setOcclusion(ctx, false)))));
     }
 
     /** 断开连接时清空客户端镜像与逐条渲染状态，避免残留上一个世界的数据。 */
@@ -85,6 +140,8 @@ public class SmoothLiftClientEvents {
         EscalatorAudioPlayer.onDisconnect();
         // 【1.15】停掉无障碍提示音并清掉定位缓存。
         EscalatorChimePlayer.onDisconnect();
+        // 【1.50】停掉屏蔽门提示音 / 到站播报 / 进站报站并清掉定位缓存。
+        PsdChimePlayer.onDisconnect();
         EscalatorStepRenderer.onDisconnect();
     }
 
@@ -103,6 +160,8 @@ public class SmoothLiftClientEvents {
         // 【1.42】直梯（MTR Lift）开关门提示音：关门连播 4 次 liftmusic.ogg、开门连播 2 次。
         //   与上面两个播放器互不影响：那两个只认「扶梯阶梯方块」，本播放器只认 MTR 的直梯对象。
         LiftChimePlayer.onClientTick(mc);
+        // 【1.50】屏蔽门（PSD / APG）开关门提示音 + 到站播报 / 进站报站。
+        PsdChimePlayer.onClientTick(mc);
     }
 
     /** 世界渲染到 AFTER_ENTITIES 阶段时逐条绘制阶梯面。 */
@@ -151,6 +210,12 @@ public class SmoothLiftClientEvents {
             return;
         }
         Map<Integer, byte[]> chunks = PENDING_SYNC_CHUNKS.computeIfAbsent(dimId, k -> new HashMap<>());
+        // ★【1.19】分块重发的自愈：一次重发 = 从 index 0 重新开始。
+        //   现在「导入」会立刻触发一次整库重发（几 MB，按 256 个/块切），连着点两次导入就可能交错；
+        //   没有这一句，两批分块会在同一个 dimId 下拼起来，拼出垃圾 payload（列表清空或出现乱码名）。
+        if (chunkIndex == 0) {
+            chunks.clear();
+        }
         chunks.put(chunkIndex, chunk);
         if (chunks.size() < totalChunks) {
             return;

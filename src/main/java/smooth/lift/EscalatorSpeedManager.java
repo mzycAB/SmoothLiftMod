@@ -29,6 +29,8 @@ import smooth.lift.network.HelpVolumeSyncPacket;
 import smooth.lift.network.LiftChimeSyncPacket;
 import smooth.lift.network.LiftToneSyncPacket;
 import smooth.lift.network.Packets;
+import smooth.lift.network.PsdChimeSyncPacket;
+import smooth.lift.network.PsdToneSyncPacket;
 import smooth.lift.network.RoundSyncPacket;
 import smooth.lift.network.SyncPacket;
 import smooth.lift.network.VolumeSyncPacket;
@@ -137,17 +139,58 @@ public final class EscalatorSpeedManager {
         public int liftToneVolumeChime = EscalatorSpeedData.LIFT_TONE_VOLUME_UNSET;
         /** 【1.47】直梯提示音（三项共用）淡入淡出范围（{@code /lifthelpround}，服务端同步过来的镜像）。 */
         public int liftHelpRound = EscalatorSpeedData.DEFAULT_LIFT_HELP_ROUND;
+
+        /** 【1.15】三提示音的**维度默认素材**镜像（{@code /lifthelp up|down|door <名字>}）。
+         * 单独设置过的那条直梯按 {@link #liftToneAudio} 走；没设置、或者那一项是
+         * {@code default}（跟维度默认）时回落到这里。
+         */
+        public String liftToneAudioUp = EscalatorSpeedData.LIFT_TONE_DEFAULT;
+        public String liftToneAudioDown = EscalatorSpeedData.LIFT_TONE_DEFAULT;
+        public String liftToneAudioChime = EscalatorSpeedData.LIFT_TONE_DEFAULT;
         /** 【1.46】三提示音独立子开关的镜像（{@code /lifthelpup|down|chime} / 石斧 UI 开关）。 */
         public boolean liftToneUpEnabled = true;
         public boolean liftToneDownEnabled = true;
         public boolean liftToneChimeEnabled = true;
-        /** 【1.7】存档<smoothlift_audio>文件夹里可选 OGG 文件名（上传来源，未入库的才显示）。 */
+        /** 【1.7】存档<MBM_Audio>文件夹里可选 OGG 文件名（上传来源，未入库的才显示）。 */
         public final Set<String> folderAudio = new HashSet<>();
         /**
          * 【1.45】直梯楼层轨道提示音（竖井列打包坐标 → 三音频 id，服务端同步过来的镜像）。
          * 播放端按「最近直梯的楼层列」查它。
          */
         public final Map<Long, EscalatorSpeedData.LiftToneAudio> liftToneAudio = new HashMap<>();
+
+        // 【1.50】屏蔽门（MTR PSD / APG）开关门提示音的镜像（形状与直梯那一组对称）
+        /** 【1.50】屏蔽门提示音总开关镜像（{@code /pbmmusic}）。 */
+        public boolean psdHelp = true;
+        /** 【1.50】屏蔽门两项各自子开关的镜像（{@code /pbmmusic open|close}）。 */
+        public boolean psdToneOpenEnabled = true;
+        public boolean psdToneCloseEnabled = true;
+        /** 【1.50】屏蔽门提示音**共用默认**音量的镜像（{@code /pbmloud}）。 */
+        public int psdHelpVolume = EscalatorSpeedData.DEFAULT_PSD_HELP_VOLUME;
+        /** 【1.50】两项各自音量的镜像（-1 = 跟随共用默认）。 */
+        public int psdToneVolumeOpen = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        public int psdToneVolumeClose = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        /** 【1.22】到站播报 / 进站报站各自那一项音量的镜像（-1 = 跟随共用默认）。 */
+        public int psdMidiumVolume = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        public int psdArriveVolume = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        /** 【1.50】屏蔽门提示音可闻范围镜像（{@code /pbmround}，格）。 */
+        public int psdHelpRound = EscalatorSpeedData.DEFAULT_PSD_HELP_ROUND;
+        /** 【1.23】到站播报 / 进站报站各自的可闻范围镜像（{@code /pbmmidiumround} / {@code /pbmarriveround}，格）。 */
+        public int psdMidiumRound = EscalatorSpeedData.DEFAULT_PSD_MIDIUM_ROUND;
+        public int psdArriveRound = EscalatorSpeedData.DEFAULT_PSD_ARRIVE_ROUND;
+        /** 【1.16】关门提示音强制等待时长镜像（{@code /pbmclosewait}，秒）。 */
+        public int psdCloseWaitSeconds = EscalatorSpeedData.DEFAULT_PSD_CLOSE_WAIT_SECONDS;
+        /** 【1.15】两项**维度默认素材**的镜像（{@code /pbmmusic open|close <名字>}）。 */
+        public String psdToneAudioOpen = EscalatorSpeedData.PSD_TONE_DEFAULT;
+        public String psdToneAudioClose = EscalatorSpeedData.PSD_TONE_DEFAULT;
+        /** 【1.17】到站播报的镜像：素材 id（{@code off} = 不播）+ 等待秒数。 */
+        public String psdMidiumAudio = EscalatorSpeedData.PSD_MIDIUM_OFF;
+        public int psdMidiumWaitSeconds = EscalatorSpeedData.DEFAULT_PSD_MIDIUM_WAIT_SECONDS;
+        /** 【1.21】进站报站的镜像：素材 id（{@code off} = 不播）+ 秒数（(-∞, 0]：最近一班车还剩 |X| 秒到站时起播）。 */
+        public String psdArriveAudio = EscalatorSpeedData.PSD_ARRIVE_OFF;
+        public int psdArriveSeconds = EscalatorSpeedData.DEFAULT_PSD_ARRIVE_SECONDS;
+        /** 【1.50】每扇门单独设置的素材镜像（门锚点打包坐标 → {open, close}）。 */
+        public final Map<Long, EscalatorSpeedData.PsdToneAudio> psdToneAudio = new HashMap<>();
     }
 
     private static final Map<ResourceKey<Level>, ClientDimensionData> CLIENT_DATA = new HashMap<>();
@@ -1302,12 +1345,12 @@ public final class EscalatorSpeedManager {
     }
 
     // ------------------------------------------------------------------
-    // 【1.7】存档音频来源文件夹：<存档>/smoothlift_audio/。该文件夹只是"上传来源"：
+    // 【1.53】存档音频来源文件夹：<存档>/MBM_Audio/（原 smoothlift_audio，用户点名改名）。该文件夹只是"上传来源"：
     // 选中一个文件后会把内容拷进 SavedData（融入存档），之后删掉原文件仍可播放。
     // ------------------------------------------------------------------
 
     /** 存档目录下存放待导入 OGG 的文件夹名。 */
-    public static final String AUDIO_FOLDER = "smoothlift_audio";
+    public static final String AUDIO_FOLDER = "MBM_Audio";
 
     /** 该世界存档的音频来源文件夹路径。 */
     public static Path audioFolder(ServerLevel level) {
@@ -3770,7 +3813,7 @@ public final class EscalatorSpeedManager {
     /**
      * 【1.45】按「哪一项（up/down/chime）」定位值；{@code which} 不属于这三者 → null。
      */
-    private static String toneField(EscalatorSpeedData.LiftToneAudio tone, String which) {
+    public static String toneField(EscalatorSpeedData.LiftToneAudio tone, String which) {
         return switch (which) {
             case "up" -> tone.up();
             case "down" -> tone.down();
@@ -3903,4 +3946,1911 @@ public final class EscalatorSpeedManager {
     }
 
     private static long clientLiftToneGeneration;
+
+    private static long clientPsdChimeGeneration;
+    private static long clientPsdToneGeneration;
+
+
+    public static void applyClientLiftChime(ResourceKey<Level> dimension, boolean enabled, float speed,
+                                            int volume, boolean upEnabled, boolean downEnabled,
+                                            boolean chimeEnabled, int round,
+                                            int toneVolumeUp, int toneVolumeDown, int toneVolumeChime,
+                                            String toneAudioUp, String toneAudioDown, String toneAudioChime) {
+            ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+            data.liftHelp = enabled;
+            data.liftHelpSpeed = EscalatorSpeedData.clampLiftHelpSpeed(speed);
+            data.liftHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+            data.liftHelpRound = EscalatorSpeedData.clampLiftHelpRound(round);
+            data.liftToneUpEnabled = upEnabled;
+            data.liftToneDownEnabled = downEnabled;
+            data.liftToneChimeEnabled = chimeEnabled;
+            data.liftToneVolumeUp = EscalatorSpeedData.clampLiftToneVolume(toneVolumeUp);
+            data.liftToneVolumeDown = EscalatorSpeedData.clampLiftToneVolume(toneVolumeDown);
+            data.liftToneVolumeChime = EscalatorSpeedData.clampLiftToneVolume(toneVolumeChime);
+            // 【1.15】三项的维度默认素材
+            data.liftToneAudioUp = EscalatorSpeedData.normalizeLiftToneAudio(toneAudioUp);
+            data.liftToneAudioDown = EscalatorSpeedData.normalizeLiftToneAudio(toneAudioDown);
+            data.liftToneAudioChime = EscalatorSpeedData.normalizeLiftToneAudio(toneAudioChime);
+            clientLiftChimeGeneration++;
+        
+    }
+
+    public static void applyClientPsdChime(ResourceKey<Level> dimension, boolean enabled, int volume,
+                                           boolean openEnabled, boolean closeEnabled, int round,
+                                           int toneVolumeOpen, int toneVolumeClose,
+                                           String toneAudioOpen, String toneAudioClose,
+                                           int closeWaitSeconds,
+                                           String midiumAudio, int midiumWaitSeconds,
+                                           String arriveAudio, int arriveSeconds,
+                                           int midiumVolume, int arriveVolume,
+                                           int midiumRound, int arriveRound) {
+            ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+            data.psdHelp = enabled;
+            data.psdHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+            data.psdToneOpenEnabled = openEnabled;
+            data.psdToneCloseEnabled = closeEnabled;
+            data.psdHelpRound = EscalatorSpeedData.clampPsdHelpRound(round);
+            data.psdToneVolumeOpen = EscalatorSpeedData.clampPsdToneVolume(toneVolumeOpen);
+            data.psdToneVolumeClose = EscalatorSpeedData.clampPsdToneVolume(toneVolumeClose);
+            data.psdToneAudioOpen = EscalatorSpeedData.normalizePsdToneAudio(toneAudioOpen);
+            data.psdToneAudioClose = EscalatorSpeedData.normalizePsdToneAudio(toneAudioClose);
+            data.psdCloseWaitSeconds = EscalatorSpeedData.clampPsdCloseWaitSeconds(closeWaitSeconds);
+            data.psdMidiumAudio = EscalatorSpeedData.normalizePsdMidiumAudio(midiumAudio);
+            data.psdMidiumWaitSeconds = EscalatorSpeedData.clampPsdMidiumWaitSeconds(midiumWaitSeconds);
+            data.psdArriveAudio = EscalatorSpeedData.normalizePsdArriveAudio(arriveAudio);
+            data.psdArriveSeconds = EscalatorSpeedData.clampPsdArriveSeconds(arriveSeconds);
+            data.psdMidiumVolume = EscalatorSpeedData.clampPsdToneVolume(midiumVolume);
+            data.psdArriveVolume = EscalatorSpeedData.clampPsdToneVolume(arriveVolume);
+            data.psdMidiumRound = EscalatorSpeedData.clampPsdMidiumRound(midiumRound);
+            data.psdArriveRound = EscalatorSpeedData.clampPsdArriveRound(arriveRound);
+            clientPsdChimeGeneration++;
+        
+    }
+
+    public static void applyClientPsdDoorLocal(ResourceKey<Level> dimension, long key,
+                                               java.util.function.UnaryOperator<EscalatorSpeedData.PsdToneAudio> fn) {
+            ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+            EscalatorSpeedData.PsdToneAudio old = data.psdToneAudio.get(key);
+            if (old == null) {
+                old = EscalatorSpeedData.PsdToneAudio.NONE;
+            }
+            applyClientPsdToneLocal(dimension, key, fn.apply(old));
+        
+    }
+
+    public static void applyClientPsdTone(ResourceKey<Level> dimension,
+                                          Map<Long, EscalatorSpeedData.PsdToneAudio> tones) {
+            ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+            data.psdToneAudio.clear();
+            data.psdToneAudio.putAll(tones);
+            clientPsdToneGeneration++;
+        
+    }
+
+    public static void applyClientPsdToneLocal(ResourceKey<Level> dimension, long key,
+                                               EscalatorSpeedData.PsdToneAudio tone) {
+            ClientDimensionData data = CLIENT_DATA.computeIfAbsent(dimension, k -> new ClientDimensionData());
+            if (tone.isEmpty()) {
+                data.psdToneAudio.remove(key);
+            } else {
+                data.psdToneAudio.put(key, tone);
+            }
+            clientPsdToneGeneration++;
+        
+    }
+
+    private static boolean clearLiftToneOverrides(EscalatorSpeedData data, String which) {
+            if (data.liftToneAudio.isEmpty()) {
+                return false;
+            }
+            Map<Long, EscalatorSpeedData.LiftToneAudio> next = new HashMap<>();
+            boolean touched = false;
+            for (Map.Entry<Long, EscalatorSpeedData.LiftToneAudio> e : data.liftToneAudio.entrySet()) {
+                EscalatorSpeedData.LiftToneAudio t = e.getValue();
+                String up = "up".equals(which) ? EscalatorSpeedData.LIFT_TONE_DEFAULT : t.up();
+                String down = "down".equals(which) ? EscalatorSpeedData.LIFT_TONE_DEFAULT : t.down();
+                String chime = "chime".equals(which) ? EscalatorSpeedData.LIFT_TONE_DEFAULT : t.chime();
+                if (!up.equals(t.up()) || !down.equals(t.down()) || !chime.equals(t.chime())) {
+                    touched = true;
+                }
+                if (!EscalatorSpeedData.isLiftToneAllDefault(up, down, chime)) {
+                    next.put(e.getKey(), new EscalatorSpeedData.LiftToneAudio(up, down, chime));
+                }
+            }
+            if (!touched) {
+                return false;
+            }
+            data.liftToneAudio.clear();
+            data.liftToneAudio.putAll(next);
+            return true;
+        
+    }
+
+    public static int clearPsdArriveIfRemoved(MinecraftServer server, String audioId) {
+            if (audioId == null || audioId.isEmpty()) {
+                return 0;
+            }
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (audioId.equals(data.defaultPsdArriveAudio)) {
+                    data.defaultPsdArriveAudio = EscalatorSpeedData.PSD_ARRIVE_OFF;
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static int clearPsdMidiumIfRemoved(MinecraftServer server, String audioId) {
+            if (audioId == null || audioId.isEmpty()) {
+                return 0;
+            }
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (audioId.equals(data.defaultPsdMidiumAudio)) {
+                    data.defaultPsdMidiumAudio = EscalatorSpeedData.PSD_MIDIUM_OFF;
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    private static boolean clearPsdToneOverrides(EscalatorSpeedData data, String which) {
+            if (data.psdToneAudio.isEmpty()) {
+                return false;
+            }
+            Map<Long, EscalatorSpeedData.PsdToneAudio> next = new HashMap<>();
+            boolean touched = false;
+            for (Map.Entry<Long, EscalatorSpeedData.PsdToneAudio> e : data.psdToneAudio.entrySet()) {
+                EscalatorSpeedData.PsdToneAudio t = e.getValue();
+                // ★【1.20】只把**这一项的素材**清回「跟维度默认」，其余覆盖项原样保留
+                //   （老写法用 new PsdToneAudio(open, close) 重建 ⇒ 顺手抹掉这扇门的音量等设置）。
+                if (EscalatorSpeedData.PSD_TONE_DEFAULT.equals("open".equals(which) ? t.open() : t.close())) {
+                    next.put(e.getKey(), t);
+                    continue;
+                }
+                t = t.withTone(which, EscalatorSpeedData.PSD_TONE_DEFAULT);
+                touched = true;
+                if (!t.isEmpty()) {
+                    next.put(e.getKey(), t);
+                }
+            }
+            if (!touched) {
+                return false;
+            }
+            data.psdToneAudio.clear();
+            data.psdToneAudio.putAll(next);
+            return true;
+        
+    }
+
+    public static long clientPsdChimeGeneration() {
+            return clientPsdChimeGeneration;
+        
+    }
+
+    public static long clientPsdToneGeneration() {
+            return clientPsdToneGeneration;
+        
+    }
+
+    public static EscalatorSpeedData.PsdToneAudio getClientPsdTone(Level level, long key) {
+            ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+            if (data == null) {
+                return EscalatorSpeedData.PsdToneAudio.NONE;
+            }
+            EscalatorSpeedData.PsdToneAudio tone = data.psdToneAudio.get(key);
+            return tone != null ? tone : EscalatorSpeedData.PsdToneAudio.NONE;
+        
+    }
+
+    public static String getDoorPsdArriveAudio(Level level, long key) {
+            String own = psdDoorRecord(level, key).arrive();
+            return own != null ? own : getPsdArriveAudio(level);
+        
+    }
+
+    public static int getDoorPsdArriveSeconds(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).arriveSeconds();
+            return own != null ? own : getPsdArriveSeconds(level);
+        
+    }
+
+    public static int getDoorPsdArriveVolume(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).arriveVolume();
+            return own != null ? own : getPsdArriveVolume(level);
+        
+    }
+
+    public static int getDoorPsdCloseWaitSeconds(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).closeWaitSeconds();
+            return own != null ? own : getPsdCloseWaitSeconds(level);
+        
+    }
+
+    public static int getDoorPsdHelpVolume(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).volume();
+            return own != null ? own : getPsdHelpVolume(level);
+        
+    }
+
+    public static String getDoorPsdMidiumAudio(Level level, long key) {
+            String own = psdDoorRecord(level, key).midium();
+            return own != null ? own : getPsdMidiumAudio(level);
+        
+    }
+
+    public static int getDoorPsdMidiumVolume(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).midiumVolume();
+            return own != null ? own : getPsdMidiumVolume(level);
+        
+    }
+
+    public static int getDoorPsdMidiumWaitSeconds(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).midiumWaitSeconds();
+            return own != null ? own : getPsdMidiumWaitSeconds(level);
+        
+    }
+
+    public static int getDoorPsdOpenWaitSeconds(Level level, long key) {
+            Integer own = psdDoorRecord(level, key).openWaitSeconds();
+            return own != null ? own : EscalatorSpeedData.DEFAULT_PSD_OPEN_WAIT_SECONDS;
+        
+    }
+
+    public static int getDoorPsdToneVolume(Level level, long key, String which) {
+            Integer own = "open".equals(which)
+                    ? psdDoorRecord(level, key).openVolume()
+                    : psdDoorRecord(level, key).closeVolume();
+            return own != null ? own : getDoorPsdHelpVolume(level, key);
+        
+    }
+
+    public static String getLiftToneAudio(Level level, String which) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return EscalatorSpeedData.normalizeLiftToneAudio(switch (which) {
+                    case "up" -> data == null ? null : data.liftToneAudioUp;
+                    case "down" -> data == null ? null : data.liftToneAudioDown;
+                    case "chime" -> data == null ? null : data.liftToneAudioChime;
+                    default -> null;
+                });
+            }
+            return serverLiftToneAudio(getServerData((ServerLevel) level), which);
+        
+    }
+
+    public static String getPsdArriveAudio(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.PSD_ARRIVE_OFF;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.PSD_ARRIVE_OFF : data.psdArriveAudio;
+            }
+            return getServerData((ServerLevel) level).defaultPsdArriveAudio;
+        
+    }
+
+    public static int getPsdArriveRound(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.DEFAULT_PSD_ARRIVE_ROUND;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.DEFAULT_PSD_ARRIVE_ROUND : data.psdArriveRound;
+            }
+            return getServerData((ServerLevel) level).defaultPsdArriveRound;
+        
+    }
+
+    public static int getPsdArriveSeconds(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.DEFAULT_PSD_ARRIVE_SECONDS;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null
+                        ? EscalatorSpeedData.DEFAULT_PSD_ARRIVE_SECONDS
+                        : data.psdArriveSeconds;
+            }
+            return getServerData((ServerLevel) level).defaultPsdArriveSeconds;
+        
+    }
+
+    public static int getPsdArriveVolume(Level level) {
+            return getPsdItemVolume(level, "arrive");
+        
+    }
+
+    public static int getPsdCloseWaitSeconds(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.DEFAULT_PSD_CLOSE_WAIT_SECONDS;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null
+                        ? EscalatorSpeedData.DEFAULT_PSD_CLOSE_WAIT_SECONDS
+                        : data.psdCloseWaitSeconds;
+            }
+            return getServerData((ServerLevel) level).defaultPsdCloseWaitSeconds;
+        
+    }
+
+    public static int getPsdHelpRound(Level level) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.DEFAULT_PSD_HELP_ROUND : data.psdHelpRound;
+            }
+            return getServerData((ServerLevel) level).defaultPsdHelpRound;
+        
+    }
+
+    public static int getPsdHelpVolume(Level level) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.DEFAULT_PSD_HELP_VOLUME : data.psdHelpVolume;
+            }
+            return getServerData((ServerLevel) level).defaultPsdHelpVolume;
+        
+    }
+
+    public static int getPsdItemVolume(Level level, String which) {
+            int own;
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                if (data == null) {
+                    own = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+                } else {
+                    own = "midium".equals(which) ? data.psdMidiumVolume : data.psdArriveVolume;
+                }
+            } else {
+                own = serverPsdItemVolume(getServerData((ServerLevel) level), which);
+            }
+            return own == EscalatorSpeedData.PSD_TONE_VOLUME_UNSET ? getPsdHelpVolume(level) : own;
+        
+    }
+
+    public static String getPsdMidiumAudio(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.PSD_MIDIUM_OFF;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.PSD_MIDIUM_OFF : data.psdMidiumAudio;
+            }
+            return getServerData((ServerLevel) level).defaultPsdMidiumAudio;
+        
+    }
+
+    public static int getPsdMidiumRound(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.DEFAULT_PSD_MIDIUM_ROUND;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null ? EscalatorSpeedData.DEFAULT_PSD_MIDIUM_ROUND : data.psdMidiumRound;
+            }
+            return getServerData((ServerLevel) level).defaultPsdMidiumRound;
+        
+    }
+
+    public static int getPsdMidiumVolume(Level level) {
+            return getPsdItemVolume(level, "midium");
+        
+    }
+
+    public static int getPsdMidiumWaitSeconds(Level level) {
+            if (level == null) {
+                return EscalatorSpeedData.DEFAULT_PSD_MIDIUM_WAIT_SECONDS;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null
+                        ? EscalatorSpeedData.DEFAULT_PSD_MIDIUM_WAIT_SECONDS
+                        : data.psdMidiumWaitSeconds;
+            }
+            return getServerData((ServerLevel) level).defaultPsdMidiumWaitSeconds;
+        
+    }
+
+    public static String getPsdToneAudio(Level level, String which) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return EscalatorSpeedData.normalizePsdToneAudio(switch (which) {
+                    case "open" -> data == null ? null : data.psdToneAudioOpen;
+                    case "close" -> data == null ? null : data.psdToneAudioClose;
+                    default -> null;
+                });
+            }
+            return serverPsdToneAudio(getServerData((ServerLevel) level), which);
+        
+    }
+
+    public static int getPsdToneVolume(Level level, String which) {
+            int own;
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                if (data == null) {
+                    own = EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+                } else {
+                    own = "open".equals(which) ? data.psdToneVolumeOpen : data.psdToneVolumeClose;
+                }
+            } else {
+                own = serverPsdToneVolume(getServerData((ServerLevel) level), which);
+            }
+            if (own == EscalatorSpeedData.PSD_TONE_VOLUME_UNSET) {
+                return getPsdHelpVolume(level); // 跟随共用默认
+            }
+            return own;
+        
+    }
+
+    public static Set<String> getServerAudioLibraryKeys(ServerLevel level) {
+            return java.util.Collections.unmodifiableSet(getServerData(level).audioLibrary.keySet());
+        
+    }
+
+    public static EscalatorSpeedData.PsdToneAudio getServerPsdTone(ServerLevel level, long key) {
+            EscalatorSpeedData.PsdToneAudio tone = getServerData(level).psdToneAudio.get(key);
+            return tone != null ? tone : EscalatorSpeedData.PsdToneAudio.NONE;
+        
+    }
+
+    public static boolean hasAnyDoorPsdHelpOn(Level level) {
+            if (level == null) {
+                return false;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                if (data == null) {
+                    return false;
+                }
+                for (EscalatorSpeedData.PsdToneAudio t : data.psdToneAudio.values()) {
+                    if (Boolean.TRUE.equals(t.help())) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            for (EscalatorSpeedData.PsdToneAudio t : getServerData((ServerLevel) level).psdToneAudio.values()) {
+                if (Boolean.TRUE.equals(t.help())) {
+                    return true;
+                }
+            }
+            return false;
+        
+    }
+
+    public static boolean hasOwnDoorPsdToneVolume(Level level, long key, String which) {
+            EscalatorSpeedData.PsdToneAudio t = psdDoorRecord(level, key);
+            Integer own = "open".equals(which) ? t.openVolume() : t.closeVolume();
+            return own != null || hasOwnPsdToneVolume(level, which);
+        
+    }
+
+    public static boolean hasOwnPsdItemVolume(Level level, String which) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                if (data == null) {
+                    return false;
+                }
+                return ("midium".equals(which) ? data.psdMidiumVolume : data.psdArriveVolume)
+                        != EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+            }
+            return serverPsdItemVolume(getServerData((ServerLevel) level), which)
+                    != EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        
+    }
+
+    public static boolean hasOwnPsdToneVolume(Level level, String which) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                if (data == null) {
+                    return false;
+                }
+                return "open".equals(which)
+                        ? data.psdToneVolumeOpen != EscalatorSpeedData.PSD_TONE_VOLUME_UNSET
+                        : data.psdToneVolumeClose != EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+            }
+            return serverPsdToneVolume(getServerData((ServerLevel) level), which)
+                    != EscalatorSpeedData.PSD_TONE_VOLUME_UNSET;
+        
+    }
+
+    public static boolean isDoorPsdHelpEnabled(Level level, long key) {
+            Boolean own = psdDoorRecord(level, key).help();
+            return own != null ? own : isPsdHelpEnabled(level);
+        
+    }
+
+    public static boolean isDoorPsdToneEnabled(Level level, long key, String which) {
+            EscalatorSpeedData.PsdToneAudio t = psdDoorRecord(level, key);
+            Boolean own = "open".equals(which) ? t.openEnabled() : t.closeEnabled();
+            return own != null ? own : isPsdToneEnabled(level, which);
+        
+    }
+
+    public static boolean isPsdHelpEnabled(Level level) {
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return data == null || data.psdHelp;
+            }
+            return getServerData((ServerLevel) level).defaultPsdHelp;
+        
+    }
+
+    public static boolean isPsdToneEnabled(Level level, String which) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return false;
+            }
+            if (level.isClientSide()) {
+                ClientDimensionData data = CLIENT_DATA.get(level.dimension());
+                return switch (which) {
+                    case "open" -> data == null || data.psdToneOpenEnabled;
+                    default -> data == null || data.psdToneCloseEnabled;
+                };
+            }
+            return serverPsdToneEnabled(getServerData((ServerLevel) level), which);
+        
+    }
+
+    public static List<String> liftToneNameCandidates(ServerLevel level) {
+            List<String> names = new ArrayList<>(getServerAudioLibraryKeys(level));
+            names.sort(String::compareTo);
+            List<String> out = new ArrayList<>(names.size() + 2);
+            out.add(EscalatorSpeedData.LIFT_TONE_DEFAULT);
+            out.add("none");
+            out.addAll(names);
+            return out;
+        
+    }
+
+    public static List<String> psdArriveSuggestions(ServerLevel level) {
+            List<String> out = new ArrayList<>();
+            out.add(EscalatorSpeedData.PSD_ARRIVE_OFF);
+            if (level != null) {
+                List<String> names = new ArrayList<>(getServerData(level).audioLibrary.keySet());
+                names.sort(String::compareTo);
+                out.addAll(names);
+            }
+            return out;
+        
+    }
+
+    public static EscalatorSpeedData.PsdToneAudio psdDoorRecord(Level level, long key) {
+            if (level == null) {
+                return EscalatorSpeedData.PsdToneAudio.NONE;
+            }
+            return level.isClientSide()
+                    ? getClientPsdTone(level, key)
+                    : getServerPsdTone((ServerLevel) level, key);
+        
+    }
+
+    public static List<String> psdMidiumSuggestions(ServerLevel level) {
+            List<String> out = new ArrayList<>();
+            out.add(EscalatorSpeedData.PSD_MIDIUM_OFF);
+            if (level != null) {
+                List<String> names = new ArrayList<>(getServerData(level).audioLibrary.keySet());
+                names.sort(String::compareTo);
+                out.addAll(names);
+            }
+            return out;
+        
+    }
+
+    public static List<String> psdNameCandidates(ServerLevel level) {
+            List<String> names = new ArrayList<>(getServerAudioLibraryKeys(level));
+            names.sort(String::compareTo);
+            List<String> out = new ArrayList<>(names.size() + 5);
+            out.add(EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN);
+            out.add(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE);
+            out.add(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M);
+            out.add(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S);
+            out.add("none");
+            out.addAll(names);
+            return out;
+        
+    }
+
+    public static String psdToneField(EscalatorSpeedData.PsdToneAudio tone, String which) {
+            if (tone == null) {
+                return EscalatorSpeedData.PSD_TONE_DEFAULT;
+            }
+            return "open".equals(which) ? tone.open() : tone.close();
+        
+    }
+
+    public static long psdToneKey(int x, int y, int z) {
+            return BlockPos.asLong(x, y, z);
+        
+    }
+
+    private static boolean remapPsdDoorOverrides(EscalatorSpeedData data,
+                                                 java.util.function.Function<EscalatorSpeedData.PsdToneAudio,
+                                                         EscalatorSpeedData.PsdToneAudio> fn) {
+            if (data.psdToneAudio.isEmpty()) {
+                return false;
+            }
+            Map<Long, EscalatorSpeedData.PsdToneAudio> next = new HashMap<>();
+            boolean touched = false;
+            for (Map.Entry<Long, EscalatorSpeedData.PsdToneAudio> e : data.psdToneAudio.entrySet()) {
+                EscalatorSpeedData.PsdToneAudio changed = fn.apply(e.getValue());
+                if (changed == null) {
+                    next.put(e.getKey(), e.getValue());
+                    continue;
+                }
+                touched = true;
+                if (!changed.isEmpty()) {
+                    next.put(e.getKey(), changed);
+                }
+            }
+            if (!touched) {
+                return false;
+            }
+            data.psdToneAudio.clear();
+            data.psdToneAudio.putAll(next);
+            return true;
+        
+    }
+
+    public static boolean replaceDefaultLiftToneAudio(ServerLevel level, String which, String from, String to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (!java.util.Objects.equals(serverLiftToneAudio(data, which), from)) {
+                return false;
+            }
+            setServerLiftToneAudio(data, which, to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultLiftToneAudioAll(MinecraftServer server, String which, String from, String to) {
+            String id = EscalatorSpeedData.normalizeLiftToneAudio(to);
+            String src = EscalatorSpeedData.normalizeLiftToneAudio(from);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (src.equals(serverLiftToneAudio(data, which))) {
+                    setServerLiftToneAudio(data, which, id);
+                    touched = true;
+                }
+                // 单独设置里那一项正好是 X 的也一起换掉（-f = 「含单独设置的」）
+                if (!data.liftToneAudio.isEmpty()) {
+                    Map<Long, EscalatorSpeedData.LiftToneAudio> next = new HashMap<>();
+                    for (Map.Entry<Long, EscalatorSpeedData.LiftToneAudio> e : data.liftToneAudio.entrySet()) {
+                        EscalatorSpeedData.LiftToneAudio t = e.getValue();
+                        String up = "up".equals(which) && src.equals(t.up()) ? id : t.up();
+                        String down = "down".equals(which) && src.equals(t.down()) ? id : t.down();
+                        String chime = "chime".equals(which) && src.equals(t.chime()) ? id : t.chime();
+                        if (!up.equals(t.up()) || !down.equals(t.down()) || !chime.equals(t.chime())) {
+                            touched = true;
+                        }
+                        if (!EscalatorSpeedData.isLiftToneAllDefault(up, down, chime)) {
+                            next.put(e.getKey(), new EscalatorSpeedData.LiftToneAudio(up, down, chime));
+                        }
+                    }
+                    if (touched) {
+                        data.liftToneAudio.clear();
+                        data.liftToneAudio.putAll(next);
+                    }
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdArriveRound(ServerLevel level, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdArriveRound != from) {
+                return false;
+            }
+            data.defaultPsdArriveRound = EscalatorSpeedData.clampPsdArriveRound(to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdArriveRoundAll(MinecraftServer server, int from, int to) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdArriveRound == from) {
+                    data.defaultPsdArriveRound = EscalatorSpeedData.clampPsdArriveRound(to);
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdArriveVolume(ServerLevel level, int from, int to) {
+            return replaceDefaultPsdItemVolume(level, "arrive", from, to);
+        
+    }
+
+    public static int replaceDefaultPsdArriveVolumeAll(MinecraftServer server, int from, int to) {
+            int target = EscalatorSpeedData.clampPsdToneVolume(to);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdArriveVolume == from) {
+                    data.defaultPsdArriveVolume = target;
+                    touched = true;
+                }
+                if (remapPsdDoorOverrides(data, t -> t.arriveVolume() == null || t.arriveVolume() != from
+                        ? null : t.withArriveVolume(target))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdCloseWaitSeconds(ServerLevel level, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdCloseWaitSeconds != from) {
+                return false;
+            }
+            data.defaultPsdCloseWaitSeconds = EscalatorSpeedData.clampPsdCloseWaitSeconds(to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdCloseWaitSecondsAll(MinecraftServer server, int from, int to) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdCloseWaitSeconds == from) {
+                    data.defaultPsdCloseWaitSeconds = EscalatorSpeedData.clampPsdCloseWaitSeconds(to);
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   条件：强制等待秒数正好是 X 的改成 Y（clamp）（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.closeWaitSeconds() == null || t.closeWaitSeconds() != from
+                              ? null
+                              : t.withCloseWaitSeconds(EscalatorSpeedData.clampPsdCloseWaitSeconds(to)))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdHelp(ServerLevel level, boolean from, boolean to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdHelp != from) {
+                return false;
+            }
+            data.defaultPsdHelp = to;
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdHelpAll(MinecraftServer server, boolean from, boolean to) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdHelp == from) {
+                    data.defaultPsdHelp = to;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   条件：正好是 X 的改成 Y（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.help() == null || t.help() != from ? null : t.withHelp(to))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdHelpRound(ServerLevel level, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdHelpRound != from) {
+                return false;
+            }
+            data.defaultPsdHelpRound = EscalatorSpeedData.clampPsdHelpRound(to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdHelpRoundAll(MinecraftServer server, int from, int to) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdHelpRound == from) {
+                    data.defaultPsdHelpRound = EscalatorSpeedData.clampPsdHelpRound(to);
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdHelpVolume(ServerLevel level, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdHelpVolume != from) {
+                return false;
+            }
+            data.defaultPsdHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdHelpVolumeAll(MinecraftServer server, int from, int to) {
+            int target = EscalatorSpeedData.clampLiftHelpVolume(to);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdHelpVolume == from) {
+                    data.defaultPsdHelpVolume = target;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   条件：音量正好是 X 的改成 Y（已 clamp 的 target）（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.volume() == null || t.volume() != from ? null : t.withVolume(target))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    private static boolean replaceDefaultPsdItemVolume(ServerLevel level, String which, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (serverPsdItemVolume(data, which) != from) {
+                return false;
+            }
+            setServerPsdItemVolume(data, which, to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static boolean replaceDefaultPsdMidiumRound(ServerLevel level, int from, int to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (data.defaultPsdMidiumRound != from) {
+                return false;
+            }
+            data.defaultPsdMidiumRound = EscalatorSpeedData.clampPsdMidiumRound(to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdMidiumRoundAll(MinecraftServer server, int from, int to) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdMidiumRound == from) {
+                    data.defaultPsdMidiumRound = EscalatorSpeedData.clampPsdMidiumRound(to);
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdMidiumVolume(ServerLevel level, int from, int to) {
+            return replaceDefaultPsdItemVolume(level, "midium", from, to);
+        
+    }
+
+    public static int replaceDefaultPsdMidiumVolumeAll(MinecraftServer server, int from, int to) {
+            int target = EscalatorSpeedData.clampPsdToneVolume(to);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdMidiumVolume == from) {
+                    data.defaultPsdMidiumVolume = target;
+                    touched = true;
+                }
+                if (remapPsdDoorOverrides(data, t -> t.midiumVolume() == null || t.midiumVolume() != from
+                        ? null : t.withMidiumVolume(target))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdToneAudio(ServerLevel level, String which, String from, String to) {
+            EscalatorSpeedData data = getServerData(level);
+            if (!java.util.Objects.equals(serverPsdToneAudio(data, which), from)) {
+                return false;
+            }
+            setServerPsdToneAudio(data, which, to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdToneAudioAll(MinecraftServer server, String which, String from, String to) {
+            String id = EscalatorSpeedData.normalizePsdToneAudio(to);
+            String src = EscalatorSpeedData.normalizePsdToneAudio(from);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (src.equals(serverPsdToneAudio(data, which))) {
+                    setServerPsdToneAudio(data, which, id);
+                    touched = true;
+                }
+                // 单独设置里那一项正好是 X 的也一起换掉（-f = 「含单独设置的」）
+                if (!data.psdToneAudio.isEmpty()) {
+                    Map<Long, EscalatorSpeedData.PsdToneAudio> next = new HashMap<>();
+                    for (Map.Entry<Long, EscalatorSpeedData.PsdToneAudio> e : data.psdToneAudio.entrySet()) {
+                        EscalatorSpeedData.PsdToneAudio t = e.getValue();
+                        // ★【1.20】只换**素材那一项**，其余覆盖项（开关 / 音量 / 强制等待 / 到站播报）
+                        //   原样保留 —— 这里原来用 new PsdToneAudio(open, close) 重建，会顺手把
+                        //   这扇门的音量设置抹掉（「改个素材，音量回默认」）。
+                        if (src.equals("open".equals(which) ? t.open() : t.close())) {
+                            t = t.withTone(which, id);
+                            touched = true;
+                        }
+                        if (!t.isEmpty()) {
+                            next.put(e.getKey(), t);
+                        }
+                    }
+                    if (touched) {
+                        data.psdToneAudio.clear();
+                        data.psdToneAudio.putAll(next);
+                    }
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdToneEnabled(ServerLevel level, String which, boolean from, boolean to) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return false;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (serverPsdToneEnabled(data, which) != from) {
+                return false;
+            }
+            setServerPsdToneEnabled(data, which, to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdToneEnabledAll(MinecraftServer server, String which,
+                                                      boolean from, boolean to) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return 0;
+            }
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (serverPsdToneEnabled(data, which) == from) {
+                    setServerPsdToneEnabled(data, which, to);
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   条件：这一项子开关正好是 X 的改成 Y（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> ("open".equals(which) ? t.openEnabled() : t.closeEnabled()) == null
+                              || ("open".equals(which) ? t.openEnabled() : t.closeEnabled()) != from
+                              ? null
+                              : t.withToneEnabled(which, to))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static boolean replaceDefaultPsdToneVolume(ServerLevel level, String which, int from, int to) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return false;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (serverPsdToneVolume(data, which) != from) {
+                return false;
+            }
+            setServerPsdToneVolume(data, which, to);
+            data.setDirty();
+            return true;
+        
+    }
+
+    public static int replaceDefaultPsdToneVolumeAll(MinecraftServer server, String which, int from, int to) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return 0;
+            }
+            int clamped = EscalatorSpeedData.clampPsdToneVolume(to);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (serverPsdToneVolume(data, which) == from) {
+                    setServerPsdToneVolume(data, which, clamped);
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   条件：这一项音量正好是 X 的改成 Y（已 clamp 的 clamped）（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> ("open".equals(which) ? t.openVolume() : t.closeVolume()) == null
+                              || ("open".equals(which) ? t.openVolume() : t.closeVolume()) != from
+                              ? null
+                              : t.withToneVolume(which, clamped))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static AudioArg resolveLiftToneName(ServerLevel level, String name) {
+            if (name == null || name.isEmpty()) {
+                return new AudioArg(null, false, "音频名字不能为空");
+            }
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.LIFT_TONE_DEFAULT, false, null);
+            }
+            if (EscalatorSpeedData.LIFT_TONE_OFF.equals(lower) || "none".equals(lower) || "mute".equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.LIFT_TONE_OFF, true, null);
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (data.audioLibrary.containsKey(name)) {
+                return new AudioArg(name, false, null);
+            }
+            // 玩家少打后缀名时兜底（与 /futimusic 同一手法）
+            if (!lower.endsWith(".ogg") && data.audioLibrary.containsKey(name + ".ogg")) {
+                return new AudioArg(name + ".ogg", false, null);
+            }
+            return new AudioArg(null, false, "存档里没有叫「" + name + "」的音频。直梯提示音可以用 "
+                    + EscalatorSpeedData.LIFT_TONE_DEFAULT + " 内置素材、none 不播，或用导入过的 .ogg；"
+                    + (data.audioLibrary.isEmpty()
+                            ? "现在还没有导入过任何音频，玩家需要在石斧界面里上传或导入 .ogg"
+                            : "已有的：" + previewNames(data)));
+        
+    }
+
+    public static String resolvePsdArriveName(ServerLevel level, String name) {
+            if (EscalatorSpeedData.isPsdArriveOff(name)) {
+                return EscalatorSpeedData.PSD_ARRIVE_OFF;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (data.audioLibrary.containsKey(name)) {
+                return name;
+            }
+            if (!name.toLowerCase(Locale.ROOT).endsWith(".ogg")) {
+                String withExt = name + ".ogg";
+                if (data.audioLibrary.containsKey(withExt)) {
+                    return withExt;
+                }
+                if (importAudioToStore(level, withExt) == null && data.audioLibrary.containsKey(withExt)) {
+                    return withExt;
+                }
+            }
+            if (importAudioToStore(level, name) == null && data.audioLibrary.containsKey(name)) {
+                return name;
+            }
+            return null;
+        
+    }
+
+    public static String resolvePsdMidiumName(ServerLevel level, String name) {
+            if (EscalatorSpeedData.isPsdMidiumOff(name)) {
+                return EscalatorSpeedData.PSD_MIDIUM_OFF;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (data.audioLibrary.containsKey(name)) {
+                return name;
+            }
+            if (!name.toLowerCase(Locale.ROOT).endsWith(".ogg")) {
+                String withExt = name + ".ogg";
+                if (data.audioLibrary.containsKey(withExt)) {
+                    return withExt;
+                }
+                if (importAudioToStore(level, withExt) == null && data.audioLibrary.containsKey(withExt)) {
+                    return withExt;
+                }
+            }
+            if (importAudioToStore(level, name) == null && data.audioLibrary.containsKey(name)) {
+                return name;
+            }
+            return null;
+        
+    }
+
+    public static AudioArg resolvePsdToneName(ServerLevel level, String name) {
+            if (name == null || name.isEmpty()) {
+                return new AudioArg(null, false, "音频名字不能为空");
+            }
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN.equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN, false, null);
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE.equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE, false, null);
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M.equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M, false, null);
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S.equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S, false, null);
+            }
+            if (EscalatorSpeedData.PSD_TONE_OFF.equals(lower) || "none".equals(lower) || "mute".equals(lower)) {
+                return new AudioArg(EscalatorSpeedData.PSD_TONE_OFF, true, null);
+            }
+            EscalatorSpeedData data = getServerData(level);
+            if (data.audioLibrary.containsKey(name)) {
+                return new AudioArg(name, false, null);
+            }
+            if (!lower.endsWith(".ogg") && data.audioLibrary.containsKey(name + ".ogg")) {
+                return new AudioArg(name + ".ogg", false, null);
+            }
+            return new AudioArg(null, false, "存档里没有叫「" + name + "」的音频。屏蔽门提示音可以用 "
+                    + EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN + " / "
+                    + EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE + " / "
+                    + EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M + " / "
+                    + EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S + " 四段内置素材、none 不播，"
+                    + "或用导入过的 .ogg；"
+                    + (data.audioLibrary.isEmpty()
+                            ? "现在还没有导入过任何音频，玩家需要在石斧界面里上传或导入 .ogg"
+                            : "已有的：" + previewNames(data)));
+        
+    }
+
+    private static String serverLiftToneAudio(EscalatorSpeedData data, String which) {
+            return switch (which) {
+                case "up" -> data.defaultLiftToneAudioUp;
+                case "down" -> data.defaultLiftToneAudioDown;
+                case "chime" -> data.defaultLiftToneAudioChime;
+                default -> EscalatorSpeedData.LIFT_TONE_DEFAULT;
+            };
+        
+    }
+
+    private static int serverPsdItemVolume(EscalatorSpeedData data, String which) {
+            return "midium".equals(which) ? data.defaultPsdMidiumVolume : data.defaultPsdArriveVolume;
+        
+    }
+
+    private static String serverPsdToneAudio(EscalatorSpeedData data, String which) {
+            return switch (which) {
+                case "open" -> EscalatorSpeedData.normalizePsdToneAudio(data.defaultPsdToneAudioOpen);
+                case "close" -> EscalatorSpeedData.normalizePsdToneAudio(data.defaultPsdToneAudioClose);
+                default -> EscalatorSpeedData.PSD_TONE_DEFAULT;
+            };
+        
+    }
+
+    private static boolean serverPsdToneEnabled(EscalatorSpeedData data, String which) {
+            return "open".equals(which) ? data.defaultPsdToneOpenEnabled : data.defaultPsdToneCloseEnabled;
+        
+    }
+
+    private static int serverPsdToneVolume(EscalatorSpeedData data, String which) {
+            return "open".equals(which) ? data.defaultPsdToneVolumeOpen : data.defaultPsdToneVolumeClose;
+        
+    }
+
+    public static void setDefaultLiftToneAudio(ServerLevel level, String which, String audioId) {
+            EscalatorSpeedData data = getServerData(level);
+            setServerLiftToneAudio(data, which, audioId);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultLiftToneAudioAll(MinecraftServer server, String which, String audioId) {
+            String id = EscalatorSpeedData.normalizeLiftToneAudio(audioId);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (!id.equals(serverLiftToneAudio(data, which))) {
+                    setServerLiftToneAudio(data, which, id);
+                    touched = true;
+                }
+                if (clearLiftToneOverrides(data, which)) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdArrive(ServerLevel level, String audioId, int seconds) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdArriveAudio = EscalatorSpeedData.normalizePsdArriveAudio(audioId);
+            data.defaultPsdArriveSeconds = EscalatorSpeedData.clampPsdArriveSeconds(seconds);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdArriveAll(MinecraftServer server, String audioId, int seconds) {
+            String id = EscalatorSpeedData.normalizePsdArriveAudio(audioId);
+            int sec = EscalatorSpeedData.clampPsdArriveSeconds(seconds);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (!id.equals(data.defaultPsdArriveAudio) || data.defaultPsdArriveSeconds != sec) {
+                    data.defaultPsdArriveAudio = id;
+                    data.defaultPsdArriveSeconds = sec;
+                    touched = true;
+                }
+                // 【1.21】-f = 「修改全部」：这一项的「按串单独设置」也一起抹回跟维度默认。
+                if (remapPsdDoorOverrides(data, t -> (t.arrive() == null && t.arriveSeconds() == null)
+                              ? null
+                              : t.withArrive(null).withArriveSeconds(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdArriveRound(ServerLevel level, int round) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdArriveRound = EscalatorSpeedData.clampPsdArriveRound(round);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdArriveRoundAll(MinecraftServer server, int round) {
+            int clamped = EscalatorSpeedData.clampPsdArriveRound(round);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdArriveRound != clamped) {
+                    data.defaultPsdArriveRound = clamped;
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdArriveVolume(ServerLevel level, int volume) {
+            EscalatorSpeedData data = getServerData(level);
+            setServerPsdItemVolume(data, "arrive", volume);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdArriveVolumeAll(MinecraftServer server, int volume) {
+            int target = EscalatorSpeedData.clampPsdToneVolume(volume);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdArriveVolume != target) {
+                    data.defaultPsdArriveVolume = target;
+                    touched = true;
+                }
+                if (remapPsdDoorOverrides(data, t -> t.arriveVolume() == null ? null : t.withArriveVolume(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdCloseWaitSeconds(ServerLevel level, int seconds) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdCloseWaitSeconds = EscalatorSpeedData.clampPsdCloseWaitSeconds(seconds);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdCloseWaitSecondsAll(MinecraftServer server, int seconds) {
+            int clamped = EscalatorSpeedData.clampPsdCloseWaitSeconds(seconds);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdCloseWaitSeconds != clamped) {
+                    data.defaultPsdCloseWaitSeconds = clamped;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：强制等待秒数抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.closeWaitSeconds() == null ? null : t.withCloseWaitSeconds(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdHelp(ServerLevel level, boolean enabled) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdHelp = enabled;
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdHelpAll(MinecraftServer server, boolean enabled) {
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdHelp != enabled) {
+                    data.defaultPsdHelp = enabled;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.help() == null ? null : t.withHelp(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdHelpRound(ServerLevel level, int round) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdHelpRound = EscalatorSpeedData.clampPsdHelpRound(round);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdHelpRoundAll(MinecraftServer server, int round) {
+            int clamped = EscalatorSpeedData.clampPsdHelpRound(round);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdHelpRound != clamped) {
+                    data.defaultPsdHelpRound = clamped;
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdHelpVolume(ServerLevel level, int volume) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdHelpVolume = EscalatorSpeedData.clampLiftHelpVolume(volume);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdHelpVolumeAll(MinecraftServer server, int volume) {
+            int target = EscalatorSpeedData.clampLiftHelpVolume(volume);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdHelpVolume != target) {
+                    data.defaultPsdHelpVolume = target;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：音量抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.volume() == null ? null : t.withVolume(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdMidium(ServerLevel level, String audioId, int seconds) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdMidiumAudio = EscalatorSpeedData.normalizePsdMidiumAudio(audioId);
+            data.defaultPsdMidiumWaitSeconds = EscalatorSpeedData.clampPsdMidiumWaitSeconds(seconds);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdMidiumAll(MinecraftServer server, String audioId, int seconds) {
+            String id = EscalatorSpeedData.normalizePsdMidiumAudio(audioId);
+            int sec = EscalatorSpeedData.clampPsdMidiumWaitSeconds(seconds);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (!id.equals(data.defaultPsdMidiumAudio) || data.defaultPsdMidiumWaitSeconds != sec) {
+                    data.defaultPsdMidiumAudio = id;
+                    data.defaultPsdMidiumWaitSeconds = sec;
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：到站播报素材 + 等待秒数一起抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> (t.midium() == null && t.midiumWaitSeconds() == null)
+                              ? null
+                              : t.withMidium(null).withMidiumWaitSeconds(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdMidiumRound(ServerLevel level, int round) {
+            EscalatorSpeedData data = getServerData(level);
+            data.defaultPsdMidiumRound = EscalatorSpeedData.clampPsdMidiumRound(round);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdMidiumRoundAll(MinecraftServer server, int round) {
+            int clamped = EscalatorSpeedData.clampPsdMidiumRound(round);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                if (data.defaultPsdMidiumRound != clamped) {
+                    data.defaultPsdMidiumRound = clamped;
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdMidiumVolume(ServerLevel level, int volume) {
+            EscalatorSpeedData data = getServerData(level);
+            setServerPsdItemVolume(data, "midium", volume);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdMidiumVolumeAll(MinecraftServer server, int volume) {
+            int target = EscalatorSpeedData.clampPsdToneVolume(volume);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (data.defaultPsdMidiumVolume != target) {
+                    data.defaultPsdMidiumVolume = target;
+                    touched = true;
+                }
+                // -f = 「修改全部」：这一项的「按扇门单独设置」也一起抹掉（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> t.midiumVolume() == null ? null : t.withMidiumVolume(null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdToneAudio(ServerLevel level, String which, String audioId) {
+            EscalatorSpeedData data = getServerData(level);
+            setServerPsdToneAudio(data, which, audioId);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdToneAudioAll(MinecraftServer server, String which, String audioId) {
+            String id = EscalatorSpeedData.normalizePsdToneAudio(audioId);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (!id.equals(serverPsdToneAudio(data, which))) {
+                    setServerPsdToneAudio(data, which, id);
+                    touched = true;
+                }
+                if (clearPsdToneOverrides(data, which)) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdToneEnabled(ServerLevel level, String which, boolean enabled) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            setServerPsdToneEnabled(data, which, enabled);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdToneEnabledAll(MinecraftServer server, String which, boolean enabled) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return 0;
+            }
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (serverPsdToneEnabled(data, which) != enabled) {
+                    setServerPsdToneEnabled(data, which, enabled);
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：这一项子开关抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> ("open".equals(which) ? t.openEnabled() : t.closeEnabled()) == null
+                              ? null
+                              : t.withToneEnabled(which, null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDefaultPsdToneVolume(ServerLevel level, String which, int volume) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            setServerPsdToneVolume(data, which, volume);
+            data.setDirty();
+        
+    }
+
+    public static int setDefaultPsdToneVolumeAll(MinecraftServer server, String which, int volume) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return 0;
+            }
+            int clamped = EscalatorSpeedData.clampPsdToneVolume(volume);
+            int changed = 0;
+            for (ServerLevel level : server.getAllLevels()) {
+                EscalatorSpeedData data = getServerData(level);
+                boolean touched = false;
+                if (serverPsdToneVolume(data, which) != clamped) {
+                    setServerPsdToneVolume(data, which, clamped);
+                    touched = true;
+                }
+                // 【1.20】-f = 「修改全部」：这一项的「按扇门单独设置」也一起处理掉——
+                //   设值：这一项音量抹回跟维度默认（见 remapPsdDoorOverrides）。
+                if (remapPsdDoorOverrides(data, t -> ("open".equals(which) ? t.openVolume() : t.closeVolume()) == null
+                              ? null
+                              : t.withToneVolume(which, null))) {
+                    touched = true;
+                }
+                if (touched) {
+                    data.setDirty();
+                    changed++;
+                }
+            }
+            return changed;
+        
+    }
+
+    public static void setDoorPsdArrive(ServerLevel level, long key, String audioId, int seconds) {
+            updateDoor(level, key, t -> t.withArrive(EscalatorSpeedData.normalizePsdArriveAudio(audioId))
+                    .withArriveSeconds(EscalatorSpeedData.clampPsdArriveSeconds(seconds)));
+        
+    }
+
+    public static void setDoorPsdArriveVolume(ServerLevel level, long key, int volume) {
+            updateDoor(level, key, t -> t.withArriveVolume(EscalatorSpeedData.clampPsdToneVolume(volume)));
+        
+    }
+
+    public static void setDoorPsdCloseWaitSeconds(ServerLevel level, long key, int seconds) {
+            updateDoor(level, key, t -> t.withCloseWaitSeconds(EscalatorSpeedData.clampPsdCloseWaitSeconds(seconds)));
+        
+    }
+
+    public static void setDoorPsdHelp(ServerLevel level, long key, boolean enabled) {
+            updateDoor(level, key, t -> t.withHelp(enabled));
+        
+    }
+
+    public static void setDoorPsdHelpVolume(ServerLevel level, long key, int volume) {
+            updateDoor(level, key, t -> t.withVolume(EscalatorSpeedData.clampLiftHelpVolume(volume)));
+        
+    }
+
+    public static void setDoorPsdMidium(ServerLevel level, long key, String audioId, int seconds) {
+            updateDoor(level, key, t -> t.withMidium(EscalatorSpeedData.normalizePsdMidiumAudio(audioId))
+                    .withMidiumWaitSeconds(EscalatorSpeedData.clampPsdMidiumWaitSeconds(seconds)));
+        
+    }
+
+    public static void setDoorPsdMidiumVolume(ServerLevel level, long key, int volume) {
+            updateDoor(level, key, t -> t.withMidiumVolume(EscalatorSpeedData.clampPsdToneVolume(volume)));
+        
+    }
+
+    public static void setDoorPsdOpenWaitSeconds(ServerLevel level, long key, int seconds) {
+            updateDoor(level, key, t -> t.withOpenWaitSeconds(EscalatorSpeedData.clampPsdOpenWaitSeconds(seconds)));
+        
+    }
+
+    public static void setDoorPsdToneEnabled(ServerLevel level, long key, String which, boolean enabled) {
+            updateDoor(level, key, t -> t.withToneEnabled(which, enabled));
+        
+    }
+
+    public static void setDoorPsdToneVolume(ServerLevel level, long key, String which, int volume) {
+            updateDoor(level, key, t -> t.withToneVolume(which, EscalatorSpeedData.clampPsdToneVolume(volume)));
+        
+    }
+
+    private static void setServerLiftToneAudio(EscalatorSpeedData data, String which, String audioId) {
+            String id = EscalatorSpeedData.normalizeLiftToneAudio(audioId);
+            switch (which) {
+                case "up" -> data.defaultLiftToneAudioUp = id;
+                case "down" -> data.defaultLiftToneAudioDown = id;
+                case "chime" -> data.defaultLiftToneAudioChime = id;
+                default -> {
+                }
+            }
+        
+    }
+
+    private static void setServerPsdItemVolume(EscalatorSpeedData data, String which, int volume) {
+            if ("midium".equals(which)) {
+                data.defaultPsdMidiumVolume = EscalatorSpeedData.clampPsdToneVolume(volume);
+            } else {
+                data.defaultPsdArriveVolume = EscalatorSpeedData.clampPsdToneVolume(volume);
+            }
+        
+    }
+
+    public static boolean setServerPsdTone(ServerLevel level, long key, String which, String audioId) {
+            if (!"open".equals(which) && !"close".equals(which)) {
+                return false;
+            }
+            EscalatorSpeedData data = getServerData(level);
+            String id = EscalatorSpeedData.normalizePsdToneAudio(audioId);
+            if (!EscalatorSpeedData.isPsdBuiltinName(id)
+                    && !EscalatorSpeedData.PSD_TONE_OFF.equals(id)
+                    && !data.audioLibrary.containsKey(id)) {
+                return false;
+            }
+            EscalatorSpeedData.PsdToneAudio old = data.psdToneAudio.get(key);
+            if (old == null) {
+                old = EscalatorSpeedData.PsdToneAudio.NONE;
+            }
+            // ★【1.20】用 withTone 只换这一端的素材：这条记录现在还带着这扇门的开关 / 音量 /
+            //   强制等待 / 到站播报（石斧 UI 改的就是它们），重建整条会把那些一起抹掉。
+            EscalatorSpeedData.PsdToneAudio now = old.withTone(which, id);
+            if (now.isEmpty()) {
+                // 全部覆盖项都回到默认 = 等于没设置，删掉这条记录（表越干净越好查）。
+                data.psdToneAudio.remove(key);
+            } else {
+                data.psdToneAudio.put(key, now);
+            }
+            data.setDirty();
+            return true;
+        
+    }
+
+    private static void setServerPsdToneAudio(EscalatorSpeedData data, String which, String audioId) {
+            String id = EscalatorSpeedData.normalizePsdToneAudio(audioId);
+            switch (which) {
+                case "open" -> data.defaultPsdToneAudioOpen = id;
+                case "close" -> data.defaultPsdToneAudioClose = id;
+                default -> {
+                }
+            }
+        
+    }
+
+    private static void setServerPsdToneEnabled(EscalatorSpeedData data, String which, boolean enabled) {
+            if ("open".equals(which)) {
+                data.defaultPsdToneOpenEnabled = enabled;
+            } else {
+                data.defaultPsdToneCloseEnabled = enabled;
+            }
+        
+    }
+
+    private static void setServerPsdToneVolume(EscalatorSpeedData data, String which, int volume) {
+            if ("open".equals(which)) {
+                data.defaultPsdToneVolumeOpen = EscalatorSpeedData.clampPsdToneVolume(volume);
+            } else {
+                data.defaultPsdToneVolumeClose = EscalatorSpeedData.clampPsdToneVolume(volume);
+            }
+        
+    }
+
+    public static void syncPsdChimeToAll(MinecraftServer server) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                for (ServerLevel level : server.getAllLevels()) {
+                    sendPsdChimeSyncTo(player, level);
+                }
+            }
+        
+    }
+
+    public static void syncPsdToneToAll(MinecraftServer server) {
+            for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+                for (ServerLevel level : server.getAllLevels()) {
+                    sendPsdToneSyncTo(player, level);
+                }
+            }
+        
+    }
+
+    private static void updateDoor(ServerLevel level, long key,
+                                   java.util.function.UnaryOperator<EscalatorSpeedData.PsdToneAudio> fn) {
+            EscalatorSpeedData data = getServerData(level);
+            EscalatorSpeedData.PsdToneAudio old = data.psdToneAudio.get(key);
+            if (old == null) {
+                old = EscalatorSpeedData.PsdToneAudio.NONE;
+            }
+            EscalatorSpeedData.PsdToneAudio now = fn.apply(old);
+            if (now.isEmpty()) {
+                data.psdToneAudio.remove(key);
+            } else {
+                data.psdToneAudio.put(key, now);
+            }
+            data.setDirty();
+        
+    }
+
+
+    /** 【1.50】把一个维度的屏蔽门提示音设置发给单个玩家（Forge SimpleChannel 版）。 */
+    public static void sendPsdChimeSyncTo(ServerPlayer player, ServerLevel level) {
+        EscalatorSpeedData data = getServerData(level);
+        Packets.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                new PsdChimeSyncPacket(
+                        level.dimension().location().toString(),
+                        data.defaultPsdHelp,
+                        data.defaultPsdHelpVolume,
+                        data.defaultPsdToneOpenEnabled,
+                        data.defaultPsdToneCloseEnabled,
+                        data.defaultPsdHelpRound,
+                        data.defaultPsdToneVolumeOpen,
+                        data.defaultPsdToneVolumeClose,
+                        EscalatorSpeedData.normalizePsdToneAudio(data.defaultPsdToneAudioOpen),
+                        EscalatorSpeedData.normalizePsdToneAudio(data.defaultPsdToneAudioClose),
+                        data.defaultPsdCloseWaitSeconds,
+                        EscalatorSpeedData.normalizePsdMidiumAudio(data.defaultPsdMidiumAudio),
+                        data.defaultPsdMidiumWaitSeconds,
+                        EscalatorSpeedData.normalizePsdArriveAudio(data.defaultPsdArriveAudio),
+                        data.defaultPsdArriveSeconds,
+                        data.defaultPsdMidiumVolume,
+                        data.defaultPsdArriveVolume,
+                        data.defaultPsdMidiumRound,
+                        data.defaultPsdArriveRound));
+    }
+
+    /** 【1.50】把所有维度的屏蔽门提示音设置同步给所有在线玩家。 */
+
+
+
+    // ---- 【1.20】「可选值」的包读写：与 PsdToneSyncPacket 的 encode/decode 成对使用 ----
+
+    public static void writeDoorOptBool(FriendlyByteBuf buf, Boolean v) {
+        buf.writeBoolean(v != null);
+        if (v != null) {
+            buf.writeBoolean(v);
+        }
+    }
+
+    public static void writeDoorOptInt(FriendlyByteBuf buf, Integer v) {
+        buf.writeBoolean(v != null);
+        if (v != null) {
+            buf.writeVarInt(v);
+        }
+    }
+
+    public static void writeDoorOptString(FriendlyByteBuf buf, String v) {
+        buf.writeBoolean(v != null);
+        if (v != null) {
+            buf.writeUtf(v, 128);
+        }
+    }
+
+    /** 客户端读一个「可选 boolean」；与 {@link #writeDoorOptBool} 成对。 */
+    public static Boolean readDoorOptBool(FriendlyByteBuf buf) {
+        return buf.readBoolean() ? buf.readBoolean() : null;
+    }
+
+    /** 客户端读一个「可选 int」；与 {@link #writeDoorOptInt} 成对。 */
+    public static Integer readDoorOptInt(FriendlyByteBuf buf) {
+        return buf.readBoolean() ? buf.readVarInt() : null;
+    }
+
+    /** 客户端读一个「可选字符串」；与 {@link #writeDoorOptString} 成对。 */
+    public static String readDoorOptString(FriendlyByteBuf buf) {
+        return buf.readBoolean() ? buf.readUtf(128) : null;
+    }
+
+    /** 【1.50】把一个维度的每扇门单独素材发给单个玩家（Forge SimpleChannel 版）。 */
+    public static void sendPsdToneSyncTo(ServerPlayer player, ServerLevel level) {
+        EscalatorSpeedData data = getServerData(level);
+        Packets.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player),
+                new PsdToneSyncPacket(level.dimension().location().toString(),
+                        new java.util.HashMap<>(data.psdToneAudio)));
+    }
+
 }
+

@@ -32,10 +32,74 @@ import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
 import smooth.lift.network.Packets;
 
 import java.util.Locale;
+import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.world.level.Level;
+import java.util.concurrent.CompletableFuture;
+import smooth.lift.network.MbmHelpOpenPacket;
+import net.minecraftforge.network.PacketDistributor;
 
 @Mod(SmoothLift.MOD_ID)
 public class SmoothLift {
     public static final String MOD_ID = "smooth_lift";
+
+    /** 【1.55】「同步所有」弹窗的域常量（客户端 SyncPopupScreen / 服务端 syncSettings 共用）。 */
+    public static final int SYNC_TOP_LEVEL = 0;
+    public static final int SYNC_ESC_AUDIO = 1;
+    public static final int SYNC_ESC_HELP_AUDIO = 2;
+    static final String[] SYNC_LIFT_WHICH = {"up", "down", "chime"};
+    static final String[] SYNC_PSD_WHICH = {"open", "close"};
+    static final int SYNC_PSD_MIDIUM_PAGE = 3;
+    static final int SYNC_PSD_ARRIVE_PAGE = 4;
+    /** 【1.56】列车音效五个域的编号（服务端 syncTrain 用）。 */
+    public static final int SYNC_TRAIN_RUN = 1;
+    public static final int SYNC_TRAIN_TURN = 2;
+    public static final int SYNC_TRAIN_SWITCH = 3;
+    public static final int SYNC_TRAIN_ARRIVE = 4;
+    public static final int SYNC_TRAIN_DEPART = 5;
+
+    /** 【1.53】经典港铁预设：9 + 2 = 11 条。末尾两条把 open/close 的子开关打开（1.58 修）。 */
+    private static final String[] PRESET_CLASSIC_MTR = {
+            "futimusic -f default",
+            "futihelp -f on",
+            "lifthelp -f on",
+            "lifthelp door -f on",
+            "lifthelp up -f on",
+            "lifthelp down -f on",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f default",
+            "pbmmusic close -f default-m",
+            "pbmmusic open -f on",
+            "pbmmusic close -f on",
+    };
+    /** 【1.58】简单港铁预设：9 + 2 = 11 条（close 用 default-s）。 */
+    private static final String[] PRESET_SIMPLE_MTR = {
+            "futimusic -f default",
+            "futihelp -f off",
+            "lifthelp -f on",
+            "lifthelp door -f off",
+            "lifthelp up -f on",
+            "lifthelp down -f on",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f default",
+            "pbmmusic close -f default-s",
+            "pbmmusic open -f on",
+            "pbmmusic close -f on",
+    };
+    /** 【1.58】空白预设：9 条，「不播」用正名 none（素材层），绝不写 off（会落到子开关层）。 */
+    private static final String[] PRESET_BLANK = {
+            "futimusic -f off",
+            "futihelp -f off",
+            "lifthelp -f off",
+            "lifthelp door -f off",
+            "lifthelp up -f off",
+            "lifthelp down -f off",
+            "pbmclosewait -f 1",
+            "pbmmusic open -f none",
+            "pbmmusic close -f none",
+    };
 
     public SmoothLift() {
         FMLJavaModLoadingContext.get().getModEventBus().addListener(this::onCommonSetup);
@@ -364,6 +428,174 @@ public class SmoothLift {
                         .executes(SmoothLift::liftHelpRoundFromTo))))
             .then(liftHelpRoundForce("-f"))
         );
+        // 【1.53】/MBM 总入口（help 预设选择 / music in|delete 批量音频）。大写 + 小写别名。
+        dispatcher.register(mbmTree("MBM"));
+        dispatcher.register(mbmTree("mbm"));
+
+        dispatcher.register(Commands.literal("pbmmusic")
+            .executes(SmoothLift::pbmMusicShow)
+            .then(Commands.literal("on")
+                .executes(context -> pbmMusicGlobal(context, true))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("off")
+                        .executes(context -> pbmMusicFromTo(context, true, false)))))
+            .then(Commands.literal("off")
+                .executes(context -> pbmMusicGlobal(context, false))
+                .then(Commands.literal("to")
+                    .then(Commands.literal("on")
+                        .executes(context -> pbmMusicFromTo(context, false, true)))))
+            .then(pbmMusicForce("-f"))
+            .then(pbmMusicItemCommand("open", "open"))
+            .then(pbmMusicItemCommand("close", "close"))
+        );
+
+        // 【1.50】/pbmloud：**屏蔽门**开关门提示音的音量（1~1000，100 = 原始音量，1000 = 10×）。
+        //   （无参数）              -> 显示当前维度生效的共用音量（并标出两项是否跟随共用）
+        //   <音量>                  -> 本维度共用音量 = 音量
+        //   <X> to <Y>              -> 本维度共用音量正好是 X 时才改成 Y
+        //   -f <音量>               -> 强制**所有维度** = 音量
+        //   -f <X> to <Y>           -> 所有维度里共用音量正好是 X 的改成 Y
+        //   open|close <音量>       -> 本维度该项自己的音量（没单独调过的项跟随共用默认）
+        //   open|close <X> to <Y>   -> 本维度该项音量正好是 X 时才改成 Y
+        //   -f open|close <音量>    -> 所有维度该项音量
+        //   -f open|close <X> to <Y>
+        // ★ 这是与 /futiloud（扶梯底噪）、/futihelploud（扶梯无障碍提示音）、/lifthelploud（直梯）
+        //   **互不影响**的第 4 套音量，各存各的。
+        dispatcher.register(Commands.literal("pbmloud")
+            .executes(SmoothLift::pbmLoudShow)
+            .then(Commands.argument("volume", volumeArg())
+                .executes(SmoothLift::pbmLoudGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(SmoothLift::pbmLoudFromTo))))
+            .then(pbmLoudItemCommand("open", "open"))
+            .then(pbmLoudItemCommand("close", "close"))
+            .then(Commands.literal("-f")
+                .then(Commands.argument("volume", volumeArg())
+                    .executes(SmoothLift::pbmLoudForceAll)
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", volumeArg())
+                            .executes(SmoothLift::pbmLoudForceFromTo))))
+                .then(pbmLoudItemForceBranch("open", "open"))
+                .then(pbmLoudItemForceBranch("close", "close")))
+        );
+
+        // 【1.22】/pbmmusicloud：屏蔽门**开关门提示音素材**那一套音量的别名。
+        //   与 /pbmloud **完全同构、同一份数据**（新增它只是给"音量"这件事一个与素材指令
+        //   /pbmmusic 对称的名字）；/pbmloud 原样保留，行为一个字没改。
+        dispatcher.register(Commands.literal("pbmmusicloud")
+            .executes(SmoothLift::pbmLoudShow)
+            .then(Commands.argument("volume", volumeArg())
+                .executes(SmoothLift::pbmLoudGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(SmoothLift::pbmLoudFromTo))))
+            .then(pbmLoudItemCommand("open", "open"))
+            .then(pbmLoudItemCommand("close", "close"))
+            .then(Commands.literal("-f")
+                .then(Commands.argument("volume", volumeArg())
+                    .executes(SmoothLift::pbmLoudForceAll)
+                    .then(Commands.literal("to")
+                        .then(Commands.argument("target", volumeArg())
+                            .executes(SmoothLift::pbmLoudForceFromTo))))
+                .then(pbmLoudItemForceBranch("open", "open"))
+                .then(pbmLoudItemForceBranch("close", "close")))
+        );
+
+        // 【1.22】/pbmmidiumloud：**到站播报**素材自己的音量（1~1000）。
+        //   形状与 /pbmloud 同构，只是"共用 + 两项"变成"这一项"。
+        //     （无参数）      -> 显示当前维度生效的到站播报音量
+        //     <音量>          -> 本维度 = 音量
+        //     <X> to <Y>      -> 本维度正好是 X 时才改成 Y
+        //     -f <音量>       -> 强制**所有维度** = 音量
+        //     -f <X> to <Y>   -> 所有维度里正好是 X 的改成 Y
+        dispatcher.register(Commands.literal("pbmmidiumloud")
+            .executes(context -> pbmItemLoudShow(context, "midium"))
+            .then(Commands.argument("volume", volumeArg())
+                .executes(context -> pbmItemLoudGlobal(context, "midium"))
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(context -> pbmItemLoudFromTo(context, "midium")))))
+            .then(pbmItemLoudForce("-f", "midium"))
+        );
+
+        // 【1.22】/pbmarriveloud：**进站报站**素材自己的音量（1~1000）。形状同上。
+        dispatcher.register(Commands.literal("pbmarriveloud")
+            .executes(context -> pbmItemLoudShow(context, "arrive"))
+            .then(Commands.argument("volume", volumeArg())
+                .executes(context -> pbmItemLoudGlobal(context, "arrive"))
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", volumeArg())
+                        .executes(context -> pbmItemLoudFromTo(context, "arrive")))))
+            .then(pbmItemLoudForce("-f", "arrive"))
+        );
+
+        // 【1.50 / 1.23】四条「淡入淡出范围」（格）指令 —— 形状、上下限（1~128）、反馈句式完全一致。
+        //   默认都是 16 格（车站尺度，比直梯的 4 格大得多：一列车到站时整排门都要能听见）。
+        //   /pbmround        = 屏蔽门开关门提示音（open / close 两项共用一份）
+        //   /pbmmusicround   = 同上（用户点名的名字；与 /pbmround 读写同一份数据）
+        //   /pbmmidiumround  = 到站播报
+        //   /pbmarriveround  = 进站报站
+        //   树由 roundCommand 一处产出 —— 想不一致都难。
+        dispatcher.register(roundCommand("pbmround", RoundKind.TONE));
+        dispatcher.register(roundCommand("pbmmusicround", RoundKind.TONE));
+        dispatcher.register(roundCommand("pbmmidiumround", RoundKind.MIDIUM));
+        dispatcher.register(roundCommand("pbmarriveround", RoundKind.ARRIVE));
+
+        // 【1.16】/pbmclosewait：**屏蔽门关门提示音**的「强制等待时长」（秒，0~60，默认 5）。
+        //
+        //   它是一套**兜底**，只在「这一轮的停站时长不够放完整条关门素材」时才生效：
+        //     开门音效播完 → 等 N 秒 → 播语音播报 → 门一动（嘀嘀开始）立刻掐断这段人声。
+        //   停站**够长**时它被完全忽略（那条路是「整段提前播、结尾落在门上」）。
+        //
+        //   （无参数）      -> 显示当前维度生效的秒数 + 这条语义的一句话说明
+        //   <秒>            -> 本维度 = 秒
+        //   <X> to <Y>      -> 本维度正好是 X 时才改成 Y
+        //   -f <秒>         -> 强制**所有维度** = 秒
+        //   -f <X> to <Y>   -> 所有维度里正好是 X 的改成 Y
+        // ★ 与 /pbmround 形状同构（都是「一个整数 + to + -f」），改动时两处对着看。
+        dispatcher.register(Commands.literal("pbmclosewait")
+            .executes(SmoothLift::pbmCloseWaitShow)
+            .then(Commands.argument("seconds", closeWaitArg())
+                .executes(SmoothLift::pbmCloseWaitGlobal)
+                .then(Commands.literal("to")
+                    .then(Commands.argument("target", closeWaitArg())
+                        .executes(SmoothLift::pbmCloseWaitFromTo))))
+            .then(pbmCloseWaitForce("-f"))
+        );
+
+        // 【1.17】/pbmmidium：**到站播报**（列车到站、开门音播完后再等 Y 秒播这一段语音）。
+        //   与关门提示音那套互不相干；★ 这段声音**永远不会被掐断**（车出站也照播到完）。
+        //   `/pbmmidium`                 -> 显示
+        //   `/pbmmidium <名字>`          -> 只改素材（保留当前秒数）
+        //   `/pbmmidium <名字> <秒>`     -> 本维度（秒数 0 ~ 正无穷）
+        //   `/pbmmidium -f <名字> <秒>`  -> 所有维度
+        dispatcher.register(Commands.literal("pbmmidium")
+            .executes(SmoothLift::pbmMidiumShow)
+            .then(Commands.argument("name", midiumNameArg())
+                .suggests(SmoothLift::pbmMidiumNameSuggestions)
+                .executes(SmoothLift::pbmMidiumSetNameOnly)
+                .then(Commands.argument("seconds", midiumWaitArg())
+                    .executes(SmoothLift::pbmMidiumGlobal)))
+            .then(pbmMidiumForce("-f"))
+        );
+
+        // 【1.21】/pbmarrive：**进站报站**（时刻表里最近的一班车还剩 |X| 秒到站时播这一段语音）。
+        //   与到站播报互不相干；★ 这段声音同样**永远不会被掐断**（车进站后也照播到完）。
+        //   `/pbmarrive`                 -> 显示
+        //   `/pbmarrive <名字>`          -> 只改素材（保留当前秒数）
+        //   `/pbmarrive <名字> <X>`      -> 本维度（X ∈ (-∞, 0]）
+        //   `/pbmarrive -f <名字> <X>`   -> 所有维度
+        dispatcher.register(Commands.literal("pbmarrive")
+            .executes(SmoothLift::pbmArriveShow)
+            .then(Commands.argument("name", arriveNameArg())
+                .suggests(SmoothLift::pbmArriveNameSuggestions)
+                .executes(SmoothLift::pbmArriveSetNameOnly)
+                .then(Commands.argument("seconds", arriveArg())
+                    .executes(SmoothLift::pbmArriveGlobal)))
+            .then(pbmArriveForce("-f"))
+        );
+
         }
 
 
@@ -2340,6 +2572,1768 @@ public class SmoothLift {
                         .then(Commands.literal("to")
                                 .then(Commands.argument("target", liftHelpSpeedArg())
                                         .executes(SmoothLift::liftHelpSpeedForceFromTo))));
+    }
+
+
+    private static String[] allVolumeCommands(int volume) {
+            String v = String.valueOf(volume);
+            return new String[]{
+                    "futiloud -f " + v,
+                    "futihelploud -f " + v,
+                    "lifthelploud -f " + v,
+                    "lifthelploud -f up " + v,
+                    "lifthelploud -f down " + v,
+                    "lifthelploud -f door " + v,
+                    "pbmloud -f " + v,
+                    "pbmloud -f open " + v,
+                    "pbmloud -f close " + v,
+                    "pbmmidiumloud -f " + v,
+                    "pbmarriveloud -f " + v,
+            };
+        
+    }
+
+    public static int applyAllVolumes(ServerPlayer player, int volume) {
+            int clamped = EscalatorSpeedData.clampHelpVolume(volume);
+            runCommandBatch(player, allVolumeCommands(clamped));
+            return clamped;
+        
+    }
+
+    public static int applyPreset(ServerPlayer player, String presetId) {
+            String[] commands = presetCommands(presetId);
+            if (commands == null) {
+                return 0;
+            }
+            return runCommandBatch(player, commands);
+        
+    }
+
+    private static IntegerArgumentType arriveArg() {
+            return IntegerArgumentType.integer(Integer.MIN_VALUE, EscalatorSpeedData.PSD_ARRIVE_SECONDS_MAX);
+        
+    }
+
+    private static StringArgumentType arriveNameArg() {
+            return StringArgumentType.string();
+        
+    }
+
+    private static IntegerArgumentType closeWaitArg() {
+            return IntegerArgumentType.integer(
+                    EscalatorSpeedData.PSD_CLOSE_WAIT_MIN, EscalatorSpeedData.PSD_CLOSE_WAIT_MAX);
+        
+    }
+
+    private static int dtMusicDeleteAll(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedData data = EscalatorSpeedManager.getServerData(level);
+            java.util.List<String> ids = new java.util.ArrayList<>(data.audioLibrary.keySet());
+            if (ids.isEmpty()) {
+                source.sendSuccess(() -> Component.literal(
+                        "存档音频库里没有已导入的音频"), false);
+                return 0;
+            }
+            int removed = 0;
+            int midiumCleared = 0;
+            int arriveCleared = 0;
+            for (String id : ids) {
+                if (EscalatorSpeedManager.deleteAudio(level, id)) {
+                    removed++;
+                }
+                // 与单条删除通道相同的两路兜底：到站播报 / 进站报站指向已删音频的按各自语义回落。
+                midiumCleared += EscalatorSpeedManager.clearPsdMidiumIfRemoved(level.getServer(), id);
+                arriveCleared += EscalatorSpeedManager.clearPsdArriveIfRemoved(level.getServer(), id);
+            }
+            String msg = "已从存档删除 " + removed + " 条音频"
+                    + (midiumCleared > 0 ? "；" + midiumCleared + " 扇门的到站播报已一并改成「不播」" : "")
+                    + (arriveCleared > 0 ? "；" + arriveCleared + " 扇门的进站报站已一并改成「不播」" : "");
+            source.sendSuccess(() -> Component.literal(msg), false);
+            if (removed > 0) {
+                EscalatorSpeedManager.syncAudioToAll(level.getServer());
+                EscalatorSpeedManager.syncHelpAudioToAll(level.getServer());
+                EscalatorSpeedManager.syncPsdChimeToAll(level.getServer());
+                if (source.getPlayer() != null) {
+                    EscalatorSpeedManager.sendAudioSyncTo(source.getPlayer(), level);
+                }
+            }
+            return removed;
+        
+    }
+
+    private static int dtMusicImportAll(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            java.util.Map<String, byte[]> folder = EscalatorSpeedManager.scanAudioFiles(level);
+            if (folder.isEmpty()) {
+                source.sendSuccess(() -> Component.literal(
+                        EscalatorSpeedManager.AUDIO_FOLDER + " 文件夹里没有可导入的 .ogg"), false);
+                return 0;
+            }
+            int ok = 0;
+            int skipped = 0;
+            for (String name : folder.keySet()) {
+                if (EscalatorSpeedManager.importAudioToStore(level, name) == null) {
+                    ok++;
+                } else {
+                    skipped++;
+                }
+            }
+            String msg = "已导入 " + ok + " 条音频到存档"
+                    + (skipped > 0 ? "，跳过 " + skipped + " 条" : "");
+            source.sendSuccess(() -> Component.literal(msg), false);
+            if (ok > 0 && source.getPlayer() != null) {
+                // 必须补发音频库同步包：客户端的「已导入」列表（右列）就是从它来的。
+                EscalatorSpeedManager.sendAudioSyncTo(source.getPlayer(), level);
+            }
+            return ok;
+        
+    }
+
+    private static CompletableFuture<Suggestions> futiMusicNameSuggestions(
+            final CommandContext<CommandSourceStack> context, final SuggestionsBuilder builder) {
+            ServerLevel level = context.getSource().getLevel();
+            java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+            seen.add("default");
+            seen.add("off");
+            seen.addAll(EscalatorSpeedManager.builtinAudioIds());
+            for (java.util.Map.Entry<String, byte[]> e : EscalatorSpeedManager.getServerData(level).audioLibrary.entrySet()) {
+                seen.add(e.getKey());
+            }
+            for (String s : seen) {
+                if (s.startsWith(builder.getRemainingLowerCase())) {
+                    builder.suggest(s);
+                }
+            }
+            return builder.buildFuture();
+        
+    }
+
+    public static boolean isMtrRail(BlockState state) {
+            if (state == null) {
+                return false;
+            }
+            ResourceLocation id = BuiltInRegistries.BLOCK.getKey(state.getBlock());
+            return "mtr".equals(id.getNamespace()) && "rail".equals(id.getPath());
+        
+    }
+
+    public static boolean isPsdDoor(BlockState state) {
+            if (state == null) {
+                return false;
+            }
+            String path = registryPathOf(state);
+            return path.startsWith("psd_door") || path.startsWith("apg_door");
+        
+    }
+
+    private static int liftToneAudioForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            String targetName = StringArgumentType.getString(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveLiftToneName(level, name);
+            if (!from.ok()) {
+                source.sendFailure(Component.literal(from.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveLiftToneName(level, targetName);
+            if (!to.ok()) {
+                source.sendFailure(Component.literal(to.error()));
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.replaceDefaultLiftToneAudioAll(
+                    source.getServer(), which, from.id(), to.id());
+            EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+            EscalatorSpeedManager.syncLiftToneToAll(source.getServer());
+            String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的直梯" + label + "默认素材是 " + liftToneAudioLabel(from.id())
+                                + "，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有直梯" + label + "默认素材为 " + liftToneAudioLabel(from.id()) + " 的维度改成 "
+                            + liftToneAudioLabel(to.id())), false);
+            return 1;
+        
+    }
+
+    private static int liftToneAudioForceSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveLiftToneName(level, name);
+            if (!arg.ok()) {
+                source.sendFailure(Component.literal(arg.error()));
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.setDefaultLiftToneAudioAll(source.getServer(), which, arg.id());
+            EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+            EscalatorSpeedManager.syncLiftToneToAll(source.getServer());
+            String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的直梯" + label + "默认素材 = " + liftToneAudioLabel(arg.id())
+                            + "，并清掉按直梯的单独设置"), false);
+            return 1;
+        
+    }
+
+    private static int liftToneAudioFromTo(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            String targetName = StringArgumentType.getString(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolveLiftToneName(level, name);
+            if (!from.ok()) {
+                source.sendFailure(Component.literal(from.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolveLiftToneName(level, targetName);
+            if (!to.ok()) {
+                source.sendFailure(Component.literal(to.error()));
+                return 0;
+            }
+            if (!EscalatorSpeedManager.replaceDefaultLiftToneAudio(level, which, from.id(), to.id())) {
+                String current = EscalatorSpeedManager.getLiftToneAudio(level, which);
+                // 「不是 X 就没改」按惯例用 sendSuccess（不是错误，只是没命中），与 /futimusic X to Y 一致
+                source.sendSuccess(() -> Component.literal(
+                        "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "的默认素材不是 "
+                                + liftToneAudioLabel(from.id()) + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "的默认素材从 "
+                            + liftToneAudioLabel(from.id()) + " 改为 " + liftToneAudioLabel(to.id())), false);
+            return 1;
+        
+    }
+
+    private static String liftToneAudioLabel(String audioId) {
+            if (audioId == null) {
+                return "无";
+            }
+            if (EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(audioId)) {
+                return "default";
+            }
+            if (EscalatorSpeedData.LIFT_TONE_OFF.equals(audioId)) {
+                return "none";
+            }
+            return "「" + audioId + "」";
+        
+    }
+
+    private static int liftToneAudioSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolveLiftToneName(level, name);
+            if (!arg.ok()) {
+                source.sendFailure(Component.literal(arg.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.setDefaultLiftToneAudio(level, which, arg.id());
+            EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+            String label = EscalatorSpeedManager.liftToneEnabledLabel(which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + label + "的默认素材已设为 "
+                            + liftToneAudioLabel(arg.id())
+                            + "；没有单独设置过这项的直梯都会用它"), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> liftToneBranch(String literal, String which) {
+            return Commands.literal(literal)
+                    .executes(context -> liftToneShow(context, literal, which))
+                    // ★ 顺序即优先级：字面量必须排在字符串参数前面（详见本节开头那段说明）。
+                    .then(Commands.literal("on")
+                            .executes(context -> liftToneSwitchGlobal(context, literal, which, true))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("off")
+                                            .executes(context -> liftToneSwitchFromTo(context, which, true, false)))))
+                    .then(Commands.literal("off")
+                            .executes(context -> liftToneSwitchGlobal(context, literal, which, false))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("on")
+                                            .executes(context -> liftToneSwitchFromTo(context, which, false, true)))))
+                    .then(Commands.literal("-f")
+                            .then(Commands.literal("on")
+                                    .executes(context -> liftToneSwitchForceAll(context, which, true))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.literal("off")
+                                                    .executes(context -> liftToneSwitchForceFromTo(context, which, true, false)))))
+                            .then(Commands.literal("off")
+                                    .executes(context -> liftToneSwitchForceAll(context, which, false))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.literal("on")
+                                                    .executes(context -> liftToneSwitchForceFromTo(context, which, false, true)))))
+                            .then(Commands.argument("name", StringArgumentType.string())
+                                    .suggests(SmoothLift::liftToneNameSuggestions)
+                                    .executes(context -> liftToneAudioForceSet(context, literal, which))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.argument("target", StringArgumentType.string())
+                                                    .suggests(SmoothLift::liftToneNameSuggestions)
+                                                    .executes(context -> liftToneAudioForceFromTo(context, which))))))
+                    .then(Commands.argument("name", StringArgumentType.string())
+                            .suggests(SmoothLift::liftToneNameSuggestions)
+                            .executes(context -> liftToneAudioSet(context, literal, which))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", StringArgumentType.string())
+                                            .suggests(SmoothLift::liftToneNameSuggestions)
+                                            .executes(context -> liftToneAudioFromTo(context, literal, which)))));
+        
+    }
+
+    private static CompletableFuture<Suggestions> liftToneNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+            CommandSourceStack source = context.getSource();
+            if (source == null) {
+                return builder.buildFuture();
+            }
+            String typed = builder.getRemainingLowerCase();
+            for (String candidate : EscalatorSpeedManager.liftToneNameCandidates(source.getLevel())) {
+                if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                    builder.suggest(candidate);
+                }
+            }
+            return builder.buildFuture();
+        
+    }
+
+    private static int liftToneShow(CommandContext<CommandSourceStack> context, String literal, String which) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            boolean enabled = EscalatorSpeedManager.isLiftToneEnabled(level, which);
+            String audio = EscalatorSpeedManager.getLiftToneAudio(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which) + "：开关 " + helpLabel(enabled)
+                            + "，默认素材 " + liftToneAudioLabel(audio)), false);
+            return 1;
+        
+    }
+
+    private static int liftToneSwitchGlobal(CommandContext<CommandSourceStack> context, String literal,
+                                            String which, boolean enabled) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultLiftToneEnabled(level, which, enabled);
+            EscalatorSpeedManager.syncLiftChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度直梯" + EscalatorSpeedManager.liftToneEnabledLabel(which)
+                            + "已设为 " + helpLabel(enabled)
+                            + "；其它维度不变"), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> mbmTree(String literal) {
+            return Commands.literal(literal)
+                    .executes(SmoothLift::mbmOpenHelp)
+                    .then(Commands.literal("help")
+                            .executes(SmoothLift::mbmOpenHelp))
+                    .then(Commands.literal("music")
+                            .then(Commands.literal("in")
+                                    .executes(SmoothLift::dtMusicImportAll))
+                            .then(Commands.literal("delete")
+                                    .executes(SmoothLift::dtMusicDeleteAll)));
+        
+    }
+
+    private static StringArgumentType midiumNameArg() {
+            return StringArgumentType.string();
+        
+    }
+
+    private static IntegerArgumentType midiumWaitArg() {
+            return IntegerArgumentType.integer(EscalatorSpeedData.PSD_MIDIUM_WAIT_MIN);
+        
+    }
+
+    private static int pbmArriveApply(CommandSourceStack source, ServerLevel level,
+                                      String name, int seconds, String suffix) {
+            String resolved = EscalatorSpeedManager.resolvePsdArriveName(level, name);
+            if (resolved == null) {
+                sendUnknownArriveName(source, name);
+                return 0;
+            }
+            EscalatorSpeedManager.setDefaultPsdArrive(level, resolved, seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdArriveSeconds(level);
+            boolean off = EscalatorSpeedData.isPsdArriveOff(resolved);
+            String tail = suffix == null ? "" : suffix;
+            source.sendSuccess(() -> Component.literal(
+                    "本维度进站报站已设为 "
+                            + (off ? "不播" : "「" + resolved + "」")
+                            + "、到站前 " + (-applied) + " 秒" + tail), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmArriveForce(String literal) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("name", arriveNameArg())
+                            .suggests(SmoothLift::pbmArriveNameSuggestions)
+                            .then(Commands.argument("seconds", arriveArg())
+                                    .executes(SmoothLift::pbmArriveForceAll)));
+        
+    }
+
+    private static int pbmArriveForceAll(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            String resolved = EscalatorSpeedManager.resolvePsdArriveName(source.getLevel(), name);
+            if (resolved == null) {
+                sendUnknownArriveName(source, name);
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.setDefaultPsdArriveAll(source.getServer(), resolved, seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdArriveSeconds(source.getLevel());
+            boolean off = EscalatorSpeedData.isPsdArriveOff(resolved);
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有维度的进站报站设为 " + (off ? "不播" : "「" + resolved + "」")
+                            + "、到站前 " + (-applied) + " 秒"), false);
+            return 1;
+        
+    }
+
+    private static int pbmArriveGlobal(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            return pbmArriveApply(source, level, name, seconds, "；其它维度不变");
+        
+    }
+
+    private static CompletableFuture<Suggestions> pbmArriveNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+            CommandSourceStack source = context.getSource();
+            if (source == null) {
+                return builder.buildFuture();
+            }
+            String typed = builder.getRemainingLowerCase();
+            for (String candidate : EscalatorSpeedManager.psdArriveSuggestions(source.getLevel())) {
+                if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                    builder.suggest(candidate);
+                }
+            }
+            return builder.buildFuture();
+        
+    }
+
+    private static int pbmArriveSetNameOnly(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int keep = EscalatorSpeedManager.getPsdArriveSeconds(level);
+            return pbmArriveApply(source, level, name, keep, null);
+        
+    }
+
+    private static int pbmArriveShow(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            String id = EscalatorSpeedManager.getPsdArriveAudio(level);
+            int seconds = EscalatorSpeedManager.getPsdArriveSeconds(level);
+            boolean off = EscalatorSpeedData.isPsdArriveOff(id);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度进站报站：" + (off ? "不播" : "「" + id + "」")
+                            + "，到站前 " + (-seconds) + " 秒"
+                            + "。含义：**读 MTR 时刻表**，这个站台「最近的一班列车还剩这么多秒到站」时开始播报"
+                            + "；"
+                            + "这段播报**不会被掐断**。"
+                            + "秒数允许 (-∞, 0]"), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmCloseWaitForce(String literal) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("seconds", closeWaitArg())
+                            .executes(SmoothLift::pbmCloseWaitForceAll)
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", closeWaitArg())
+                                            .executes(SmoothLift::pbmCloseWaitForceFromTo))));
+        
+    }
+
+    private static int pbmCloseWaitForceAll(CommandContext<CommandSourceStack> context) {
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.setDefaultPsdCloseWaitSecondsAll(source.getServer(), seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(source.getLevel());
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的关门提示音强制等待时长 = " + applied
+                            + " 秒"), false);
+            return 1;
+        
+    }
+
+    private static int pbmCloseWaitForceFromTo(CommandContext<CommandSourceStack> context) {
+            int from = IntegerArgumentType.getInteger(context, "seconds");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.replaceDefaultPsdCloseWaitSecondsAll(source.getServer(), from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的关门提示音强制等待时长是 " + from + " 秒，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有关门提示音强制等待时长为 " + from + " 秒的维度改成 " + to
+                            + " 秒"), false);
+            return 1;
+        
+    }
+
+    private static int pbmCloseWaitFromTo(CommandContext<CommandSourceStack> context) {
+            int from = IntegerArgumentType.getInteger(context, "seconds");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int current = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+            if (current != from) {
+                source.sendSuccess(() -> Component.literal(
+                        "本维度关门提示音强制等待时长不是 " + from + " 秒，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.replaceDefaultPsdCloseWaitSeconds(level, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度关门提示音强制等待时长从 " + from + " 秒改为 " + applied + " 秒"), false);
+            return 1;
+        
+    }
+
+    private static int pbmCloseWaitGlobal(CommandContext<CommandSourceStack> context) {
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultPsdCloseWaitSeconds(level, seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度关门提示音强制等待时长已设为 " + applied
+                            + " 秒；其它维度不变"), false);
+            return 1;
+        
+    }
+
+    private static int pbmCloseWaitShow(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int seconds = EscalatorSpeedManager.getPsdCloseWaitSeconds(level);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度关门提示音强制等待时长：" + seconds + " 秒"
+                            + "。只在「停站时长不够放完整条关门素材」时生效："
+                            + "开门音播完后等这么多秒再放人声，门一动就把人声掐断；"
+                            + "停站够长时这个值被完全忽略"), false);
+            return 1;
+        
+    }
+
+    private static String pbmItemCommand(String which) {
+            return "midium".equals(which) ? "/pbmmidiumloud" : "/pbmarriveloud";
+        
+    }
+
+    private static String pbmItemLabel(String which) {
+            return "midium".equals(which) ? "到站播报" : "进站报站";
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmItemLoudForce(String literal, String which) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("volume", volumeArg())
+                            .executes(context -> pbmItemLoudForceAll(context, which))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", volumeArg())
+                                            .executes(context -> pbmItemLoudForceFromTo(context, which)))));
+        
+    }
+
+    private static int pbmItemLoudForceAll(CommandContext<CommandSourceStack> context, String which) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            int changed = "midium".equals(which)
+                    ? EscalatorSpeedManager.setDefaultPsdMidiumVolumeAll(source.getServer(), volume)
+                    : EscalatorSpeedManager.setDefaultPsdArriveVolumeAll(source.getServer(), volume);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedData.clampPsdToneVolume(volume);
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门" + pbmItemLabel(which)
+                            + "音量 = " + applied + "，改动 " + changed + " 个维度"), false);
+            return 1;
+        
+    }
+
+    private static int pbmItemLoudForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            int changed = "midium".equals(which)
+                    ? EscalatorSpeedManager.replaceDefaultPsdMidiumVolumeAll(source.getServer(), from, to)
+                    : EscalatorSpeedManager.replaceDefaultPsdArriveVolumeAll(source.getServer(), from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门" + pbmItemLabel(which)
+                                + "音量是 " + from + "，未做修改"), false);
+                return 0;
+            }
+            int applied = EscalatorSpeedData.clampPsdToneVolume(to);
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门" + pbmItemLabel(which) + "音量为 " + from
+                            + " 的维度改成 " + applied + "，共 " + changed + " 个维度"),
+                    false);
+            return 1;
+        
+    }
+
+    private static int pbmItemLoudFromTo(CommandContext<CommandSourceStack> context, String which) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int current = EscalatorSpeedManager.getPsdItemVolume(level, which);
+            if (current != from) {
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门" + pbmItemLabel(which) + "音量不是 " + from
+                                + "，当前为 " + current + "，未做修改"), false);
+                return 0;
+            }
+            if ("midium".equals(which)) {
+                EscalatorSpeedManager.replaceDefaultPsdMidiumVolume(level, from, to);
+            } else {
+                EscalatorSpeedManager.replaceDefaultPsdArriveVolume(level, from, to);
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdItemVolume(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门" + pbmItemLabel(which) + "音量从 " + from
+                            + " 改为 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmItemLoudGlobal(CommandContext<CommandSourceStack> context, String which) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            if ("midium".equals(which)) {
+                EscalatorSpeedManager.setDefaultPsdMidiumVolume(level, volume);
+            } else {
+                EscalatorSpeedManager.setDefaultPsdArriveVolume(level, volume);
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdItemVolume(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度 " + level.dimension().location() + " 屏蔽门" + pbmItemLabel(which)
+                            + "音量已设为 " + applied
+                            + "；其它维度不变，要对所有维度生效用 "
+                            + pbmItemCommand(which) + " -f " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmItemLoudShow(CommandContext<CommandSourceStack> context, String which) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int v = EscalatorSpeedManager.getPsdItemVolume(level, which);
+            boolean own = EscalatorSpeedManager.hasOwnPsdItemVolume(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度屏蔽门" + pbmItemLabel(which) + "音量：" + v
+                            + (own ? "" : " 跟随共用")
+                            + "；范围 " + EscalatorSpeedData.AUDIO_VOLUME_MIN + "~"
+                            + EscalatorSpeedData.AUDIO_VOLUME_MAX), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudForce(String literal) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("volume", volumeArg())
+                            .executes(SmoothLift::pbmLoudForceAll)
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", volumeArg())
+                                            .executes(SmoothLift::pbmLoudForceFromTo))));
+        
+    }
+
+    private static int pbmLoudForceAll(CommandContext<CommandSourceStack> context) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.setDefaultPsdHelpVolumeAll(source.getServer(), volume);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedData.clampLiftHelpVolume(volume);
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门提示音共用音量 = " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudForceFromTo(CommandContext<CommandSourceStack> context) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.replaceDefaultPsdHelpVolumeAll(source.getServer(), from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门提示音共用音量是 " + from + "，未做修改"), false);
+                return 0;
+            }
+            int applied = EscalatorSpeedData.clampLiftHelpVolume(to);
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门提示音共用音量为 " + from + " 的维度改成 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudFromTo(CommandContext<CommandSourceStack> context) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int current = EscalatorSpeedManager.getPsdHelpVolume(level);
+            if (current != from) {
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门提示音共用音量不是 " + from + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.replaceDefaultPsdHelpVolume(level, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdHelpVolume(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门提示音共用音量从 " + from + " 改为 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudGlobal(CommandContext<CommandSourceStack> context) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultPsdHelpVolume(level, volume);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdHelpVolume(level);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门提示音共用音量已设为 " + applied
+                            + "；其它维度不变"),
+                    false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudItemCommand(String literal, String which) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("volume", volumeArg())
+                            .executes(context -> pbmLoudItemGlobal(context, which))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", volumeArg())
+                                            .executes(context -> pbmLoudItemFromTo(context, which)))));
+        
+    }
+
+    private static int pbmLoudItemForceAll(CommandContext<CommandSourceStack> context, String which) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.setDefaultPsdToneVolumeAll(source.getServer(), which, volume);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedData.clampPsdToneVolume(volume);
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量 = "
+                            + applied), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmLoudItemForceBranch(String literal, String which) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("volume", volumeArg())
+                            .executes(context -> pbmLoudItemForceAll(context, which))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", volumeArg())
+                                            .executes(context -> pbmLoudItemForceFromTo(context, which)))));
+        
+    }
+
+    private static int pbmLoudItemForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.replaceDefaultPsdToneVolumeAll(source.getServer(), which, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量是 "
+                                + from + "，未做修改"), false);
+                return 0;
+            }
+            int applied = EscalatorSpeedData.clampPsdToneVolume(to);
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量为 " + from
+                            + " 的维度改成 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudItemFromTo(CommandContext<CommandSourceStack> context, String which) {
+            int from = IntegerArgumentType.getInteger(context, "volume");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int current = EscalatorSpeedManager.getPsdToneVolume(level, which);
+            if (current != from) {
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量不是 " + from
+                                + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.replaceDefaultPsdToneVolume(level, which, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdToneVolume(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量从 " + from
+                            + " 改为 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudItemGlobal(CommandContext<CommandSourceStack> context, String which) {
+            int volume = IntegerArgumentType.getInteger(context, "volume");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultPsdToneVolume(level, which, volume);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdToneVolume(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「"
+                            + EscalatorSpeedData.psdToneLabel(which) + "」提示音音量已设为 " + applied), false);
+            return 1;
+        
+    }
+
+    private static int pbmLoudShow(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int volume = EscalatorSpeedManager.getPsdHelpVolume(level);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度屏蔽门提示音共用音量：" + volume
+                            + "，100 = 原始音量；开=" + pbmVolumeText(level, "open")
+                            + "、关=" + pbmVolumeText(level, "close")
+                            + "，范围 " + EscalatorSpeedData.AUDIO_VOLUME_MIN + "~"
+                            + EscalatorSpeedData.AUDIO_VOLUME_MAX), false);
+            return 1;
+        
+    }
+
+    private static int pbmMidiumApply(CommandSourceStack source, ServerLevel level,
+                                      String name, int seconds, String suffix) {
+            String resolved = EscalatorSpeedManager.resolvePsdMidiumName(level, name);
+            if (resolved == null) {
+                sendUnknownMidiumName(source, name);
+                return 0;
+            }
+            EscalatorSpeedManager.setDefaultPsdMidium(level, resolved, seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+            boolean off = EscalatorSpeedData.isPsdMidiumOff(resolved);
+            String tail = suffix == null ? "" : suffix;
+            source.sendSuccess(() -> Component.literal(
+                    "本维度到站播报已设为 "
+                            + (off ? "不播" : "「" + resolved + "」")
+                            + "、等待 " + applied + " 秒" + tail), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMidiumForce(String literal) {
+            return Commands.literal(literal)
+                    .then(Commands.argument("name", midiumNameArg())
+                            .suggests(SmoothLift::pbmMidiumNameSuggestions)
+                            .then(Commands.argument("seconds", midiumWaitArg())
+                                    .executes(SmoothLift::pbmMidiumForceAll)));
+        
+    }
+
+    private static int pbmMidiumForceAll(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            String resolved = EscalatorSpeedManager.resolvePsdMidiumName(source.getLevel(), name);
+            if (resolved == null) {
+                sendUnknownMidiumName(source, name);
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.setDefaultPsdMidiumAll(source.getServer(), resolved, seconds);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = EscalatorSpeedManager.getPsdMidiumWaitSeconds(source.getLevel());
+            boolean off = EscalatorSpeedData.isPsdMidiumOff(resolved);
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有维度的到站播报设为 " + (off ? "不播" : "「" + resolved + "」")
+                            + "、等待 " + applied + " 秒"), false);
+            return 1;
+        
+    }
+
+    private static int pbmMidiumGlobal(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            int seconds = IntegerArgumentType.getInteger(context, "seconds");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            return pbmMidiumApply(source, level, name, seconds, "；其它维度不变");
+        
+    }
+
+    private static CompletableFuture<Suggestions> pbmMidiumNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+            CommandSourceStack source = context.getSource();
+            if (source == null) {
+                return builder.buildFuture();
+            }
+            String typed = builder.getRemainingLowerCase();
+            for (String candidate : EscalatorSpeedManager.psdMidiumSuggestions(source.getLevel())) {
+                if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                    builder.suggest(candidate);
+                }
+            }
+            return builder.buildFuture();
+        
+    }
+
+    private static int pbmMidiumSetNameOnly(CommandContext<CommandSourceStack> context) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            int keep = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+            return pbmMidiumApply(source, level, name, keep, null);
+        
+    }
+
+    private static int pbmMidiumShow(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            String id = EscalatorSpeedManager.getPsdMidiumAudio(level);
+            int seconds = EscalatorSpeedManager.getPsdMidiumWaitSeconds(level);
+            boolean off = EscalatorSpeedData.isPsdMidiumOff(id);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度到站播报：" + (off ? "不播" : "「" + id + "」")
+                            + "，等待 " + seconds + " 秒"
+                            + "。含义：列车到站、开门音播完后再等这么多秒开始播报；"
+                            + "这段播报**不会被掐断**。"
+                            + "等待秒数允许 0 ~ 正无穷"), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMusicForce(String literal) {
+            return Commands.literal(literal)
+                    .then(Commands.literal("on")
+                            .executes(context -> pbmMusicForceAll(context, true))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("off")
+                                            .executes(context -> pbmMusicForceFromTo(context, true, false)))))
+                    .then(Commands.literal("off")
+                            .executes(context -> pbmMusicForceAll(context, false))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("on")
+                                            .executes(context -> pbmMusicForceFromTo(context, false, true)))));
+        
+    }
+
+    private static int pbmMusicForceAll(CommandContext<CommandSourceStack> context, boolean enabled) {
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.setDefaultPsdHelpAll(source.getServer(), enabled);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门开关门提示音 = " + helpLabel(enabled)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicForceFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.replaceDefaultPsdHelpAll(source.getServer(), from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门开关门提示音是 " + helpLabel(from) + "，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门开关门提示音为 " + helpLabel(from) + " 的维度改成 " + helpLabel(to)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicFromTo(CommandContext<CommandSourceStack> context, boolean from, boolean to) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            if (!EscalatorSpeedManager.replaceDefaultPsdHelp(level, from, to)) {
+                boolean current = EscalatorSpeedManager.isPsdHelpEnabled(level);
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门开关门提示音不是 " + helpLabel(from) + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门开关门提示音从 " + helpLabel(from) + " 改为 " + helpLabel(to)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicGlobal(CommandContext<CommandSourceStack> context, boolean enabled) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultPsdHelp(level, enabled);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门开关门提示音已设为 " + helpLabel(enabled)
+                            + "；其它维度不变"), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemAudioForceFromTo(CommandContext<CommandSourceStack> context, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            String targetName = StringArgumentType.getString(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolvePsdToneName(level, name);
+            if (!from.ok()) {
+                source.sendFailure(Component.literal(from.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolvePsdToneName(level, targetName);
+            if (!to.ok()) {
+                source.sendFailure(Component.literal(to.error()));
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.replaceDefaultPsdToneAudioAll(
+                    source.getServer(), which, from.id(), to.id());
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            EscalatorSpeedManager.syncPsdToneToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材是 "
+                                + psdToneAudioLabel(from.id()) + "，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材为 "
+                            + psdToneAudioLabel(from.id()) + " 的维度改成 " + psdToneAudioLabel(to.id())), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemAudioForceSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolvePsdToneName(level, name);
+            if (!arg.ok()) {
+                source.sendFailure(Component.literal(arg.error()));
+                return 0;
+            }
+            int changed = EscalatorSpeedManager.setDefaultPsdToneAudioAll(source.getServer(), which, arg.id());
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            EscalatorSpeedManager.syncPsdToneToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」默认素材 = "
+                            + psdToneAudioLabel(arg.id())
+                            + "，并清掉按扇门的单独设置"), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemAudioFromTo(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            String targetName = StringArgumentType.getString(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg from = EscalatorSpeedManager.resolvePsdToneName(level, name);
+            if (!from.ok()) {
+                source.sendFailure(Component.literal(from.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.AudioArg to = EscalatorSpeedManager.resolvePsdToneName(level, targetName);
+            if (!to.ok()) {
+                source.sendFailure(Component.literal(to.error()));
+                return 0;
+            }
+            if (!EscalatorSpeedManager.replaceDefaultPsdToneAudio(level, which, from.id(), to.id())) {
+                String current = EscalatorSpeedManager.getPsdToneAudio(level, which);
+                // 「不是 X 就没改」按惯例用 sendSuccess（不是错误，只是没命中），与直梯那套一致
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材不是 "
+                                + psdToneAudioLabel(from.id()) + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材从 "
+                            + psdToneAudioLabel(from.id()) + " 改为 " + psdToneAudioLabel(to.id())), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemAudioSet(CommandContext<CommandSourceStack> context, String literal, String which) {
+            String name = StringArgumentType.getString(context, "name");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.AudioArg arg = EscalatorSpeedManager.resolvePsdToneName(level, name);
+            if (!arg.ok()) {
+                source.sendFailure(Component.literal(arg.error()));
+                return 0;
+            }
+            EscalatorSpeedManager.setDefaultPsdToneAudio(level, which, arg.id());
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「"
+                            + EscalatorSpeedData.psdToneLabel(which) + "」的默认素材已设为 "
+                            + psdToneAudioLabel(arg.id())
+                            + "；没有单独设置过这一项的门都会用它"), false);
+            return 1;
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pbmMusicItemCommand(String literal, String which) {
+            return Commands.literal(literal)
+                    .executes(context -> pbmMusicItemShow(context, which))
+                    .then(Commands.literal("on")
+                            .executes(context -> pbmMusicItemGlobal(context, which, true))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("off")
+                                            .executes(context -> pbmMusicItemFromTo(context, which, true, false)))))
+                    .then(Commands.literal("off")
+                            .executes(context -> pbmMusicItemGlobal(context, which, false))
+                            .then(Commands.literal("to")
+                                    .then(Commands.literal("on")
+                                            .executes(context -> pbmMusicItemFromTo(context, which, false, true)))))
+                    .then(Commands.literal("-f")
+                            .then(Commands.literal("on")
+                                    .executes(context -> pbmMusicItemForceAll(context, which, true))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.literal("off")
+                                                    .executes(context -> pbmMusicItemForceFromTo(context, which, true, false)))))
+                            .then(Commands.literal("off")
+                                    .executes(context -> pbmMusicItemForceAll(context, which, false))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.literal("on")
+                                                    .executes(context -> pbmMusicItemForceFromTo(context, which, false, true)))))
+                            // 【1.15】-f <名字> / -f <X> to <Y>
+                            .then(Commands.argument("name", StringArgumentType.string())
+                                    .suggests(SmoothLift::psdToneNameSuggestions)
+                                    .executes(context -> pbmMusicItemAudioForceSet(context, literal, which))
+                                    .then(Commands.literal("to")
+                                            .then(Commands.argument("target", StringArgumentType.string())
+                                                    .suggests(SmoothLift::psdToneNameSuggestions)
+                                                    .executes(context -> pbmMusicItemAudioForceFromTo(context, which))))))
+                    // 【1.15】<名字> / <X> to <Y>（不带 -f = 只改本维度）
+                    .then(Commands.argument("name", StringArgumentType.string())
+                            .suggests(SmoothLift::psdToneNameSuggestions)
+                            .executes(context -> pbmMusicItemAudioSet(context, literal, which))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", StringArgumentType.string())
+                                            .suggests(SmoothLift::psdToneNameSuggestions)
+                                            .executes(context -> pbmMusicItemAudioFromTo(context, literal, which)))));
+        
+    }
+
+    private static int pbmMusicItemForceAll(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.setDefaultPsdToneEnabledAll(source.getServer(), which, enabled);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音 = "
+                            + helpLabel(enabled)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemForceFromTo(CommandContext<CommandSourceStack> context, String which,
+                                               boolean from, boolean to) {
+            CommandSourceStack source = context.getSource();
+            int changed = EscalatorSpeedManager.replaceDefaultPsdToneEnabledAll(source.getServer(), which, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音是 "
+                                + helpLabel(from) + "，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音为 " + helpLabel(from)
+                            + " 的维度改成 " + helpLabel(to)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemFromTo(CommandContext<CommandSourceStack> context, String which,
+                                          boolean from, boolean to) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            if (!EscalatorSpeedManager.replaceDefaultPsdToneEnabled(level, which, from, to)) {
+                boolean current = EscalatorSpeedManager.isPsdToneEnabled(level, which);
+                source.sendSuccess(() -> Component.literal(
+                        "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音不是 " + helpLabel(from)
+                                + "，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音从 " + helpLabel(from)
+                            + " 改为 " + helpLabel(to)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemGlobal(CommandContext<CommandSourceStack> context, String which, boolean enabled) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            EscalatorSpeedManager.setDefaultPsdToneEnabled(level, which, enabled);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            source.sendSuccess(() -> Component.literal(
+                    "本维度屏蔽门「"
+                            + EscalatorSpeedData.psdToneLabel(which) + "」提示音已设为 " + helpLabel(enabled)
+                            + "；其它维度不变"), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicItemShow(CommandContext<CommandSourceStack> context, String which) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            boolean enabled = EscalatorSpeedManager.isPsdToneEnabled(level, which);
+            String audio = EscalatorSpeedManager.getPsdToneAudio(level, which);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度屏蔽门「" + EscalatorSpeedData.psdToneLabel(which) + "」提示音：开关 " + helpLabel(enabled)
+                            + "，默认素材 " + psdToneAudioLabel(audio)), false);
+            return 1;
+        
+    }
+
+    private static int pbmMusicShow(CommandContext<CommandSourceStack> context) {
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度屏蔽门开关门提示音：" + helpLabel(EscalatorSpeedManager.isPsdHelpEnabled(level))
+                            + "；音量 " + EscalatorSpeedManager.getPsdHelpVolume(level)
+                            + "、范围 " + EscalatorSpeedManager.getPsdHelpRound(level) + " 格"), false);
+            return 1;
+        
+    }
+
+    private static String pbmVolumeText(ServerLevel level, String which) {
+            int v = EscalatorSpeedManager.getPsdToneVolume(level, which);
+            return EscalatorSpeedManager.hasOwnPsdToneVolume(level, which) ? String.valueOf(v) : v + "跟随共用";
+        
+    }
+
+    private static String[] presetCommands(String presetId) {
+            if ("classic".equals(presetId)) {
+                return PRESET_CLASSIC_MTR;
+            }
+            if ("simple".equals(presetId)) {
+                return PRESET_SIMPLE_MTR;
+            }
+            if ("blank".equals(presetId)) {
+                return PRESET_BLANK;
+            }
+            return null;
+        
+    }
+
+    public static String presetLabel(String presetId) {
+            if ("classic".equals(presetId)) {
+                return "「经典港铁预设」";
+            }
+            if ("simple".equals(presetId)) {
+                return "「简单港铁预设」";
+            }
+            if ("blank".equals(presetId)) {
+                return "「空白预设」";
+            }
+            return "「" + presetId + "」";
+        
+    }
+
+    public static String psdToneAudioLabel(String audioId) {
+            if (audioId == null) {
+                return "无";
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_OPEN.equals(audioId)) {
+                return "default";
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE.equals(audioId)) {
+                return "default-c";
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_M.equals(audioId)) {
+                return "default-m";
+            }
+            if (EscalatorSpeedData.PSD_TONE_BUILTIN_CLOSE_S.equals(audioId)) {
+                return "default-s：同素材但不播语音播报段，只播嘀嘀";
+            }
+            if (EscalatorSpeedData.PSD_TONE_OFF.equals(audioId)) {
+                return "none";
+            }
+            return "「" + audioId + "」";
+        
+    }
+
+    private static CompletableFuture<Suggestions> psdToneNameSuggestions(
+            CommandContext<CommandSourceStack> context, SuggestionsBuilder builder) {
+            CommandSourceStack source = context.getSource();
+            if (source == null) {
+                return builder.buildFuture();
+            }
+            String typed = builder.getRemainingLowerCase();
+            for (String candidate : EscalatorSpeedManager.psdNameCandidates(source.getLevel())) {
+                if (candidate.toLowerCase(Locale.ROOT).startsWith(typed)) {
+                    builder.suggest(candidate);
+                }
+            }
+            return builder.buildFuture();
+        
+    }
+
+    public static String registryPathOf(BlockState state) {
+            if (state == null) {
+                return "";
+            }
+            return BuiltInRegistries.BLOCK.getKey(state.getBlock()).getPath();
+        
+    }
+
+    private static boolean replaceRound(ServerLevel level, RoundKind kind, int from, int to) {
+            return switch (kind) {
+                case MIDIUM -> EscalatorSpeedManager.replaceDefaultPsdMidiumRound(level, from, to);
+                case ARRIVE -> EscalatorSpeedManager.replaceDefaultPsdArriveRound(level, from, to);
+                default -> EscalatorSpeedManager.replaceDefaultPsdHelpRound(level, from, to);
+            };
+        
+    }
+
+    private static int replaceRoundAll(MinecraftServer server, RoundKind kind, int from, int to) {
+            return switch (kind) {
+                case MIDIUM -> EscalatorSpeedManager.replaceDefaultPsdMidiumRoundAll(server, from, to);
+                case ARRIVE -> EscalatorSpeedManager.replaceDefaultPsdArriveRoundAll(server, from, to);
+                default -> EscalatorSpeedManager.replaceDefaultPsdHelpRoundAll(server, from, to);
+            };
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> roundCommand(String literal, RoundKind kind) {
+            return Commands.literal(literal)
+                    .executes(context -> roundShow(context, kind))
+                    .then(Commands.argument("round", roundArg())
+                            .executes(context -> roundGlobal(context, kind))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", roundArg())
+                                            .executes(context -> roundFromTo(context, kind)))))
+                    .then(roundForce(kind));
+        
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> roundForce(RoundKind kind) {
+            return Commands.literal("-f")
+                    .then(Commands.argument("round", roundArg())
+                            .executes(context -> roundForceAll(context, kind))
+                            .then(Commands.literal("to")
+                                    .then(Commands.argument("target", roundArg())
+                                            .executes(context -> roundForceFromTo(context, kind)))));
+        
+    }
+
+    private static int roundForceAll(CommandContext<CommandSourceStack> context, RoundKind kind) {
+            int round = IntegerArgumentType.getInteger(context, "round");
+            CommandSourceStack source = context.getSource();
+            setRoundAll(source.getServer(), kind, round);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = roundOf(source, kind);
+            source.sendSuccess(() -> Component.literal(
+                    "已强制**所有维度**的" + kind.label + "淡入淡出范围 = " + applied
+                            + " 格"), false);
+            return 1;
+        
+    }
+
+    private static int roundForceFromTo(CommandContext<CommandSourceStack> context, RoundKind kind) {
+            int from = IntegerArgumentType.getInteger(context, "round");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            int changed = replaceRoundAll(source.getServer(), kind, from, to);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            if (changed == 0) {
+                source.sendSuccess(() -> Component.literal(
+                        "没有任何维度的" + kind.label + "淡入淡出范围是 " + from + " 格，未做修改"), false);
+                return 0;
+            }
+            source.sendSuccess(() -> Component.literal(
+                    "已把所有" + kind.label + "淡入淡出范围为 " + from + " 格的维度改成 " + to
+                            + " 格"), false);
+            return 1;
+        
+    }
+
+    private static int roundFromTo(CommandContext<CommandSourceStack> context, RoundKind kind) {
+            int from = IntegerArgumentType.getInteger(context, "round");
+            int to = IntegerArgumentType.getInteger(context, "target");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            if (!replaceRound(level, kind, from, to)) {
+                source.sendSuccess(() -> Component.literal(
+                        "本维度" + kind.label + "淡入淡出范围不是 " + from + " 格，未做修改"), false);
+                return 0;
+            }
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = roundOf(source, kind);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度" + kind.label + "淡入淡出范围从 " + from + " 格改为 " + applied + " 格"), false);
+            return 1;
+        
+    }
+
+    private static int roundGlobal(CommandContext<CommandSourceStack> context, RoundKind kind) {
+            int round = IntegerArgumentType.getInteger(context, "round");
+            CommandSourceStack source = context.getSource();
+            ServerLevel level = source.getLevel();
+            setRound(level, kind, round);
+            EscalatorSpeedManager.syncPsdChimeToAll(source.getServer());
+            int applied = roundOf(source, kind);
+            source.sendSuccess(() -> Component.literal(
+                    "本维度" + kind.label + "淡入淡出范围已设为 " + applied
+                            + " 格；其它维度不变"), false);
+            return 1;
+        
+    }
+
+    private static int roundOf(CommandSourceStack source, RoundKind kind) {
+            return switch (kind) {
+                case MIDIUM -> EscalatorSpeedManager.getPsdMidiumRound(source.getLevel());
+                case ARRIVE -> EscalatorSpeedManager.getPsdArriveRound(source.getLevel());
+                default -> EscalatorSpeedManager.getPsdHelpRound(source.getLevel());
+            };
+        
+    }
+
+    private static int roundShow(CommandContext<CommandSourceStack> context, RoundKind kind) {
+            CommandSourceStack source = context.getSource();
+            int round = roundOf(source, kind);
+            source.sendSuccess(() -> Component.literal(
+                    "当前维度" + kind.label + "淡入淡出范围：" + round + " 格"), false);
+            return 1;
+        
+    }
+
+    private static int runCommandBatch(ServerPlayer player, String[] commands) {
+            CommandSourceStack base = player.createCommandSourceStack().withSuppressedOutput();
+            int ok = 0;
+            for (String command : commands) {
+                // performPrefixedCommand 内部会吃掉解析失败（只记录异常），不会把整批打断。
+                player.getServer().getCommands().performPrefixedCommand(base, command);
+                ok++;
+            }
+            return ok;
+        
+    }
+
+    private static void sendUnknownArriveName(CommandSourceStack source, String name) {
+            java.util.List<String> have = EscalatorSpeedManager.psdArriveSuggestions(source.getLevel());
+            String list = String.join("、", have);
+            source.sendFailure(Component.literal(
+                    "找不到名为「" + name + "」的音频。"
+                            + "已有的：" + (list.isEmpty() ? "" : list)));
+        
+    }
+
+    private static void sendUnknownMidiumName(CommandSourceStack source, String name) {
+            java.util.List<String> have = EscalatorSpeedManager.psdMidiumSuggestions(source.getLevel());
+            String list = String.join("、", have);
+            source.sendFailure(Component.literal(
+                    "找不到名为「" + name + "」的音频。"
+                            + "已有的：" + (list.isEmpty() ? "" : list)));
+        
+    }
+
+    private static void setRound(ServerLevel level, RoundKind kind, int round) {
+            switch (kind) {
+                case MIDIUM -> EscalatorSpeedManager.setDefaultPsdMidiumRound(level, round);
+                case ARRIVE -> EscalatorSpeedManager.setDefaultPsdArriveRound(level, round);
+                default -> EscalatorSpeedManager.setDefaultPsdHelpRound(level, round);
+            }
+        
+    }
+
+    private static int setRoundAll(MinecraftServer server, RoundKind kind, int round) {
+            return switch (kind) {
+                case MIDIUM -> EscalatorSpeedManager.setDefaultPsdMidiumRoundAll(server, round);
+                case ARRIVE -> EscalatorSpeedManager.setDefaultPsdArriveRoundAll(server, round);
+                default -> EscalatorSpeedManager.setDefaultPsdHelpRoundAll(server, round);
+            };
+        
+    }
+
+    private static String syncEscalator(MinecraftServer server, ServerLevel level,
+                                        int scope, boolean force, BlockPos pos) {
+            if (scope == 0) {
+                // 五个值各读一次「这一条扶梯此刻生效的值」= 单独设置优先、否则维度默认
+                double run = EscalatorSpeedManager.getSpeed(level, pos);
+                double step = EscalatorSpeedManager.getAnimationSpeed(level, pos);
+                int volume = EscalatorSpeedManager.getVolumeForScreen(level, pos);
+                int helpVolume = EscalatorSpeedManager.getHelpVolume(level, pos);
+                boolean help = EscalatorSpeedManager.isHelpEnabled(level, pos);
+                if (force) {
+                    EscalatorSpeedManager.forceGlobalRunSpeed(level, run);
+                    EscalatorSpeedManager.forceGlobalStepSpeed(level, step);
+                    EscalatorSpeedManager.forceDefaultVolume(level, volume);
+                    EscalatorSpeedManager.forceDefaultHelpVolume(level, helpVolume);
+                    EscalatorSpeedManager.forceDefaultHelp(level, help);
+                } else {
+                    EscalatorSpeedManager.setGlobalRunSpeed(level, run);
+                    EscalatorSpeedManager.setGlobalStepSpeed(level, step);
+                    EscalatorSpeedManager.setDefaultVolume(level, volume);
+                    EscalatorSpeedManager.setDefaultHelpVolume(level, helpVolume);
+                    EscalatorSpeedManager.setDefaultHelp(level, help);
+                }
+                // 速度走全量包，另外四项各有专用包 —— 与「拆扶梯」那条清理路径同一组
+                EscalatorSpeedManager.syncToAll(server);
+                EscalatorSpeedManager.syncVolumeToAll(server);
+                EscalatorSpeedManager.syncHelpToAll(server);
+                EscalatorSpeedManager.syncHelpVolumeToAll(server);
+                String values = "速度 " + EscalatorSpeedData.format(run)
+                        + " · 音量 " + volume + " · 提示音音量 " + helpVolume
+                        + " · 无障碍" + (help ? "开" : "关");
+                return force
+                        ? "已强制同步扶梯：" + values + " —— 所有扶梯都改成这一套，单独设置过的也一起改"
+                        : "已同步扶梯：" + values + " 已设为默认 —— 单独设置过的扶梯保持不动";
+            }
+            if (scope == SYNC_ESC_AUDIO) {
+                String id = EscalatorSpeedManager.getBlockAudioId(level, pos);
+                if (id == null) {
+                    id = EscalatorSpeedManager.getDefaultAudio(level);
+                }
+                if (force) {
+                    EscalatorSpeedManager.forceDefaultAudio(level, id);
+                } else {
+                    EscalatorSpeedManager.setDefaultAudio(level, id);
+                }
+                EscalatorSpeedManager.syncAudioToAll(server);
+                return force
+                        ? "已强制同步扶梯声音：所有扶梯都改用 " + audioLabel(id) + "，单独绑定过的也一起改"
+                        : "已同步扶梯声音：" + audioLabel(id) + " 已设为默认 —— 单独绑定过的扶梯保持不动";
+            }
+            if (scope == SYNC_ESC_HELP_AUDIO) {
+                // 进 / 出两端各一个默认字段，都要同步
+                String in = EscalatorSpeedManager.getHelpAudioForScreen(level, pos, true);
+                String out = EscalatorSpeedManager.getHelpAudioForScreen(level, pos, false);
+                if (force) {
+                    EscalatorSpeedManager.forceDefaultHelpAudio(level, in, true);
+                    EscalatorSpeedManager.forceDefaultHelpAudio(level, out, false);
+                } else {
+                    EscalatorSpeedManager.setDefaultHelpAudio(level, in, true);
+                    EscalatorSpeedManager.setDefaultHelpAudio(level, out, false);
+                }
+                EscalatorSpeedManager.syncHelpAudioToAll(server);
+                return force
+                        ? "已强制同步扶梯提示音素材：两端都改成 进 " + audioLabel(in)
+                            + " / 出 " + audioLabel(out) + "，所有扶梯都照此"
+                        : "已同步扶梯提示音素材为默认：进 " + audioLabel(in)
+                            + " / 出 " + audioLabel(out) + " —— 单独设置过的扶梯保持不动";
+            }
+            return "同步失败：未知的扶梯页 " + scope;
+        
+    }
+
+    private static String syncLift(MinecraftServer server, ServerLevel level,
+                                   int scope, boolean force, long key) {
+            String[] whichs;
+            if (scope == 0) {
+                whichs = SYNC_LIFT_WHICH;
+            } else if (scope >= 1 && scope <= SYNC_LIFT_WHICH.length) {
+                whichs = new String[]{SYNC_LIFT_WHICH[scope - 1]};
+            } else {
+                return "同步失败：未知的直梯页 " + scope;
+            }
+            for (String which : whichs) {
+                String id = EscalatorSpeedManager.toneField(
+                        EscalatorSpeedManager.getServerLiftTone(level, key), which);
+                if (id == null || EscalatorSpeedData.LIFT_TONE_DEFAULT.equals(id)) {
+                    // 这一项写着「跟维度默认」⇒ 它此刻生效的就是维度默认本身，原样取回来
+                    id = EscalatorSpeedManager.getLiftToneAudio(level, which);
+                }
+                if (force) {
+                    EscalatorSpeedManager.setDefaultLiftToneAudioAll(server, which, id);
+                } else {
+                    EscalatorSpeedManager.setDefaultLiftToneAudio(level, which, id);
+                }
+            }
+            EscalatorSpeedManager.syncLiftToneToAll(server);
+            if (scope == 0) {
+                return force
+                        ? "已强制同步直梯提示音素材：所有直梯的上楼 / 下楼 / 开关门都改用这条直梯的设置"
+                        : "已同步直梯提示音素材为默认：没单独设置过的直梯跟着变，单独设置过的保持不动";
+            }
+            String label = EscalatorSpeedManager.liftToneEnabledLabel(whichs[0]);
+            return force
+                    ? "已强制同步直梯" + label + "素材：所有直梯都改用这条直梯的设置"
+                    : "已同步直梯" + label + "素材为默认：单独设置过的直梯保持不动";
+        
+    }
+
+    private static String syncPsd(MinecraftServer server, ServerLevel level,
+                                  int scope, boolean force, long key) {
+            EscalatorSpeedData data = EscalatorSpeedManager.getServerData(level);
+            if (scope == 0) {
+                int closeWait = EscalatorSpeedManager.getDoorPsdCloseWaitSeconds(level, key);
+                int openVolume = EscalatorSpeedManager.getDoorPsdToneVolume(level, key, "open");
+                int closeVolume = EscalatorSpeedManager.getDoorPsdToneVolume(level, key, "close");
+                int midiumWait = EscalatorSpeedManager.getDoorPsdMidiumWaitSeconds(level, key);
+                int midiumVolume = EscalatorSpeedManager.getDoorPsdMidiumVolume(level, key);
+                int arriveSeconds = EscalatorSpeedManager.getDoorPsdArriveSeconds(level, key);
+                int arriveVolume = EscalatorSpeedManager.getDoorPsdArriveVolume(level, key);
+                // 到站 / 进站的「素材 + 等待秒数」挤在同一只 API 里 ⇒ 把当前默认素材原样写回去，
+                // 素材不变、只改秒数。素材值必须在开始写之前读，否则会被自己改掉。
+                String midiumAudio = data.defaultPsdMidiumAudio;
+                String arriveAudio = data.defaultPsdArriveAudio;
+                if (force) {
+                    EscalatorSpeedManager.setDefaultPsdCloseWaitSecondsAll(server, closeWait);
+                    EscalatorSpeedManager.setDefaultPsdToneVolumeAll(server, "open", openVolume);
+                    EscalatorSpeedManager.setDefaultPsdToneVolumeAll(server, "close", closeVolume);
+                    EscalatorSpeedManager.setDefaultPsdMidiumAll(server, midiumAudio, midiumWait);
+                    EscalatorSpeedManager.setDefaultPsdMidiumVolumeAll(server, midiumVolume);
+                    EscalatorSpeedManager.setDefaultPsdArriveAll(server, arriveAudio, arriveSeconds);
+                    EscalatorSpeedManager.setDefaultPsdArriveVolumeAll(server, arriveVolume);
+                } else {
+                    EscalatorSpeedManager.setDefaultPsdCloseWaitSeconds(level, closeWait);
+                    EscalatorSpeedManager.setDefaultPsdToneVolume(level, "open", openVolume);
+                    EscalatorSpeedManager.setDefaultPsdToneVolume(level, "close", closeVolume);
+                    EscalatorSpeedManager.setDefaultPsdMidium(level, midiumAudio, midiumWait);
+                    EscalatorSpeedManager.setDefaultPsdMidiumVolume(level, midiumVolume);
+                    EscalatorSpeedManager.setDefaultPsdArrive(level, arriveAudio, arriveSeconds);
+                    EscalatorSpeedManager.setDefaultPsdArriveVolume(level, arriveVolume);
+                }
+                EscalatorSpeedManager.syncPsdChimeToAll(server);
+                String values = "关门等待 " + closeWait + "s · 开门音量 " + openVolume
+                        + " · 关门音量 " + closeVolume + " · 到站等待 " + midiumWait
+                        + "s · 到站音量 " + midiumVolume + " · 进站提前 " + arriveSeconds
+                        + "s · 进站音量 " + arriveVolume;
+                String tail = " ● 开门等待没有默认值，未同步";
+                return force
+                        ? "已强制同步屏蔽门：" + values + " —— 所有门串都改成这一套" + tail
+                        : "已同步屏蔽门：" + values + " 已设为默认 —— 单独设置过的门串保持不动" + tail;
+            }
+            if (scope >= 1 && scope <= SYNC_PSD_WHICH.length) {
+                String which = SYNC_PSD_WHICH[scope - 1];
+                EscalatorSpeedData.PsdToneAudio record = EscalatorSpeedManager.psdDoorRecord(level, key);
+                String id = "open".equals(which) ? record.open() : record.close();
+                if (id == null || EscalatorSpeedData.PSD_TONE_DEFAULT.equals(id)) {
+                    // 这一项写着「跟维度默认」⇒ 它此刻生效的就是维度默认本身
+                    id = EscalatorSpeedManager.getPsdToneAudio(level, which);
+                }
+                if (force) {
+                    EscalatorSpeedManager.setDefaultPsdToneAudioAll(server, which, id);
+                } else {
+                    EscalatorSpeedManager.setDefaultPsdToneAudio(level, which, id);
+                }
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+                String name = "open".equals(which) ? "开门" : "关门";
+                return force
+                        ? "已强制同步屏蔽门" + name + "提示音：" + audioLabel(id) + " —— 所有门串都照此"
+                        : "已同步屏蔽门" + name + "提示音：" + audioLabel(id)
+                            + " 已设为默认 —— 单独设置过的门串保持不动";
+            }
+            if (scope == SYNC_PSD_MIDIUM_PAGE) {
+                String id = EscalatorSpeedManager.getDoorPsdMidiumAudio(level, key);
+                if (force) {
+                    EscalatorSpeedManager.setDefaultPsdMidiumAll(server, id, data.defaultPsdMidiumWaitSeconds);
+                } else {
+                    EscalatorSpeedManager.setDefaultPsdMidium(level, id, data.defaultPsdMidiumWaitSeconds);
+                }
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+                return force
+                        ? "已强制同步到站播报：" + audioLabel(id) + " —— 所有门串都照此"
+                        : "已同步到站播报：" + audioLabel(id) + " 已设为默认 —— 单独设置过的门串保持不动";
+            }
+            if (scope == SYNC_PSD_ARRIVE_PAGE) {
+                String id = EscalatorSpeedManager.getDoorPsdArriveAudio(level, key);
+                if (force) {
+                    EscalatorSpeedManager.setDefaultPsdArriveAll(server, id, data.defaultPsdArriveSeconds);
+                } else {
+                    EscalatorSpeedManager.setDefaultPsdArrive(level, id, data.defaultPsdArriveSeconds);
+                }
+                EscalatorSpeedManager.syncPsdToneToAll(server);
+                return force
+                        ? "已强制同步进站报站：" + audioLabel(id) + " —— 所有门串都照此"
+                        : "已同步进站报站：" + audioLabel(id) + " 已设为默认 —— 单独设置过的门串保持不动";
+            }
+            return "同步失败：未知的屏蔽门页 " + scope;
+        
+    }
+
+    public static String syncSettings(MinecraftServer server, ServerLevel level,
+                                       String domain, int scope, boolean force, long key) {
+            return switch (domain) {
+                case "esc" -> syncEscalator(server, level, scope, force, BlockPos.of(key));
+                case "lift" -> syncLift(server, level, scope, force, key);
+                case "psd" -> syncPsd(server, level, scope, force, key);
+                case "train" -> syncTrain(server, level, scope, force, key);
+                default -> "同步失败：未知的范围 " + domain;
+            };
+        
+    }
+
+    private static String syncTrain(MinecraftServer server, ServerLevel level,
+                                    int scope, boolean force, long key) {
+            String which = switch (scope) {
+                case SYNC_TRAIN_RUN -> "列车运行音效";
+                case SYNC_TRAIN_TURN -> "列车转弯音效";
+                case SYNC_TRAIN_SWITCH -> "列车道岔音效";
+                case SYNC_TRAIN_ARRIVE -> "列车进站音效";
+                case SYNC_TRAIN_DEPART -> "列车出站音效";
+                default -> "列车音效";
+            };
+            return which + "还没接数据层，暂时没有可同步的设置";
+        
+    }
+
+    /** 【1.53】/MBM help（及裸 /MBM）→ 服务端发空包让客户端打开「预设选择」界面。 */
+    private static int mbmOpenHelp(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        ServerPlayer player = source.getPlayer();
+        if (player == null) {
+            source.sendFailure(Component.literal("这条指令需要由玩家执行"));
+            return 0;
+        }
+        Packets.CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new MbmHelpOpenPacket());
+        return 1;
+    }
+
+    /** 【1.24】三个「范围」指令（/pbmround 等）的类型标签。 */
+    private enum RoundKind {
+        /** 屏蔽门开关门提示音（{@code /pbmround}、{@code /pbmmusicround}）。 */
+        TONE("屏蔽门提示音"),
+        /** 到站播报（{@code /pbmmidiumround}）。 */
+        MIDIUM("到站播报"),
+        /** 进站报站（{@code /pbmarriveround}）。 */
+        ARRIVE("进站报站");
+
+        /** 反馈文案里的那一项名字（与 /pbmloud 那一套用词一致）。 */
+        private final String label;
+
+        RoundKind(String label) {
+            this.label = label;
+        }
     }
 
 }
